@@ -1,0 +1,168 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 21% 6%;
+    --foreground: 220 14% 91%;
+    --card: 221 16% 12%;
+    --card-foreground: 220 14% 91%;
+    --popover: 221 16% 10%;
+    --popover-foreground: 220 14% 91%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 221 16% 16%;
+    --secondary-foreground: 220 14% 91%;
+    --muted: 221 16% 9%;
+    --muted-foreground: 217 10% 55%;
+    --accent: 258 83% 58%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 222 14% 19%;
+    --input: 222 14% 19%;
+    --ring: 217 91% 60%;
+    --chart-1: 217 91% 60%;
+    --chart-2: 258 83% 58%;
+    --chart-3: 160 84% 39%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+    --radius: 0.625rem;
+    --font-heading: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --font-display: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    --sidebar-background: 221 16% 12%;
+    --sidebar-foreground: 220 14% 91%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 221 16% 16%;
+    --sidebar-accent-foreground: 220 14% 91%;
+    --sidebar-border: 222 14% 19%;
+    --sidebar-ring: 217 91% 60%;
+  }
+
+  .dark {
+    --background: 220 21% 6%;
+    --foreground: 220 14% 91%;
+    --card: 221 16% 12%;
+    --card-foreground: 220 14% 91%;
+    --popover: 221 16% 10%;
+    --popover-foreground: 220 14% 91%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 221 16% 16%;
+    --secondary-foreground: 220 14% 91%;
+    --muted: 221 16% 9%;
+    --muted-foreground: 217 10% 55%;
+    --accent: 258 83% 58%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 222 14% 19%;
+    --input: 222 14% 19%;
+    --ring: 217 91% 60%;
+    --chart-1: 217 91% 60%;
+    --chart-2: 258 83% 58%;
+    --chart-3: 160 84% 39%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+    --sidebar-background: 221 16% 12%;
+    --sidebar-foreground: 220 14% 91%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 221 16% 16%;
+    --sidebar-accent-foreground: 220 14% 91%;
+    --sidebar-border: 222 14% 19%;
+    --sidebar-ring: 217 91% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+    overscroll-behavior: none;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(222 14% 25%) transparent;
+    overscroll-behavior: none;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: hsl(222 14% 25%);
+    border-radius: 3px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(222 14% 35%);
+  }
+  .animate-message-in {
+    animation: message-in 0.3s ease-out;
+  }
+  @keyframes message-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-fade-in {
+    animation: fade-in 0.4s ease-out;
+  }
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  /* Mobile WebView: prevent accidental text/image selection on chrome elements.
+     Real content (paragraphs, lists, code, inputs) stays selectable. */
+  button,
+  nav,
+  header,
+  [role="tab"],
+  [role="tablist"],
+  .no-select {
+    -webkit-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+  .selectable,
+  input,
+  textarea,
+  [contenteditable],
+  p,
+  li,
+  code,
+  pre {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  /* Mobile: enlarge icons and give icon-only controls a 48px tap target.
+     Applies on small viewports (phones); desktop layouts stay compact. */
+  @media (max-width: 768px) {
+    button > svg,
+    a > svg {
+      width: 1.5rem !important;
+      height: 1.5rem !important;
+    }
+    button:has(> svg:only-child),
+    a:has(> svg:only-child) {
+      min-height: 3rem;
+    }
+  }
+}
