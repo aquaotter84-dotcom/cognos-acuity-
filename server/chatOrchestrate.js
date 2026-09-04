@@ -25,6 +25,12 @@ import db from "./db.js";
 
 const rootLogger = createLogger("chatOrchestrate");
 
+// Fixed sovereignty refusal, released only when the Governor vetoes a draft
+// that would leak a credential. Deliberately NOT model-generated: the council
+// never invents substitute answers for a vetoed one.
+const SOVEREIGNTY_REFUSAL =
+  "The Governor stopped that reply: it looked like it would leak something private, so it never ships. Ask me another way.";
+
 const MEMORY_SCHEMA = {
   type: "object",
   properties: {
@@ -383,6 +389,19 @@ export async function runCouncilTurn(body, options = {}) {
   const governorResult = await orchestrator.dispatch("governor", governorMsg, ctx);
   emit("governor", { approved: governorResult.approved, flags: governorResult.flags });
 
+  // --- The veto has teeth ---
+  // If the Governor refuses, the draft does NOT ship. A flagged text that
+  // looks like a leaked credential is replaced with a fixed refusal line
+  // (never invented substitute content). An empty draft stays empty: the
+  // council would rather be silent than fabricate. Everything downstream
+  // (memory extraction, summarization, the HTTP response) sees the final
+  // text, never the vetoed one.
+  const vetoed = governorResult.approved === false;
+  let finalResponseText = currentResponse.responseText;
+  if (vetoed && (governorResult.flags || []).includes("potential_secret_leak")) {
+    finalResponseText = SOVEREIGNTY_REFUSAL;
+  }
+
   // --- Post-response stages (best-effort, run concurrently) ---
   // Memory extraction, audit logging, and summarization do not affect the
   // response text. Running them concurrently (instead of serially) cuts the
@@ -392,7 +411,7 @@ export async function runCouncilTurn(body, options = {}) {
   const memMsg = createMessage({
     type: "memory.request",
     from: "orchestrator",
-    content: { workspaceId, conversationId, userMessage, responseText: currentResponse.responseText }
+    content: { workspaceId, conversationId, userMessage, responseText: finalResponseText }
   });
   const auditMsg = createMessage({
     type: "audit.request",
@@ -411,7 +430,7 @@ export async function runCouncilTurn(body, options = {}) {
     orchestrator.dispatch("memoryExtraction", memMsg, ctx),
     orchestrator.dispatch("auditLog", auditMsg, ctx),
     summaryEnabled
-      ? summarizeConversation(ctx, conversationId, contextResult.history, userMessage, currentResponse.responseText)
+      ? summarizeConversation(ctx, conversationId, contextResult.history, userMessage, finalResponseText)
       : Promise.resolve(null),
     deferredCritic || Promise.resolve(null)
   ]);
@@ -423,7 +442,7 @@ export async function runCouncilTurn(body, options = {}) {
   await eventBus.publish("orchestration.complete", { latencyMs });
 
   return {
-    response: currentResponse.responseText,
+    response: finalResponseText,
     taskType: currentResponse.taskType,
     modelUsed: currentResponse.modelUsed,
     latencyMs,
