@@ -1,0 +1,672 @@
+
+==============================================================================
+1. BOOT
+==============================================================================
+app     http://127.0.0.1:41093
+model   http://127.0.0.1:38489/v1 (scriptable mock, OpenAI-compatible)
+db      PGlite, schema applied lazily by the app on first use
+
+GET /api/health -> 200 in 4ms
+{
+  "ok": true,
+  "model": "openai/gpt-oss-20b",
+  "fastModel": "openai/gpt-oss-20b",
+  "databaseConfigured": true,
+  "searchProvider": "disabled",
+  "modelKeyConfigured": true,
+  "gate": false,
+  "ledger": true,
+  "coherence": true,
+  "telemetry": true,
+  "adaptiveMode": "observe",
+  "adaptiveModeForced": false,
+  "strategy": "council_pipeline",
+  "laws": 16,
+  "lawLayerVersion": "1.0.0"
+}
+
+==============================================================================
+2. ONE CHAT EXCHANGE OVER THE ONE SEND PATH
+==============================================================================
+user message : What should I use for data analysis, and why?
+run id       : run_mtqsfgetgubhtd5g
+conversation : conv_mtqsfgeqf8nxkzrv
+answer       : This is the council's answer. The charter was applied. 
+wall time    : 134ms
+
+SSE frames in order (45):
+  start@20ms
+  stage.start@26ms
+  stage.complete@33ms
+  stage.start@33ms
+  stage.complete@42ms
+  observer@42ms
+  stage.start@42ms
+  stage.complete@42ms
+  memories@42ms
+  stage.start@42ms
+  stage.complete@42ms
+  strategist@42ms
+  stage.start@42ms
+  token@48ms
+  token@48ms
+  token@48ms
+  token@48ms
+  token@48ms
+  token@48ms
+  token@48ms
+  token@48ms
+  token@48ms
+  stage.complete@48ms
+  specialist@48ms
+  stage.start@48ms
+  stage.complete@48ms
+  stage.start@48ms
+  stage.complete@52ms
+  coherence@52ms
+  stage.start@52ms
+  stage.complete@59ms
+  critic@59ms
+  stage.start@59ms
+  stage.complete@59ms
+  governor@59ms
+  stage.start@59ms
+  stage.start@59ms
+  stage.complete@61ms
+  stage.complete@86ms
+  stage.start@86ms
+  stage.complete@108ms
+  stage.start@108ms
+  stage.complete@125ms
+  knowledge@125ms
+  done@134ms
+
+==============================================================================
+3. THE EVENT LEDGER FOR THAT EXCHANGE (14.1 — append-only, same transaction as the write)
+==============================================================================
+6 row(s). Nothing is deleted anywhere in this table; retiring is a transition.
+
+  #1  2026-09-07T05:16:08.843Z  summary_updated  [reversible=true]
+        entity : conversation:conv_mtqsfgeqf8nxkzrv
+        source : run run=run_mtqsfgetgubhtd5g message=—
+        from   : {"title":"What should I use for data analysis, and why?","summary":null,"is_archived":false,"last_message_preview":"What should I use for data analysis, and why?"}
+        to     : {"title":"What should I use for data analysis, and why?","summary":"The user tested the council and it responded.","is_archived":false,"last_message_preview":"What should I use for data analysis, and why?"}
+        delta  : {"changed":["summary"],"summary":true}
+
+  #2  2026-09-07T05:16:08.849Z  memory_written  [reversible=true]
+        entity : memory:mem_mtqsfggec47y5nqf
+        source : run run=run_mtqsfgetgubhtd5g message=conv_mtqsfgeqf8nxkzrv
+        to     : {"id":"mem_mtqsfggec47y5nqf","source":"conv_mtqsfgeqf8nxkzrv","content":"The user prefers Python for data work.","confidence":0.89,"importance":7,"is_enabled":true,"volatility":"medium","memory_type":"semantic","evidence_level":"direct"}
+        delta  : {"confidence":0.89}
+
+  #3  2026-09-07T05:16:08.854Z  belief_created  [reversible=true]
+        entity : belief:bel_mtqsfggl8xkv1i5g
+        source : run run=run_mtqsfgetgubhtd5g message=conv_mtqsfgeqf8nxkzrv
+        to     : {"id":"bel_mtqsfggl8xkv1i5g","status":"active","statement":"The user prefers Python for data work.","confidence":0.89,"hypothesis":false,"volatility":"medium","successor_id":null,"first_seen_ms":1788758168852,"retired_at_ms":null,"statement_key":"prefers python for data work","support_count":1,"evidence_level":"direct","contradict_count":0,"source_memory_id":"mem_mtqsfggec47y5nqf","last_confirmed_ms":1788758168852}
+        delta  : {"confidence":0.89}
+
+  #4  2026-09-07T05:16:08.866Z  relationship_created  [reversible=true]
+        entity : relationship:rel_mtqsfggx1id8zn13
+        source : run run=run_mtqsfgetgubhtd5g message=—
+        to     : {"kind":"user_system","object":"system:cognos","status":"active","subject":"workspace:ws_mtqsfgdxojvehcgb","strength":0.35,"direction":"directed","merged_into":null,"interactions":1,"strength_as_of_ms":1788758168863}
+        delta  : {"strength":0.35}
+
+  #5  2026-09-07T05:16:08.901Z  message_recorded  [reversible=false]
+        entity : message:msg_mtqsfghvp4uh76j1
+        source : message run=run_mtqsfgetgubhtd5g message=msg_mtqsfghvp4uh76j1
+        to     : {"role":"assistant","task_type":"question_answering","conclusion":"This is the council's answer. The charter was applied. ","model_used":"openai/gpt-oss-20b","processing_status":"complete"}
+        delta  : {"chars":55}
+
+  #6  2026-09-07T05:16:08.906Z  conversation_updated  [reversible=true]
+        entity : conversation:conv_mtqsfgeqf8nxkzrv
+        source : message run=run_mtqsfgetgubhtd5g message=msg_mtqsfghvp4uh76j1
+        from   : {"title":"What should I use for data analysis, and why?","summary":"The user tested the council and it responded.","is_archived":false,"last_message_preview":"What should I use for data analysis, and why?"}
+        to     : {"title":"What should I use for data analysis, and why?","summary":"The user tested the council and it responded.","is_archived":false,"last_message_preview":"This is the council's answer. The charter was applied. "}
+        delta  : {"changed":["last_message_preview"],"summary":false}
+
+ledger total in the store: 6 row(s)
+audit_events (separate, untouched): 1 row(s)
+
+==============================================================================
+4. THE ONE TELEMETRY RECORD FOR THAT RUN (15.1)
+==============================================================================
+id                run_mtqsfgetgubhtd5g
+status            success
+strategy          council_pipeline
+message link      msg_mtqsfghvp4uh76j1  (the persisted conclusion)
+latency           93ms total, first token 29ms
+model calls       5  models: openai/gpt-oss-20b
+tokens            prompt=1081 completion=146 total=1227 measured=true estimated=14
+cost              $0.000083  (rate known: true)
+confidence        0.9 from critic.score/10
+coherence         verdict=unverified contradictions=0
+veto              vetoed=false origin=— reason=—
+failures          0 []
+ledger events     4
+adaptive          {"mode":"observe","reason":"Council pipeline (canonical) scored 10 (complexity 'unknown' in [simple, moderate, complex]; task_type 'unknown' in scope; decomposition signal covered; web-search signal covered; history 0 >= 0; is the default strategy)","switched":false,"candidates":[{"score":10,"reasons":["complexity 'unknown' in [simple, moderate, complex]","task_type 'unknown' in scope","decomposition signal covered","web-search signal covered","history 0 >= 0","is the default strategy"],"strategy_id":"council_pipeline"}],"strategy_id":"council_pipeline"}
+
+per-stage latency (stage_order):
+  contextAssembly           7ms  runs=1  model=—  calls=0  tokens=0  cost=$0.000000  status=success
+  observer                  8ms  runs=1  model=openai/gpt-oss-20b  calls=1  tokens=261  cost=$0.000019  status=success
+  webSearch                 0ms  runs=1  model=—  calls=0  tokens=0  cost=$0.000000  status=success
+  strategist                0ms  runs=1  model=—  calls=0  tokens=0  cost=$0.000000  status=success
+  specialist                7ms  runs=1  model=openai/gpt-oss-20b  calls=1  tokens=247  cost=$0.000014  status=success
+  synthesizer               0ms  runs=1  model=—  calls=0  tokens=0  cost=$0.000000  status=success
+  coherenceMonitor          3ms  runs=1  model=—  calls=0  tokens=0  cost=$0.000000  status=success
+  critic                    6ms  runs=1  model=openai/gpt-oss-20b  calls=1  tokens=304  cost=$0.000021  status=success
+  governor                  0ms  runs=1  model=—  calls=0  tokens=0  cost=$0.000000  status=success
+  memoryExtraction         29ms  runs=1  model=openai/gpt-oss-20b  calls=1  tokens=322  cost=$0.000022  status=success
+  auditLog                  3ms  runs=1  model=—  calls=0  tokens=0  cost=$0.000000  status=success
+  summary                   0ms  runs=0  model=openai/gpt-oss-20b  calls=1  tokens=93  cost=$0.000007  status=success
+  knowledgeProjection      21ms  runs=1  model=—  calls=0  tokens=0  cost=$0.000000  status=success
+  telemetryRecord           0ms  runs=0  model=—  calls=0  tokens=0  cost=$0.000000  status=success
+
+per-call detail (telemetry_model_calls):
+  #1 observer           openai/gpt-oss-20b     success      7ms  tok=261  $0.000019
+  #2 specialist         openai/gpt-oss-20b     success      6ms  tok=247 (est)  $0.000014
+  #3 critic             openai/gpt-oss-20b     success      6ms  tok=304  $0.000021
+  #4 summary            openai/gpt-oss-20b     success      6ms  tok=93  $0.000007
+  #5 memoryExtraction   openai/gpt-oss-20b     success      7ms  tok=322  $0.000022
+
+==============================================================================
+5. REPLAY: A BELIEF'S STATE AT A PAST INSTANT (14.2)
+==============================================================================
+belief bel_mtqsfggl8xkv1i5g: "The user prefers Python for data work."
+  now        : confidence=0.89 status=active support=1 contradictions=0
+  history    : #3 belief_created @2026-09-07T05:16:08.854Z
+
+  GET /api/knowledge/state/belief/bel_mtqsfggl8xkv1i5g
+    replayed=false exists=true events=1
+    state={"id":"bel_mtqsfggl8xkv1i5g","status":"active","statement":"The user prefers Python for data work.","confidence":0.89,"hypothesis":false,"volatility":"medium","successor_id":null,"first_seen_ms":1788758168852,"retired_at_ms":null,"statement_key":"prefers python for data work","support_count":1,"evidence_level":"direct","contradict_count":0,"source_memory_id":"mem_mtqsfggec47y5nqf","last_confirmed_ms":1788758168852}
+    fold-of-ledger matches the materialized row: {"consistent":true,"drift":[],"current":{"statement":"The user prefers Python for data work.","status":"active","hypothesis":false,"confidence":0.89,"evidence_level":"direct","volatility":"medium","support_count":1,"contradict_count":0,"first_seen_ms":1788758168852,"last_confirmed_ms":1788758168852,"retired_at_ms":null,"successor_id":null}}
+
+  GET /api/knowledge/state/belief/bel_mtqsfggl8xkv1i5g?at=1788758168854
+    asOf=2026-09-07T05:16:08.854Z events=1 lastTransition=belief_created
+    state={"id":"bel_mtqsfggl8xkv1i5g","status":"active","statement":"The user prefers Python for data work.","confidence":0.89,"hypothesis":false,"volatility":"medium","successor_id":null,"first_seen_ms":1788758168852,"retired_at_ms":null,"statement_key":"prefers python for data work","support_count":1,"evidence_level":"direct","contradict_count":0,"source_memory_id":"mem_mtqsfggec47y5nqf","last_confirmed_ms":1788758168852}
+
+  GET /api/knowledge/lineage/run/run_mtqsfgetgubhtd5g
+    6 event(s), runs=["run_mtqsfgetgubhtd5g"], messages=["conv_mtqsfgeqf8nxkzrv","msg_mtqsfghvp4uh76j1"]
+    digest={"runId":"run_mtqsfgetgubhtd5g","eventCount":6,"transitions":{"summary_updated":1,"memory_written":1,"belief_created":1,"relationship_created":1,"message_recorded":1,"conversation_updated":1},"entities":["conversation:conv_mtqsfgeqf8nxkzrv","memory:mem_mtqsfggec47y5nqf","belief:bel_mtqsfggl8xkv1i5g","relationship:rel_mtqsfggx1id8zn13","message:msg_mtqsfghvp4uh76j1"],"first":"2026-09-07T05:16:08.843Z","last":"2026-09-07T05:16:08.906Z"}
+
+==============================================================================
+6. A CONFLICTING EXCHANGE BECOMES A MEASURED TRANSITION (14.5)
+==============================================================================
+answer        : Understood — you have moved to R, so R is the better fit for your analysis work now. 
+coherence     : {
+  "checked": true,
+  "verdict": "contradiction",
+  "reason": null,
+  "note": "The draft contradicts one stored belief.",
+  "beliefsConsidered": 1,
+  "contradictions": [
+    {
+      "claim": "The user now prefers R over Python for data work.",
+      "beliefId": "bel_mtqsfggl8xkv1i5g",
+      "confidence": 0.9,
+      "note": "the draft states the opposite of the stored preference"
+    }
+  ],
+  "confirmations": [],
+  "hypotheses": []
+}
+governor      : {
+  "approved": true,
+  "flags": [],
+  "coherence": {
+    "checked": true,
+    "verdict": "contradiction",
+    "reason": null,
+    "note": "The draft contradicts one stored belief.",
+    "beliefsConsidered": 1,
+    "contradictions": [
+      {
+        "claim": "The user now prefers R over Python for data work.",
+        "beliefId": "bel_mtqsfggl8xkv1i5g",
+        "confidence": 0.9,
+        "note": "the draft states the opposite of the stored preference"
+      }
+    ],
+    "confirmations": [],
+    "hypotheses": []
+  }
+}
+
+belief bel_mtqsfggl8xkv1i5g
+  before      : confidence=0.89 contradictions=0
+  after       : confidence=0.676 contradictions=1 status=active
+
+ledger rows for the contradicting run (10):
+  #7 memory_written             reversible=true  delta={"confidence":0.89}
+  #8 belief_confirmed           reversible=true  delta={"support":1,"confidence":0.011}
+  #9 confidence_changed         reversible=true  delta={"cause":"recurrence","confidence":0.011}
+  #10 hypothesis_proposed        reversible=true  delta={"confidence":0.54}
+  #11 contradiction_detected     reversible=false delta={"confidence":-0.225,"contradict_count":1}
+  #12 confidence_changed         reversible=true  delta={"cause":"contradiction","confidence":-0.225}
+  #13 belief_weakened            reversible=true  delta={"confidence":-0.225}
+  #14 relationship_strengthened  reversible=true  delta={"strength":0.0975,"interactions":1,"decayed_before_reinforce":0}
+  #15 message_recorded           reversible=false delta={"chars":85}
+  #16 conversation_updated       reversible=true  delta={"changed":["last_message_preview"],"summary":false}
+
+contradiction_detected to_state: {"status":"active","statement":"The user prefers Python for data work.","confidence":0.676,"hypothesis":false,"volatility":"medium","successor_id":"bel_mtqsfgl5ag7rouwa","first_seen_ms":1788758168852,"retired_at_ms":null,"support_count":2,"evidence_level":"direct","contradict_count":1,"last_confirmed_ms":1788758169008}
+
+coherence_reports row:
+{
+  "id": "coh_mtqsfglgn1ofv9dz",
+  "run_id": "run_mtqsfgjlb0un0jbs",
+  "verdict": "contradiction",
+  "checked": true,
+  "draft_shipped": true,
+  "belief_ids": [
+    "bel_mtqsfggl8xkv1i5g"
+  ],
+  "confidence_delta": "-0.225",
+  "contradictions": [
+    {
+      "note": "the draft states the opposite of the stored preference",
+      "claim": "The user now prefers R over Python for data work.",
+      "belief_id": "bel_mtqsfggl8xkv1i5g",
+      "confidence": 0.9
+    }
+  ],
+  "note": "The draft contradicts one stored belief."
+}
+
+GET /api/knowledge/temporal/belief/bel_mtqsfggl8xkv1i5g (the helper the council can call, 14.3):
+{
+  "confidenceVelocity": {
+    "perDay": -108762.352941,
+    "samples": 3,
+    "first": 0.89,
+    "last": 0.676,
+    "spanMs": 170,
+    "change": -0.214,
+    "reliable": false,
+    "note": "span is 0.2s; the per-day rate extrapolates 508235x beyond the observed window"
+  },
+  "uncertaintyTrend": {
+    "direction": "growing",
+    "uncertainty": 0.648,
+    "earlier": 0.22,
+    "recent": 0.423,
+    "change": 0.203,
+    "samples": 3
+  },
+  "stability": {
+    "index": 0.6569,
+    "stddev": 0.1036,
+    "range": 0.225,
+    "churnPerDay": 0.8571,
+    "samples": 3
+  },
+  "whatChangedBefore": {
+    "anchor": "2026-09-07T05:16:09.055Z",
+    "windowMs": 21600000,
+    "count": 10,
+    "immediatelyBefore": [
+      "2026-09-07T05:16:09.049Z conversation_updated conversation:conv_mtqsfgeqf8nxkzrv delta={\"changed\":[\"last_message_preview\"],\"summary\":false}",
+      "2026-09-07T05:16:09.045Z message_recorded message:msg_mtqsfglv7yg98inz delta={\"chars\":85}",
+      "2026-09-07T05:16:09.030Z relationship_strengthened relationship:rel_mtqsfggx1id8zn13 delta={\"strength\":0.0975,\"interactions\":1,\"decayed_before_reinforce\":0}",
+      "2026-09-07T05:16:09.022Z belief_weakened belief:bel_mtqsfggl8xkv1i5g delta={\"confidence\":-0.225}",
+      "2026-09-07T05:16:09.022Z confidence_changed belief:bel_mtqsfggl8xkv1i5g delta={\"cause\":\"contradiction\",\"confidence\":-0.225}"
+    ]
+  }
+}
+
+replay at 2026-09-07T05:16:09.021Z (one millisecond before the contradiction):
+  {"id":"bel_mtqsfggl8xkv1i5g","status":"active","statement":"The user prefers Python for data work.","confidence":0.901,"hypothesis":false,"volatility":"medium","successor_id":null,"first_seen_ms":1788758168852,"retired_at_ms":null,"statement_key":"prefers python for data work","support_count":2,"evidence_level":"direct","contradict_count":0,"source_memory_id":"mem_mtqsfggec47y5nqf","last_confirmed_ms":1788758169008}
+
+==============================================================================
+7. A VETOED RUN: RECORDED IN TELEMETRY, NOTHING WRITTEN TO MEMORY
+==============================================================================
+delivered to the user : The Governor stopped that reply: it looked like it would leak something private, so it never ships. Ask me another way.
+governor              : {
+  "approved": false,
+  "flags": [
+    "potential_secret_leak"
+  ],
+  "coherence": {
+    "checked": true,
+    "verdict": "coherent",
+    "reason": null,
+    "note": "No conflict with stored beliefs.",
+    "beliefsConsidered": 2,
+    "contradictions": [],
+    "confirmations": [],
+    "hypotheses": []
+  }
+}
+
+telemetry_runs row:
+{
+  "id": "run_mtqsfgmnrlo7rrio",
+  "status": "vetoed",
+  "vetoed": true,
+  "veto_flags": [
+    "potential_secret_leak"
+  ],
+  "veto_reason": "the draft matched a credential pattern, so it was stopped before it could leak a secret",
+  "veto_draft_origin": "specialist",
+  "veto_draft_sha256": "0f48dc29dcd8df55aff0d8271666127cb12ac260cd43b49f29756d4f9e974c9d",
+  "ledger_events": 2,
+  "confidence": "0.9",
+  "cost_usd": "0.000094"
+}
+
+ledger rows for the vetoed run (4):
+  #17 veto_raised              entity=run:undefined reversible=false to={"flags":["potential_secret_leak"],"shipped":false,"approved":false,"draft_origin":"specialist"}
+  #18 relationship_weakened    entity=relationship:undefined reversible=true to={"kind":"user_system","status":"weakened","strength":0.358,"direction":"directed","merged_into":null,"interactions":3,"strength_as_of_ms":1788758169099}
+  #19 message_recorded         entity=message:undefined reversible=false to={"role":"assistant","task_type":"question_answering","conclusion":"The Governor stopped that reply: it looked like it would leak something private, so it never 
+  #20 conversation_updated     entity=conversation:undefined reversible=true to={"title":"What should I use for data analysis, and why?","summary":"The user tested the council and it responded.","is_archived":false,"last_message_preview":"T
+
+memories  2 -> 2 (nothing written)
+summary   "The user tested the council and it responded." -> "The user tested the council and it responded." (unchanged)
+the vetoed text anywhere in the store: 0 ledger row(s), 0 message(s), 0 telemetry row(s)
+
+==============================================================================
+8. A SIMULATED UPSTREAM FAILURE, DOCUMENTED IN TELEMETRY
+==============================================================================
+SSE frames      : start, stage.start, stage.complete, stage.start, stage.complete, observer, stage.start, stage.complete, memories, stage.start, stage.complete, strategist, stage.start, stage.complete, error
+error frame     : {
+  "error": "Model request failed (400): {\"error\":{\"message\":\"The model 'bad-nonexistent-model' does not exist\",\"type\":\"invalid_request_error\",\"code\":\"model_not_found\"}}",
+  "message": {
+    "id": "msg_mtqsfgophvirlft6",
+    "conversation_id": "conv_mtqsfgoaxsgyxi5a",
+    "workspace_id": "ws_mtqsfgdxojvehcgb",
+    "role": "assistant",
+    "content": "⚠️ **The council could not answer.**\n\nModel request failed (400): {\"error\":{\"message\":\"The model 'bad-nonexistent-model' does not exist\",\"type\":\"invalid_request_error\",\"code\":\"model_not_found\"}}",
+    "model_used": null,
+    "task_type": null,
+    "task_context_id": null,
+    "attachments": null,
+    "council": null,
+    "processing_status": "error",
+    "created_date": "2026-09-07T05:16:09.145Z"
+  }
+}
+
+telemetry_runs row:
+{
+  "id": "run_mtqsfgobzxmb1i1z",
+  "status": "error",
+  "error_message": "Model request failed (400): {\"error\":{\"message\":\"The model 'bad-nonexistent-model' does not exist\",\"type\":\"invalid_request_error\",\"code\":\"model_not_found\"}}",
+  "failure_count": 4,
+  "failures": [
+    {
+      "at": 1788758169138,
+      "kind": "bad_request",
+      "model": "bad-nonexistent-model",
+      "stage": "observer",
+      "status": "http_error",
+      "message": "{\"error\":{\"message\":\"The model 'bad-nonexistent-model' does not exist\",\"type\":\"invalid_request_error\",\"code\":\"model_not_found\"}}",
+      "recovered": false,
+      "latency_ms": 1,
+      "error_class": "bad_request",
+      "http_status": 400
+    },
+    {
+      "at": 1788758169140,
+      "kind": "bad_request",
+      "model": "bad-nonexistent-model",
+      "stage": "specialist",
+      "status": "http_error",
+      "message": "{\"error\":{\"message\":\"The model 'bad-nonexistent-model' does not exist\",\"type\":\"invalid_request_error\",\"code\":\"model_not_found\"}}",
+      "recovered": false,
+      "latency_ms": 2,
+      "error_class": "bad_request",
+      "http_status": 400
+    },
+    {
+      "at": 1788758169140,
+      "kind": "stage_error",
+      "stage": "specialist",
+      "message": "Error: Model request failed (400): {\"error\":{\"message\":\"The model 'bad-nonexistent-model' does not exist\",\"type\":\"invalid_request_error\",\"code\":\"model_not_found\"}}"
+    },
+    {
+      "at": 1788758169140,
+      "kind": "run_failed",
+      "stage": null,
+      "message": "Model request failed (400): {\"error\":{\"message\":\"The model 'bad-nonexistent-model' does not exist\",\"type\":\"invalid_request_error\",\"code\":\"model_not_found\"}}",
+      "recovered": false
+    }
+  ],
+  "latency_ms": 8,
+  "cost_usd": "0.000427",
+  "ledger_events": 0
+}
+
+telemetry_model_calls:
+  #1 observer       bad-nonexistent-model    http_error   HTTP 400 bad_request {"error":{"message":"The model 'bad-nonexistent-model' does not exist"
+  #2 specialist     bad-nonexistent-model    http_error   HTTP 400 bad_request {"error":{"message":"The model 'bad-nonexistent-model' does not exist"
+
+memories after the failed run: 2 (nothing fabricated)
+
+==============================================================================
+9. THE POLICY ENGINE REFUSES A LAW-VIOLATING ADAPTATION AND LOGS IT (15.5/15.6)
+==============================================================================
+
+POST /api/meta/adaptations  change_model -> gpt_5_4
+  HTTP 409  decision=refused  applied=false
+  refused by: pin.model_ban: 'gpt_5_4' is banned outright: it 503s on this account and took a previous deploy down
+  improvement_ledger row imp_mtqsfgox82o4rglq (seq 1) decision="refused" justification="charter.evidence: the council may only assert what it can ve..."
+
+POST /api/meta/adaptations  modify_law -> pin.no_auth
+  HTTP 409  decision=refused  applied=false
+  refused by: phase15.law_layer_immutable: the law layer cannot be modified at runtime, by an endpoint, or by an adaptation. Changing a law is a reviewed code change to server/council/laws.js
+  improvement_ledger row imp_mtqsfgp1zbl9pe2p (seq 2) decision="refused" justification="charter.evidence: the council may only assert what it can ve..."
+
+POST /api/meta/adaptations  register_operator -> temporal_reasoner
+  HTTP 409  decision=refused  applied=false
+  refused by: pin.six_operators: the council is six operators plus the web-search tool they consult. 'register_operator' would change the seats; subsystems may be added instead, and they do not vote
+  improvement_ledger row imp_mtqsfgp4gb1fty2x (seq 3) decision="refused" justification="charter.evidence: the council may only assert what it can ve..."
+
+POST /api/meta/adaptations  schema_change -> DROP TABLE memories
+  HTTP 409  decision=refused  applied=false
+  refused by: pin.additive_schema: the migration is not additive: it drops, truncates, deletes, renames or rewrites existing structure
+  refused by: pin.additive_schema: 1 statement(s) are not CREATE/ADD COLUMN IF NOT EXISTS: DROP TABLE memories
+  improvement_ledger row imp_mtqsfgp7nkyoshei (seq 4) decision="refused" justification="charter.evidence: the council may only assert what it can ve..."
+
+POST /api/meta/adaptations  schema_change -> CREATE TABLE IF NOT EXISTS demo_notes (id TEXT PRIMARY KEY)
+  HTTP 200  decision=approved  applied=false
+  improvement_ledger row imp_mtqsfgpan5vg6np4 (seq 5) decision="approved" justification="charter.evidence: the council may only assert what it can ve..."
+
+GET /api/meta/laws
+  version=1.0.0 count=16 runtimeModifiable=false immutability={"immutable":true,"problems":[],"count":16,"version":"1.0.0"}
+  [charter] charter.truth — Truth
+  [charter] charter.evidence — Evidence
+  [charter] charter.agency — Agency
+  [charter] charter.dignity — Dignity
+  [operational] pin.veto_integrity — The veto has teeth
+  [operational] pin.single_send_path — One clean send path
+  [operational] pin.model_ban — Model resolution is fixed
+  [operational] pin.no_auth — No accounts
+  [operational] pin.secrets_env_only — Secrets stay in the environment
+  [operational] pin.additive_schema — Schema changes are additive
+  [operational] pin.six_operators — The council stays six
+  [operational] pin.telemetry_side_effect — Observation is a side effect
+  [operational] pin.ledger_append_only — The ledger is append-only
+  [phase_scope] phase15.observe_only — Adaptation is observed, not applied
+  [phase_scope] phase15.complexity_justification — Complexity must justify itself
+  [phase_scope] phase15.law_layer_immutable — The law layer is not runtime-writable
+
+improvement_ledger (5 rows):
+  #1 2026-09-07T05:16:09.153Z change_model         gpt_5_4                                        refused   applied=false laws=["charter.evidence"]
+  #2 2026-09-07T05:16:09.157Z modify_law           pin.no_auth                                    refused   applied=false laws=["charter.dignity"]
+  #3 2026-09-07T05:16:09.160Z register_operator    temporal_reasoner                              refused   applied=false laws=["phase15.complexity_justification"]
+  #4 2026-09-07T05:16:09.163Z schema_change        DROP TABLE memories                            refused   applied=false laws=["pin.additive_schema"]
+  #5 2026-09-07T05:16:09.166Z schema_change        CREATE TABLE IF NOT EXISTS demo_notes (id TEXT approved  applied=false laws=["pin.additive_schema"]
+
+==============================================================================
+10. WHAT THE STORE HOLDS AFTER THE DEMONSTRATION
+==============================================================================
+{
+  "ledger": {
+    "events": 21,
+    "first_event": "2026-09-07T05:16:08.843Z",
+    "last_event": "2026-09-07T05:16:09.146Z",
+    "by_transition": [
+      {
+        "transition": "message_recorded",
+        "count": 4
+      },
+      {
+        "transition": "conversation_updated",
+        "count": 3
+      },
+      {
+        "transition": "confidence_changed",
+        "count": 2
+      },
+      {
+        "transition": "memory_written",
+        "count": 2
+      },
+      {
+        "transition": "hypothesis_proposed",
+        "count": 1
+      },
+      {
+        "transition": "relationship_created",
+        "count": 1
+      },
+      {
+        "transition": "relationship_strengthened",
+        "count": 1
+      },
+      {
+        "transition": "relationship_weakened",
+        "count": 1
+      },
+      {
+        "transition": "summary_updated",
+        "count": 1
+      },
+      {
+        "transition": "belief_confirmed",
+        "count": 1
+      },
+      {
+        "transition": "veto_raised",
+        "count": 1
+      },
+      {
+        "transition": "belief_created",
+        "count": 1
+      },
+      {
+        "transition": "belief_weakened",
+        "count": 1
+      },
+      {
+        "transition": "contradiction_detected",
+        "count": 1
+      }
+    ]
+  },
+  "beliefs": [
+    {
+      "status": "active",
+      "count": 1,
+      "avg_confidence": 0.676
+    },
+    {
+      "status": "hypothesis",
+      "count": 1,
+      "avg_confidence": 0.54
+    }
+  ],
+  "relationships": [
+    {
+      "kind": "user_system",
+      "status": "weakened",
+      "count": 1,
+      "avg_strength": 0.358
+    }
+  ],
+  "coherence": [
+    {
+      "verdict": "coherent",
+      "count": 1
+    },
+    {
+      "verdict": "contradiction",
+      "count": 1
+    },
+    {
+      "verdict": "unverified",
+      "count": 1
+    }
+  ],
+  "append_only": true
+}
+
+change analytics (14.6):
+{
+  "ledger_events": 21,
+  "events_per_day": 0.7,
+  "stability": {
+    "index": 0.8772,
+    "reading": "the store is settling"
+  },
+  "relationship_stability": 0.8934,
+  "top_churn": [
+    {
+      "entity": "belief:bel_mtqsfggl8xkv1i5g",
+      "changes": 6,
+      "per_day": 0.2
+    },
+    {
+      "entity": "conversation:conv_mtqsfgeqf8nxkzrv",
+      "changes": 4,
+      "per_day": 0.1333
+    },
+    {
+      "entity": "relationship:rel_mtqsfggx1id8zn13",
+      "changes": 3,
+      "per_day": 0.1
+    },
+    {
+      "entity": "message:msg_mtqsfgophvirlft6",
+      "changes": 1,
+      "per_day": 0.0333
+    },
+    {
+      "entity": "message:msg_mtqsfgnt0sh548aj",
+      "changes": 1,
+      "per_day": 0.0333
+    }
+  ]
+}
+
+telemetry summary (15.1):
+{
+  "per_strategy": [
+    {
+      "strategy_id": "council_pipeline",
+      "runs": 4,
+      "successes": 2,
+      "errors": 1,
+      "vetoes": 1,
+      "with_failures": 1,
+      "veto_rate": 0.25,
+      "error_rate": 0.25,
+      "avg_latency_ms": 52,
+      "avg_cost_usd": 0.00018625,
+      "total_cost_usd": 0.000745,
+      "avg_confidence": 0.9,
+      "contradictions": 1
+    }
+  ],
+  "switch_analysis": {
+    "switch": false,
+    "blockedBy": "phase15.observe_only",
+    "unmet": [
+      "enough_runs",
+      "enough_trials",
+      "latency",
+      "cost",
+      "confidence"
+    ]
+  }
+}
+
+demo complete.

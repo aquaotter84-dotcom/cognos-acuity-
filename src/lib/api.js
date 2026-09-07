@@ -1,6 +1,17 @@
 // The app's own API client. Replaces src/api/base44Client.js and the Base44 SDK.
 // Same-origin relative URLs only — no VITE_ vars, no app-params, no *.base44.app.
 
+/** Build a query string, dropping empty values. */
+function qs(params = {}) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") continue;
+    search.set(key, String(value));
+  }
+  const str = search.toString();
+  return str ? `?${str}` : "";
+}
+
 async function req(path, options = {}) {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -31,7 +42,35 @@ export const api = {
   updateMemory: (id, data) => req(`/api/memories/${id}`, { method: "PATCH", body: data }),
   deleteMemory: (id) => req(`/api/memories/${id}`, { method: "DELETE" }),
 
-  listActivity: () => req("/api/activity")
+  listActivity: () => req("/api/activity"),
+
+  // --- Phase 14: the knowledge layer (read-only) ---------------------------
+  knowledgeEvents: (params = {}) => req(`/api/knowledge/events${qs(params)}`),
+  knowledgeOverview: () => req("/api/knowledge/overview"),
+  knowledgeAnalytics: (params = {}) => req(`/api/knowledge/analytics${qs(params)}`),
+  knowledgeBeliefs: (params = {}) => req(`/api/knowledge/beliefs${qs(params)}`),
+  knowledgeRelationships: (params = {}) => req(`/api/knowledge/relationships${qs(params)}`),
+  knowledgeCoherence: (params = {}) => req(`/api/knowledge/coherence${qs(params)}`),
+  /** REPLAY: an entity's state as it was at `at` (epoch ms or ISO string). */
+  knowledgeState: (entityType, entityId, params = {}) => req(`/api/knowledge/state/${entityType}/${entityId}${qs(params)}`),
+  knowledgeLineage: (entityType, entityId) => req(`/api/knowledge/lineage/${entityType}/${entityId}`),
+  knowledgeRunLineage: (runId) => req(`/api/knowledge/lineage/run/${runId}`),
+  knowledgeTemporal: (entityType, entityId) => req(`/api/knowledge/temporal/${entityType}/${entityId}`),
+
+  // --- Phase 15: meta-cognition -------------------------------------------
+  telemetryRuns: (params = {}) => req(`/api/meta/telemetry${qs(params)}`),
+  telemetrySummary: () => req("/api/meta/telemetry?summary=1"),
+  telemetryRun: (runId) => req(`/api/meta/telemetry/${runId}`),
+  modelCalls: (params = {}) => req(`/api/meta/model-calls${qs(params)}`),
+  strategies: () => req("/api/meta/strategies"),
+  laws: () => req("/api/meta/laws"),
+  policy: () => req("/api/meta/policy"),
+  improvements: (params = {}) => req(`/api/meta/improvements${qs(params)}`),
+  adaptive: () => req("/api/meta/adaptive"),
+  evaluations: () => req("/api/meta/evaluations"),
+  rateTable: () => req("/api/meta/rates"),
+  /** The gate: propose an adaptation. Refusals come back 409 with the laws cited. */
+  proposeAdaptation: (body) => req("/api/meta/adaptations", { method: "POST", body })
 };
 
 /**

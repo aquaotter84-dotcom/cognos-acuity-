@@ -17,8 +17,27 @@
 - The **REST `https://`** endpoint (Neon Data API) is *rejected outright* —
   it hangs ~16 s per query. You get a clear error in 0.09 s instead.
 
-No migration step. The schema is created lazily on first query, and every
-statement is `IF NOT EXISTS`, so it is safe on every cold start.
+No migration step is required. The schema is created lazily on first query, and
+every statement is `IF NOT EXISTS`, so it is safe on every cold start — including
+the Phase 14/15 tables (`knowledge_events`, `beliefs`, `confidence_history`,
+`relationships`, `coherence_reports`, `telemetry_runs`, `telemetry_model_calls`,
+`strategies`, `strategy_evaluations`, `adaptive_decisions`,
+`improvement_ledger`) and the one additive column (`memories.confidence`).
+
+If you would rather apply the DDL explicitly before traffic arrives:
+
+```bash
+DATABASE_URL='postgresql://…-pooler…' npm run migrate          # apply + verify
+DATABASE_URL='postgresql://…-pooler…' node scripts/migrate.mjs --dry-run
+```
+
+`scripts/migrate.mjs` refuses to execute any migration containing `DROP`,
+`TRUNCATE`, `DELETE FROM`, `RENAME` or `UPDATE … SET`, wraps each migration in
+its own transaction, and then verifies the tables exist. Schema changes here are
+**additive only**: existing tables keep their rows and their semantics.
+`migrations/*.sql` is generated from `server/db/schema.js`
+(`npm run migrations:generate`) so the files and the running schema cannot
+drift apart.
 
 ## 2. BluesMinds
 
@@ -109,7 +128,15 @@ curl https://<your-app>.vercel.app/api/health
   "databaseConfigured": true,
   "modelKeyConfigured": true,
   "searchProvider": "duckduckgo",
-  "gate": false
+  "gate": false,
+  "ledger": true,
+  "coherence": true,
+  "telemetry": true,
+  "adaptiveMode": "observe",
+  "adaptiveModeForced": false,
+  "strategy": "council_pipeline",
+  "laws": 16,
+  "lawLayerVersion": "1.0.0"
 }
 ```
 
@@ -117,3 +144,31 @@ If `modelKeyConfigured` or `databaseConfigured` is `false`, the env var is
 missing or scoped to the wrong environment. Then open the app and send one
 message — you should see council stages appear live, and the thread should
 still be there after a refresh.
+
+### Verifying Phase 14/15 on a deploy
+
+Send one message, then:
+
+```bash
+curl 'https://<your-app>.vercel.app/api/meta/telemetry?limit=1'   # one record for that run
+curl 'https://<your-app>.vercel.app/api/knowledge/events?limit=20' # its ledger rows
+curl 'https://<your-app>.vercel.app/api/knowledge/overview'
+curl 'https://<your-app>.vercel.app/api/meta/laws'
+```
+
+The telemetry record's `message_id` should equal the assistant message the
+browser received, and `ledger_events` should equal the number of rows the run
+wrote before the record was finalized. `/system` in the UI shows the same thing
+with replay and the Policy Engine.
+
+**Cost note.** Telemetry adds no model calls on the happy path — the coherence
+monitor is one extra call per turn (cheap model, `COGNOS_COHERENCE_ENABLED=false`
+turns it off), and everything else is bookkeeping inside the turn that already
+happened. Set `COGNOS_LEDGER_ENABLED=false` and `COGNOS_TELEMETRY_ENABLED=false`
+to fall back to pre-Phase-14 behaviour without a redeploy of code.
+
+**Vercel function duration.** The post-response batch now includes the knowledge
+projection and the telemetry write. Both are local database work (a handful of
+inserts in one transaction), not model calls, so they add milliseconds — but the
+sequential-council Hobby-plan ceiling described in §3 is unchanged and still the
+thing to watch.

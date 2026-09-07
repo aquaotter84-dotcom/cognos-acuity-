@@ -7,7 +7,13 @@
     "dev": "concurrently -n web,api -c cyan,magenta \"vite\" \"node --watch server/serve.js\"",
     "build": "vite build",
     "start": "node server/serve.js",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "smoke": "node test/smoke.mjs",
+    "demo": "node test/demo.mjs",
+    "baseline": "node test/baseline.mjs",
+    "migrate": "node scripts/migrate.mjs",
+    "migrations:generate": "node scripts/generate-migrations.mjs",
+    "evaluate": "node scripts/evaluate-strategies.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",
@@ -23,6 +29,8 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-socket": "^0.2.11",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.1.0",
