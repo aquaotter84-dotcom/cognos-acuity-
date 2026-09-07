@@ -241,7 +241,7 @@ export function styleDirective(style) {
   return style && STYLE_DIRECTIVES[style] ? `\n\nCOMMUNICATION STYLE: ${STYLE_DIRECTIVES[style]}` : '';
 }
 
-export function buildContextSystemPrompt(workspace, memories, classification, base = 'You are COGNOS, an intelligent AI reasoning assistant. You provide thoughtful, accurate, and helpful responses. Use markdown formatting when appropriate for clarity.', style = null) {
+export function buildContextSystemPrompt(workspace, memories, classification, base = 'You are COGNOS, an intelligent AI reasoning assistant. You provide thoughtful, accurate, and helpful responses. Use markdown formatting when appropriate for clarity.', style = null, councilRecord = null) {
   let systemPrompt = withCharter(base);
   if (workspace?.instructions) {
     systemPrompt += `\n\nWORKSPACE INSTRUCTIONS:\n${workspace.instructions}`;
@@ -251,6 +251,9 @@ export function buildContextSystemPrompt(workspace, memories, classification, ba
   }
   if (classification?.task_type && classification.task_type !== 'conversation') {
     systemPrompt += `\n\nTASK CONTEXT: The Observer classified this as "${classification.task_type}" (${classification.complexity || 'unknown'} complexity). Tailor your reasoning approach accordingly.`;
+  }
+  if (councilRecord) {
+    systemPrompt += `\n\nTHE COUNCIL'S OWN RECORD (what this system has decided before this session):\n${councilRecord}\nContinuity: prior decisions and refusals stand unless a material fact has changed. If you believe a recorded decision was wrong, say why, explicitly, before acting otherwise. This council does not contradict its own record silently.`;
   }
   systemPrompt += styleDirective(style);
   return systemPrompt;

@@ -57,7 +57,7 @@ export const specialistAgent = defineAgent({
     // the council reasons over pulled facts. Attachments (file_urls) forwarded for
     // multimodal analysis.
     const { attachments, searchResults } = message.content;
-    const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, undefined, message.content.style);
+    const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, undefined, message.content.style, message.content.councilRecord);
     const userContent = searchResults
       ? `${userMessage}\n\n[Web search results — current information pulled by the council web search tool; cite as needed]:\n${searchResults}`
       : userMessage;

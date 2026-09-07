@@ -20,7 +20,7 @@ export const synthesizerAgent = defineAgent({
     // --- Phase 4: revision path — critique supplied, rewrite the response ---
     if (content.critique) {
       const { critique, responseText, userMessage, history, workspace, memories, classification } = content;
-      const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, REVISE_BASE, content.style);
+      const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, REVISE_BASE, content.style, content.councilRecord);
       const chatMessages = [
         { role: "system", content: systemPrompt },
         ...history.map(msg => ({ role: msg.role, content: msg.content })),
@@ -40,7 +40,7 @@ export const synthesizerAgent = defineAgent({
       .map((o, i) => `### Sub-task ${i + 1}: ${o.description || o.agent}\n${o.output || "(no output)"}`)
       .join("\n\n");
 
-    const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, SYNTH_BASE, content.style);
+    const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, SYNTH_BASE, content.style, content.councilRecord);
     const chatMessages = [
       { role: "system", content: systemPrompt },
       ...history.map(msg => ({ role: msg.role, content: msg.content })),

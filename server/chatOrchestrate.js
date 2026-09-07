@@ -53,6 +53,61 @@ function publicCoherence(report) {
   };
 }
 
+// Rung One (autonomy): the council opens every session with its own record.
+// The Improvement Ledger holds what the system proposed and decided (refusals
+// are rows, not exceptions) and the event ledger holds the Governor's run
+// vetoes. Both fold into a short self-portrait the writing seats read before
+// they answer. Any failure degrades to null: a record that cannot be read
+// must never break a conversation.
+function parseMaybe(value) {
+  if (value == null) return null;
+  if (typeof value === "string") { try { return JSON.parse(value); } catch { return null; } }
+  return value;
+}
+
+function recordDate(ts) {
+  try { return new Date(Number(ts)).toISOString().slice(0, 10); } catch { return "?"; }
+}
+
+function shortReason(entry) {
+  const text = typeof entry === "string" ? entry : (entry && typeof entry.reason === "string" ? entry.reason : "");
+  return text.length > 140 ? `${text.slice(0, 140)}...` : text;
+}
+
+function formatCouncilRecord(proposals, vetoes) {
+  const lines = [];
+  for (const p of proposals || []) {
+    const reasons = parseMaybe(p.reasons);
+    const reasonEntry = Array.isArray(reasons) ? (reasons.find(r => r && (r.reason || r.law)) || reasons[0]) : null;
+    const reason = reasonEntry ? shortReason(reasonEntry) : null;
+    const lawRefs = Array.isArray(parseMaybe(p.law_refs)) ? parseMaybe(p.law_refs).join(", ") : "";
+    const target = p.target ? ` -> ${String(p.target).slice(0, 60)}` : "";
+    const law = lawRefs ? ` (law ${lawRefs})` : "";
+    lines.push(`- ${recordDate(p.ts_ms)} ${p.decision} ${p.action}${target}${law}${reason ? `: ${reason}` : ""}`);
+  }
+  for (const v of vetoes || []) {
+    const toState = parseMaybe(v.to_state) || {};
+    const payload = parseMaybe(v.payload) || {};
+    const flags = Array.isArray(toState.flags) ? toState.flags : (Array.isArray(payload.flags) ? payload.flags : []);
+    lines.push(`- ${recordDate(v.ts_ms)} vetoed a draft${flags.length ? ` (${flags.join(", ")})` : ""}; the draft was not stored`);
+  }
+  return lines.filter(Boolean);
+}
+
+async function fetchCouncilRecord() {
+  try {
+    const [proposals, vetoes] = await Promise.all([
+      db.ImprovementLedger.recent({ limit: 6 }),
+      db.query("SELECT * FROM knowledge_events WHERE transition = 'veto_raised' ORDER BY seq DESC LIMIT 4")
+    ]);
+    const lines = formatCouncilRecord(proposals, vetoes);
+    return lines.length ? lines.join("\n") : null;
+  } catch (e) {
+    rootLogger.warn("council record unavailable", { error: String(e) });
+    return null;
+  }
+}
+
 const MEMORY_SCHEMA = {
   type: "object",
   properties: {
@@ -233,17 +288,18 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
       const { conversationId, workspaceId, userMessage } = message.content;
       const poolSize = ctx.config.orchestrator.memoryPoolSize || ctx.config.orchestrator.maxMemories;
       // DB reads are independent of each other — fetch concurrently.
-      const [history, pool, workspace] = await Promise.all([
+      const [history, pool, workspace, councilRecord] = await Promise.all([
         ctx.db.Message.recent(conversationId, ctx.config.orchestrator.maxHistoryMessages),
         ctx.db.Memory.filter({ workspace_id: workspaceId, is_enabled: true }, poolSize),
-        ctx.db.Workspace.get(workspaceId)
+        ctx.db.Workspace.get(workspaceId),
+        fetchCouncilRecord()
       ]);
       // PERF: memory-relevance ranking is an LLM call that depends only on the
       // user message and the pool — NOT on the Observer. It is returned as an
       // unresolved promise so it can overlap the Observer instead of preceding
       // it. Only the Specialist actually needs the resolved value.
       const memoriesPromise = selectRelevantMemories(ctx, userMessage, pool, ctx.config.orchestrator.maxMemories);
-      return { ...message.content, history, memoriesPromise, workspace };
+      return { ...message.content, history, memoriesPromise, workspace, councilRecord };
     }
   });
 
