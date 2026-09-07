@@ -16,7 +16,11 @@ import { withCharter } from "./council/charter.js";
 
 // Hard constraint: default gpt-4o-mini, env override allowed, and gpt_5_4 is
 // never routed to (503s on this account — it took the previous deploy down).
-const BANNED_MODELS = new Set(["gpt_5_4", "gpt-5-4"]);
+// Exported (Phase 15.5) so the Policy Engine refuses a proposal naming one of
+// these by citing THIS set rather than a copy that could drift. Exporting the
+// constant changes nothing about resolution: resolveModel() and the defaults
+// below are byte-for-byte what they were.
+export const BANNED_MODELS = new Set(["gpt_5_4", "gpt-5-4"]);
 const DEFAULT_MODEL = "gpt-4o-mini";
 const DEFAULT_BASE_URL = "https://api.bluesminds.com/v1";
 
@@ -87,7 +91,7 @@ function schemaEnvelope(responseJsonSchema) {
   };
 }
 
-export async function callLLM(ctx, { messages, responseJsonSchema = null, model = null, file_urls = null, add_context_from_internet = null, stream = false, onToken = null }) {
+export async function callLLM(ctx, { messages, responseJsonSchema = null, model = null, file_urls = null, add_context_from_internet = null, stream = false, onToken = null, purpose = null }) {
   const { apiKey, url } = apiConfig();
   const selectedModel = mapModel(model);
 
@@ -104,6 +108,34 @@ export async function callLLM(ctx, { messages, responseJsonSchema = null, model 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
 
+  // --- Phase 15.1 telemetry hook ------------------------------------------
+  // One observation per call, on EVERY exit path: success, timeout, abort,
+  // upstream HTTP error, malformed JSON. This is the capture point that turns
+  // "the model hung" from a mystery into a record. It is a side effect: the
+  // observation is wrapped, it cannot throw, and it changes nothing about the
+  // call, the thrown error, or the returned value. When ctx.telemetry is absent
+  // (any caller outside an orchestration run) it is a no-op.
+  const telemetry = ctx?.telemetry || null;
+  const startedAt = Date.now();
+  const promptChars = (payload.messages || []).reduce((n, m) => n + (typeof m.content === "string" ? m.content.length : JSON.stringify(m.content || "").length), 0);
+  let reported = false;
+  const report = (obs) => {
+    if (reported) return;
+    reported = true;
+    try {
+      telemetry?.observeModelCall?.({
+        purpose,
+        model: selectedModel,
+        requestedModel: model || null,
+        streamed: !!stream,
+        timeoutMs,
+        latencyMs: Date.now() - startedAt,
+        promptChars,
+        ...obs
+      });
+    } catch { /* an observation must never break a model call */ }
+  };
+
   let response;
   try {
     response = await fetch(url, {
@@ -114,52 +146,82 @@ export async function callLLM(ctx, { messages, responseJsonSchema = null, model 
     });
   } catch (e) {
     clearTimeout(timer);
-    if (e.name === "AbortError") throw new Error(`Model request timed out after ${timeoutMs}ms`);
+    if (e.name === "AbortError") {
+      // The AbortController fired: the provider did not answer inside the budget.
+      report({ status: "timeout", errorClass: "timeout", errorMessage: `Model request timed out after ${timeoutMs}ms` });
+      throw new Error(`Model request timed out after ${timeoutMs}ms`);
+    }
+    report({ status: "network_error", errorClass: "network", errorMessage: String(e?.message || e).slice(0, 400) });
     throw e;
   }
 
   if (!response.ok) {
     clearTimeout(timer);
     const detail = await response.text();
+    report({ status: "http_error", httpStatus: response.status, errorMessage: detail.slice(0, 400) });
     throw new Error(`Model request failed (${response.status}): ${detail.slice(0, 400)}`);
   }
 
   // --- Streaming path: used only by the Specialist/Synthesizer final answer ---
   if (stream) {
-    try {
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
     let full = "";
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) continue;
-        const data = trimmed.slice(5).trim();
-        if (data === "[DONE]") continue;
-        try {
-          const delta = JSON.parse(data)?.choices?.[0]?.delta?.content;
-          if (delta) { full += delta; onToken?.(delta); }
-        } catch { /* skip malformed chunk */ }
+    try {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const data = trimmed.slice(5).trim();
+          if (data === "[DONE]") continue;
+          try {
+            const delta = JSON.parse(data)?.choices?.[0]?.delta?.content;
+            if (delta) { full += delta; onToken?.(delta); }
+          } catch { /* skip malformed chunk */ }
+        }
       }
-    }
-    return full;
+      // No `usage` on a streamed completion unless the provider volunteers one,
+      // so the recorder estimates from characters and flags it as estimated.
+      report({ status: "success", charsOut: full.length });
+      return full;
+    } catch (e) {
+      const aborted = e?.name === "AbortError";
+      report({
+        status: aborted ? "timeout" : "stream_error",
+        errorClass: aborted ? "timeout" : "stream",
+        errorMessage: aborted ? `Model request timed out after ${timeoutMs}ms` : String(e?.message || e).slice(0, 400),
+        charsOut: full.length
+      });
+      throw aborted ? new Error(`Model request timed out after ${timeoutMs}ms`) : e;
     } finally { clearTimeout(timer); }
   }
 
   clearTimeout(timer);
   const data = await response.json();
   const content = data?.choices?.[0]?.message?.content ?? "";
-  if (!responseJsonSchema) return content;
-  if (typeof content !== "string") return content;
+  // Token usage, where the provider exposes it. Measured beats estimated, and
+  // the record says which one it got.
+  const usage = data?.usage || null;
+  if (!responseJsonSchema) {
+    report({ status: "success", usage, charsOut: typeof content === "string" ? content.length : 0 });
+    return content;
+  }
+  if (typeof content !== "string") {
+    report({ status: "success", usage, charsOut: 0 });
+    return content;
+  }
   try {
-    return JSON.parse(content);
+    const parsed = JSON.parse(content);
+    report({ status: "success", usage, charsOut: content.length });
+    return parsed;
   } catch {
+    report({ status: "parse_error", errorClass: "malformed_json", usage, errorMessage: "Model returned JSON-schema content that could not be parsed", charsOut: content.length });
     throw new Error("Model returned JSON-schema content that could not be parsed");
   }
 }

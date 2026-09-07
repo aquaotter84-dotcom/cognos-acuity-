@@ -1,8 +1,11 @@
 // Ported from the original src/components/chat/MobileNav.jsx.
 // Tabs reduced to the surfaces that still exist (Docs/Spaces removed).
+// Phase 14/15 adds one more tab, System: a read-only window onto the event
+// ledger, telemetry and laws. Item padding drops to px-2 below sm so five tabs
+// still fit a 360px screen — cosmetic only, nothing else here changed.
 
 import { Link, useLocation } from 'react-router-dom';
-import { MessageSquare, Brain, Activity as ActivityIcon, Settings as SettingsIcon } from 'lucide-react';
+import { MessageSquare, Brain, Activity as ActivityIcon, Settings as SettingsIcon, Network } from 'lucide-react';
 import { useCognos } from '@/lib/cognosContext';
 
 export default function MobileNav() {
@@ -15,6 +18,7 @@ export default function MobileNav() {
     { to: chatTo, path: '/', label: 'Chat', icon: MessageSquare },
     { to: '/memory', path: '/memory', label: 'Memory', icon: Brain },
     { to: '/activity', path: '/activity', label: 'Activity', icon: ActivityIcon },
+    { to: '/system', path: '/system', label: 'System', icon: Network },
     { to: '/settings', path: '/settings', label: 'Settings', icon: SettingsIcon },
   ];
 
@@ -24,7 +28,7 @@ export default function MobileNav() {
         {navItems.map(({ to, path, label, icon: Icon }) => {
           const isActive = location.pathname === path;
           return (
-            <Link key={path} to={to} className={`flex flex-col items-center gap-1 px-3 py-1.5 rounded-lg transition-colors ${isActive ? 'text-primary' : 'text-muted-foreground'}`}>
+            <Link key={path} to={to} className={`flex flex-col items-center gap-1 px-2 sm:px-3 py-1.5 rounded-lg transition-colors ${isActive ? 'text-primary' : 'text-muted-foreground'}`}>
               <Icon className="w-5 h-5" />
               <span className="text-xs">{label}</span>
             </Link>

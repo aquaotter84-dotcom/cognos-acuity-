@@ -24,16 +24,20 @@ Copied byte-for-byte, only import paths and `ctx.base44.entities` → `ctx.db` c
 | `server/council/strategist.js` | Strategist decomposition prompt, `ALLOWED_AGENTS`, schema |
 | `server/council/specialist.js` | All nine `SPECIALIST_PROMPTS`, decomposed + direct paths |
 | `server/council/synthesizer.js` | `SYNTH_BASE`, `REVISE_BASE`, synthesis + revision paths |
-| `server/council/critic.js` | Critic prompt, charter check schema, skip/degrade behaviour |
-| `server/council/governor.js` | Sovereignty gate, `SECRET_PATTERNS`, flag logic |
+| `server/council/critic.js` | Critic prompt, charter check schema, skip/degrade behaviour — **prompt text still byte-identical**; Phase 14 appends a data section to the *user* turn (§9.5) |
+| `server/council/governor.js` | Sovereignty gate, `SECRET_PATTERNS`, flag logic — **decision logic untouched**; Phase 14 passes coherence through as information only (§9.5) |
 | `server/council/index.js` | Registry wiring |
 | `server/shared/*.js` | orchestrator, registry, protocol, runtime, eventBus, errors, logging |
-| `server/llm.js` (lower half) | `STYLE_DIRECTIVES`, `styleDirective`, `buildContextSystemPrompt` and the COGNOS identity base prompt |
-| `server/chatOrchestrate.js` | Pipeline order, memory-relevance prompt, memory-extraction prompt, summarization prompt, Phase 4 revision loop, Phase 13 adaptive rule |
-| `src/components/chat/CouncilTrace.jsx` | Unchanged |
+| `server/llm.js` (lower half) | `STYLE_DIRECTIVES`, `styleDirective`, `buildContextSystemPrompt` and the COGNOS identity base prompt — **still byte-identical**; only `callLLM` above it gained telemetry (§10.1) |
+| `server/chatOrchestrate.js` | Memory-relevance prompt, memory-extraction prompt, summarization prompt, Phase 4 revision loop, Phase 13 adaptive rule — **all verbatim**; the pipeline gained three non-council stages and a veto consequence (§9, §10) |
+| `src/components/chat/CouncilTrace.jsx` | Was unchanged; Phase 14/15 add one collapsible section that renders only when the new fields are present (§9.7) |
 
-The pipeline order is unchanged:
+The Phase 13 pipeline order was:
 `contextAssembly → observer → webSearch → strategist → specialist → synthesizer → critic ⟳ → governor → (memory ‖ audit ‖ summary)`
+
+Phase 14/15 insert three **non-council** stages (they do not vote and are not
+seats) and keep every existing edge exactly where it was:
+`contextAssembly → observer → webSearch → strategist → specialist → synthesizer → coherenceMonitor → critic ⟳ (coherence re-checked after any revision) → governor → (memory ‖ deferred critic) → knowledgeProjection → telemetryRecord ‖ audit ‖ summary`
 
 ---
 
@@ -222,3 +226,219 @@ council. Left serial.
 window, not total function wall-time: the post-response batch still runs inside
 the same invocation. This improves perceived latency; it does not by itself
 avoid the Hobby 60 s cap discussed in §7.
+
+---
+
+## 9. Phase 14 — Dynamic Systems (what changed, what did not)
+
+Everything in this phase is a **subsystem the council consults, or that observes
+it**. No new council seat was added: the six operators are still six
+(`pin.six_operators`), and event emission is a side effect of the existing send
+path, never a second channel to the user (`pin.telemetry_side_effect`).
+
+### 9.1 New storage (additive only)
+
+`server/db/schema.js` is the single source of truth; `migrations/*.sql` is
+generated from it by `scripts/generate-migrations.mjs`.
+
+| Table | Purpose |
+|---|---|
+| `knowledge_events` | the append-only event ledger (14.1) |
+| `beliefs` | current-state projection of what the system holds to be true |
+| `confidence_history` | one row per confidence/strength change, for any entity |
+| `relationships` | living structures with strength, direction and decay (14.4) |
+| `coherence_reports` | the monitor's measurement per run (14.5) |
+
+Plus two additive columns on one existing table: `memories.confidence NUMERIC`
+and `memories.confidence_as_of_ms BIGINT`. No existing table was dropped, renamed,
+truncated or rewritten; `audit_events` remains its own separate log and is not
+the ledger.
+
+Every statement is `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` /
+`ADD COLUMN IF NOT EXISTS`, applied by the same lazy migration the base app
+already ran. `scripts/migrate.mjs` refuses to execute any migration containing
+`DROP`, `TRUNCATE`, `DELETE FROM`, `RENAME` or `UPDATE … SET`.
+
+### 9.2 Writes are transactional with their events
+
+`server/db.js` gained `withTransaction(fn)` (re-entrant through an
+`AsyncLocalStorage` ambient-transaction guard, so nested calls join instead of
+deadlocking) and `createStore(run)`, which hands every caller the same accessors
+bound to the same runner. Memory writes, belief projections, relationship
+changes, summary updates, conversation metadata and the persisted conclusion
+each append their ledger event **inside the same transaction** as the row they
+describe. If the write rolls back, the event rolls back with it.
+
+**Kill switch:** `COGNOS_LEDGER_ENABLED=false` disables ledger emission
+entirely; the app then behaves as it did before this phase.
+
+### 9.3 Two behavioural changes, stated plainly
+
+These are the only places where Phase 14 changes what the app *does* rather than
+what it *records*:
+
+1. **A vetoed run no longer writes memory or updates the conversation summary.**
+   The Governor's veto already decided that the draft never ships; Phase 14
+   makes the store agree with that decision. On a vetoed run the pipeline skips
+   `memoryExtraction` and the summary write, records `veto_raised` in the ledger
+   (entity type `run`, digest-only — the refused text is never stored, only its
+   length and SHA-256) and still stores the sovereignty refusal the user sees.
+   Before: a vetoed run could still extract memories from the exchange.
+   This is required by the success criteria ("a vetoed run records the veto in
+   telemetry and writes nothing to memory") and is asserted in `test/smoke.mjs`
+   scenario 4.
+2. **A streaming abort now surfaces as a timeout error, not a raw `AbortError`.**
+   `server/llm.js` rethrows the streaming-path abort as
+   `Error("Model request timed out after <n>ms")` so the failure is classified
+   the same way on the streaming and non-streaming paths. Before, the user-facing
+   message for that case was `This operation was aborted`. The non-streaming
+   path's message is unchanged.
+
+### 9.4 What the coherence monitor is, and is not
+
+`server/knowledge/coherence.js` registers `coherenceMonitor` as a **non-council
+stage** — the same kind of participant as `contextAssembly` or `auditLog`. It
+has no vote, no seat, no ability to change the answer. It compares the draft
+against the beliefs the store already holds and reports measurements:
+`coherent | confirmation | contradiction | mixed | unverified | unchecked | error`.
+
+A contradiction is **not an error**. It is appended as `contradiction_detected`
+(`reversible = false` — it happened and cannot un-happen) with both claims, the
+belief's lineage, and the confidence delta. The belief is weakened by
+`0.25 × claim confidence`, a successor hypothesis may be proposed, and the
+belief's row is never deleted: retirement is a status transition.
+
+Persistence is gated on the draft actually shipping. If the Governor vetoes, the
+contradiction is not written as knowledge — the veto is.
+
+### 9.5 The two operator touch-points
+
+* `server/council/critic.js` — the Critic's **system prompt is byte-identical**.
+  A bracketed data section is appended to the *user* turn containing the
+  coherence measurement and the temporal digest for the implicated beliefs
+  (the Critic calls `ctx.temporal.digestForBeliefs(...)` itself — the temporal
+  reasoner is a helper operators may call, not an operator). When the monitor is
+  off or found nothing, the appended string is empty, so the Critic's input is
+  identical to pre-Phase-14. Its schema, score, skip/degrade behaviour and
+  governance role are unchanged; `evaluation.temporal` and
+  `evaluation.coherenceVerdict` are additive fields.
+* `server/council/governor.js` — receives the coherence report and returns it on
+  its verdict. `approved` and `flags` are computed exactly as before, from the
+  draft text and `SECRET_PATTERNS` alone. Coherence can never approve what the
+  Governor would refuse, nor refuse what it would have approved.
+
+### 9.6 Relationship dynamics
+
+`server/knowledge/relationships.js` maintains living structures (user↔system,
+concept↔concept co-activations) with strength and direction. Effective strength
+decays exponentially from `strength_as_of_ms` with a 14-day half-life and a 0.05
+floor, so a stale link weakens with no writer involved. A bounded sweep
+(`sweepLimit` 25 per run) logs each weakening as `relationship_decayed`;
+retiring a belief transfers its co-activation links to the successor
+(`transferLinksOnRetirement`) rather than dropping them.
+
+### 9.7 Query surfaces (read-only) and the one UI addition
+
+Bare JSON endpoints under `/api/knowledge/*` (events, overview, analytics,
+beliefs, relationships, coherence, `state/:type/:id` for replay,
+`verify/:type/:id`, `lineage/…`, `temporal/…`) and `/api/meta/*` (telemetry,
+strategies, laws, policy, improvements, adaptive, evaluations, rates). One
+gated write exists: `POST /api/meta/adaptations`, answered by the Policy Engine.
+
+`src/pages/System.jsx` is a new read-only page (route `/system`, one extra
+sidebar link and one extra mobile tab) that renders those endpoints, including
+replay-at-an-instant and the Policy Engine's refusals. `CouncilTrace.jsx` gained
+a "Knowledge & telemetry" section that renders only when the new council fields
+are present, so an older persisted message draws exactly what it drew before.
+`MobileNav.jsx` item padding changed `px-3` → `px-2 sm:px-3` so five tabs fit a
+360 px screen; that is the only cosmetic change to an existing component.
+
+`/api/health` gained additive keys (`ledger`, `coherence`, `telemetry`,
+`adaptiveMode`, `adaptiveModeForced`, `strategy`, `laws`, `lawLayerVersion`);
+`start` and `done` SSE frames gained `runId`. No existing key or frame changed
+shape.
+
+---
+
+## 10. Phase 15 — Meta-Cognition (what changed, what did not)
+
+### 10.1 The single telemetry capture point
+
+`server/llm.js`'s `callLLM` is the only place a model is called, so it is the
+only place instrumented. It gained an optional `purpose` label and a
+**report-once** `observeModelCall(...)` on every exit path: success, timeout,
+abort, network error, HTTP error, stream error, parse error. Nothing else in the
+app was threaded with callbacks. `server/llm.js` also now exports
+`BANNED_MODELS` so the Policy Engine and `resolveModel()` cannot drift apart —
+the ban list, the alias table, the resolution order and the defaults are
+unchanged (`pin.model_ban`).
+
+Token usage is captured from the model response where the provider exposes it;
+streaming responses do not, so those calls record estimates from character
+counts with `tokens_measured = false`. Cost comes from the editable rate table
+in `server/meta/rates.js` (constants, not config service). A failed call records
+the estimated cost of the prompt that was sent — providers do not bill for 4xx,
+so treat cost on a failed run as an upper bound.
+
+The recorder (`server/meta/telemetry.js`) subscribes to
+`server/shared/eventBus.js`, which already published per-run lifecycle events.
+It finalizes **once**, in one transaction (run row + per-call rows + the
+adaptive observation), and is idempotent: the error path and the success path
+can both call it.
+
+### 10.2 One strategy, measured rigorously
+
+`server/shared/registry.js` was checked first and does **not** fit the strategy
+registry role: it is per-run and in-memory, maps stage name → agent, has no ids,
+descriptions, selection signals, enabled state or persistence, and cannot be
+inspected between runs. It is left untouched and still dispatches stages.
+`GET /api/meta/registry-check` returns that reasoning.
+
+The `strategies` table is seeded with exactly one row, `council_pipeline` (the
+canonical path), and its schema allows future rows. The evaluation harness
+(`server/meta/evaluate.js`, `scripts/evaluate-strategies.mjs`) is offline and
+operator-invoked; there is no route that runs an evaluation on a user's turn.
+With one strategy, both arms are the same strategy and the harness says so
+(`identical_arms`) instead of declaring a meaningless winner.
+
+### 10.3 Observe mode, and why it cannot be turned off at runtime
+
+The adaptive orchestrator records which strategy it would select and why
+(`adaptive_decisions`, one row per run) and switches nothing.
+`resolveAdaptiveMode()` refuses `auto` citing `phase15.observe_only`;
+`evaluateSwitch()` returns `switch: false` unconditionally in v1 and reports
+which evidence thresholds are unmet (20 runs per arm, 10 evaluation trials,
+20% latency improvement, error-rate and contradiction deltas). A single success
+changes nothing — that guard is stated in the response, not implied.
+
+### 10.4 The law layer
+
+`server/council/laws.js` imports `CHARTER` and lists the four charter laws
+(Truth, Evidence, Agency, Dignity) plus twelve operational pins, deep-frozen at
+module load, with `assertLawLayerImmutable()` verified by the smoke run (which
+attempts `LAWS.push(...)` and a property rewrite and asserts neither takes).
+It is not runtime-writable: `modify_law` is refused before justification is even
+considered.
+
+`server/meta/policy.js` gates fifteen actions. Every judgment — refusal and
+approval — is appended to `improvement_ledger` with the action, target,
+proposal, evidence, cited laws, justification, decision and `applied` flag.
+"Approved" means **authorized and recorded**: in v1 the only thing actually
+applied at runtime is a strategy-registry row (data in a new table that cannot
+touch the six seats or the send path). A model change, a schema change or a new
+subsystem stays a reviewed code change. A revert appends a new row; nothing is
+edited.
+
+### 10.5 New environment variables
+
+All optional; every one defaults to the behaviour described above.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `COGNOS_LEDGER_ENABLED` | `true` | set `false` to stop ledger emission entirely (kill switch) |
+| `COGNOS_COHERENCE_ENABLED` | `true` | set `false` to skip the coherence monitor stage |
+| `COGNOS_TELEMETRY_ENABLED` | `true` | set `false` to stop writing telemetry records |
+| `COGNOS_ADAPTIVE_MODE` | `observe` | recorded as requested; v1 forces `observe` and says why |
+
+No secret is read from anywhere but the environment, and no new secret was
+added. No auth, no accounts, no login route.

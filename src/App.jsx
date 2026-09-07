@@ -5,6 +5,7 @@ import CognosLayout from '@/components/CognosLayout';
 import Chat from '@/pages/Chat';
 import Memory from '@/pages/Memory';
 import Activity from '@/pages/Activity';
+import System from '@/pages/System';
 import Settings from '@/pages/Settings';
 
 export default function App() {
@@ -15,6 +16,7 @@ export default function App() {
           <Route path="/" element={<Chat />} />
           <Route path="/memory" element={<Memory />} />
           <Route path="/activity" element={<Activity />} />
+          <Route path="/system" element={<System />} />
           <Route path="/settings" element={<Settings />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

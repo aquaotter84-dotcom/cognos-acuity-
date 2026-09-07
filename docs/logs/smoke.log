@@ -1,0 +1,210 @@
+COGNOS — Phase 14 (Dynamic Systems) + Phase 15 (Meta-Cognition) smoke run
+app    http://127.0.0.1:42693
+model  http://127.0.0.1:33627/v1 (scriptable mock)
+db     PGlite over the Postgres wire protocol, schema applied lazily at boot
+laws   16 laws, layer v1.0.0
+
+── 0. the server boots and the existing surface still answers
+  ✓ GET /api/health is fast — 200 in 4ms
+  ✓ health reports the Phase 14/15 subsystems — {"ledger":true,"coherence":true,"telemetry":true,"adaptiveMode":"observe","strategy":"council_pipeline","laws":16,"lawLayerVersion":"1.0.0"}
+  ✓ model resolution and defaults are untouched, and no banned model is in play — model=openai/gpt-oss-20b fastModel=openai/gpt-oss-20b
+  ✓ no auth gate was introduced — gate=false
+  ✓ every Phase 14/15 table exists (additive migration applied) — 11/11
+  ✓ memories kept their columns and gained confidence — 15 columns
+
+── 1. one exchange → answer + ledger events + exactly one telemetry record
+  ✓ the SSE stream completed on the one send path — 45 frames in 138ms
+  ✓ the user got an answer — 55 chars
+  ✓ the start frame carries the run id — run_mtqsf9ppnncbzc41
+  ✓ the Phase 13 council trace is intact — all pinned keys present
+  ✓ coherence is emitted as a side effect of the existing path — verdict=unverified
+  ✓ the knowledge projection is emitted as a side effect — 1 event(s)
+  ✓ the run reports its strategy and telemetry inline — {"strategy":"council_pipeline","telemetryRun":"run_mtqsf9ppnncbzc41"}
+  ✓ exactly one telemetry record for the exchange — 1 row
+  ✓ telemetry links the run to the persisted conclusion — msg_mtqsf9sp9yjf982g
+  ✓ telemetry recorded per-stage latency — 14 stages: contextAssembly → observer → webSearch → strategist → specialist → synthesizer → coherenceMonitor → critic → governor → memoryExtraction → auditLog → summary → knowledgeProjection → telemetryRecord
+  ✓ telemetry recorded model usage and a cost estimate — 5 call(s), $0.00008
+  ✓ token usage was measured from the model response where exposed — 1234 tokens
+  ✓ confidence was taken from the council, with its source — 0.9 from critic.score/10
+  ✓ the coherence verdict is on the record — unverified
+  ✓ the adaptive orchestrator only observed — {"mode":"observe","reason":"Council pipeline (canonical) scored 10 (complexity 'unknown' in [simple, moderate, complex]; task_type 'unknown' in scope; decomposition signal covered; web-search signal covered; history 0 >= 0; is the default strategy)","switched":false,"candidates":[{"score":10,"reasons":["complexity 'unknown' in [simple, moderate, complex]","task_type 'unknown' in scope","decomposition signal covered","web-search signal covered","history 0 >= 0","is the default strategy"],"strategy_id":"council_pipeline"}],"strategy_id":"council_pipeline"}
+  ✓ no failure on a healthy run — 0 failure(s)
+  ✓ the ledger recorded the exchange — 6 event(s): belief_created×1, conversation_updated×1, memory_written×1, message_recorded×1, relationship_created×1, summary_updated×1
+  ✓ memory writes emitted memory_written in the same transaction
+  ✓ belief projection emitted belief_created
+  ✓ the conclusion emitted message_recorded
+  ✓ relationship dynamics emitted a transition — relationship_created
+  ✓ telemetry's ledger count matches the events the run itself wrote — 4 recorded vs 4 written before the record was finalized
+  ✓ confidence changes are logged as transitions (see scenario 3) — 0 confidence_changed row(s) after the first exchange; a new belief records belief_created instead
+  ✓ memories actually grew — 0 → 1
+  ✓ a belief was projected from the memory write — 1 belief(s)
+  ✓ the conversation summary was updated by the shipped answer — The user tested the council and it responded.
+  ✓ audit_events is still its own separate log — 1 audit row(s), kept apart from the ledger
+  (165ms)
+
+── 2. replay reconstructs a belief's state at a past instant
+  ✓ a belief exists to replay — bel_mtqsf9rp1kwcdl0b
+  ✓ the belief has history in the ledger — 1 event(s)
+  ✓ the fold of the whole ledger reproduces the materialized row — []
+  ✓ current state equals the stored row — 0.89 vs 0.89
+  ✓ replay at the first instant stops at that instant — 1 of 1 event(s), as of 2026-09-07T05:16:00.184Z
+  ✓ the replayed confidence is the confidence at that instant — 0.89 == 0.89
+  ✓ the replay names the transition that produced that state — belief_created at 2026-09-07T05:16:00.184Z
+  ✓ the verify endpoint reports no drift — []
+  ✓ tracked fields are declared for beliefs — ["statement","status","hypothesis","confidence","evidence_level","volatility","support_count","contradict_count","first_seen_ms","last_confirmed_ms","retired_at_ms","successor_id"]
+  (29ms)
+
+── 3. a conflicting exchange → a measured transition, not a crash or a silent overwrite
+  ✓ the exchange completed — a contradiction is not an error — Understood — you have moved to R for your analysis work, so 
+  ✓ the monitor measured a contradiction — contradiction, 1 claim(s)
+  ✓ the contradiction names the stored belief it conflicts with — ["bel_mtqsf9rp1kwcdl0b"]
+  ✓ the Critic was given the coherence data to act on — 1693 chars of prompt
+  ✓ the Critic was given the temporal digest too
+  ✓ the Governor received it as information and still decided by its own rules — {"checked":true,"verdict":"contradiction","reason":null,"note":"The draft contradicts one stored belief.","beliefsConsidered":1,"contradictions":[{"claim":"The user now prefers R over Python for data work.","beliefId":"bel_mtqsf9rp1kwcdl0b","confidence":0.9,"note":"the draft states the opposite of the stored preference"}],"confirmations":[],"hypotheses":[]}
+  ✓ the Critic's system prompt was not modified — the data arrived in the user turn — bracketed section appended to the user message
+  ✓ the belief was not silently overwritten — its confidence moved measurably — 0.89 → 0.676
+  ✓ the contradiction was counted on the belief — 0 → 1
+  ✓ contradiction_detected is in the ledger — 10 event(s) this run
+  ✓ the transition records the confidence delta it caused — {"confidence":-0.225,"contradict_count":1}
+  ✓ the transition records the belief state it produced — {"status":"active","statement":"The user prefers Python for data work.","confidence":0.676,"hypothesis":false,"volatility":"medium","success
+  ✓ a contradiction is recorded as a measurement that cannot un-happen — reversible=false, from {"status":"active","statement":"The user prefers Python for data work.","confidence":0.901
+  ✓ the belief kept its row (nothing was deleted) — active
+  ✓ confidence history is retained for the temporal reasoner — 3 row(s): 0.89 → 0.901 → 0.676
+  ✓ replay at the instant before the contradiction returns the confidence the belief had then — 0.901 == 0.901 (was 0.89 before this exchange)
+  ✓ the pre-contradiction state is higher than the post-contradiction state — 0.901 > 0.676
+  ✓ replay at the instant of the contradiction returns the NEW confidence — 0.676 == 0.676
+  ✓ the coherence report is persisted with both claims and lineage — 1 report(s)
+  ✓ the report points at the run that produced it — run_mtqsf9ulz99dnm8i
+  ✓ the temporal helper answers velocity, uncertainty trend and stability — {"uncertainty":"growing","stability":0.6569}
+  ✓ the helper reports what changed before the conclusion — 10
+  (110ms)
+
+── 4. a vetoed run records the veto and writes nothing to memory
+  ✓ the stream still completed — the veto is part of the one send path — 50 frames
+  ✓ the Governor refused the draft — ["potential_secret_leak"]
+  ✓ the user received the sovereignty refusal, never the draft — The Governor stopped that reply: it looked like it would leak somethin
+  ✓ the vetoed draft is not the delivered answer — 107 chars streamed then discarded by the client
+  ✓ the persisted message is the refusal, not the draft
+  ✓ no row anywhere in the store contains the vetoed draft — 0 messages, 0 memories
+  ✓ telemetry recorded the veto — vetoed
+  ✓ telemetry names the operator that produced the rejected draft — specialist
+  ✓ telemetry records the Governor's stated reason — the draft matched a credential pattern, so it was stopped before it could leak a secret
+  ✓ the vetoed text is not stored — only its length and digest — sha256=46d818db95302a02…
+  ✓ veto_raised is in the ledger — 4 event(s) for the vetoed run: veto_raised, relationship_weakened, message_recorded, conversation_updated
+  ✓ the veto event is about the run and is not reversible — run/false
+  ✓ the ledger does not contain the vetoed text — 0 rows contain the draft
+  ✓ no memory_written event for the vetoed run — 0
+  ✓ no belief was projected from the vetoed run
+  ✓ nothing was written to memory — 2 → 2
+  ✓ the conversation summary was not updated — The user tested the council and it responded.
+  ✓ the refusal message itself was still stored, with its lineage — 4 → 6 (user + refusal)
+  ✓ message_recorded was emitted for the refusal
+  ✓ the user↔system relationship did not strengthen on a vetoed run — relationship_weakened
+  (61ms)
+
+── 5. a bad model name appears in telemetry as a documented failure
+  ✓ the run failed instead of inventing an answer — Model request failed (400): {"error":{"message":"The model 'bad-nonexistent-mode
+  ✓ the error frame carries the documented failure message — Model request failed (400): {"error":{"message":"The model 'bad-nonexistent-model' does not exist","
+  ✓ telemetry recorded the failed run — error
+  ✓ the failure is classified — {"at":1788758160464,"kind":"bad_request","model":"bad-nonexistent-model","stage":"observer","status":"http_error","message":"{\"error\":{\"message\":\"The model 'bad-nonexistent-model' does not exist\",\"type\":\"invalid_request_error\",\"code\":\"model_not_found\"}}","recovered":false,"latency_ms":1,"error_class":"bad_request","http_status":400}
+  ✓ the upstream HTTP status is captured — HTTP 400
+  ✓ the model that was asked for is captured — bad-nonexistent-model
+  ✓ every model call is on the record, including the failed ones — 2 call(s): observer:http_error, specialist:http_error
+  ✓ the error class and message are stored per call — {"error_class":"bad_request","error_message":"{\"error\":{\"message\":\"The model 'bad-nonexistent-model' does "}
+  ✓ a failed run wrote nothing to memory — 2 → 2
+  ✓ the failure was still recorded as an event, not swallowed — 1 event(s)
+  (24ms)
+
+── 6. a forced timeout (streaming abort) appears in telemetry as a documented failure
+  ✓ the client aborted instead of hanging forever — 2423ms
+  ✓ the run reported a failure — Model request timed out after 1200ms
+  ✓ telemetry recorded the timed-out run — error
+  ✓ the abort path is classified as a timeout — {"at":1788758161688,"kind":"timeout","model":"openai/gpt-oss-20b","stage":"observer","status":"timeout","message":"Model request timed out after 1200ms","recovered":false,"latency_ms":1203,"error_class":"timeout","http_status":null}
+  ✓ the error message is the documented timeout text — Model request timed out after 1200ms
+  ✓ the latency of the aborted call is captured — 1203ms
+  ✓ no answer was fabricated — memory untouched
+  (2426ms)
+
+── 7. every conclusion carries temporal lineage back to its events and its run
+  ✓ the run's lineage lists every transition it caused — 6 event(s)
+  ✓ lineage names the transitions — {"summary_updated":1,"memory_written":1,"belief_created":1,"relationship_created":1,"message_recorded":1,"conversation_updated":1}
+  ✓ lineage resolves the run's messages — ["conv_mtqsf9plrq09lo4s","msg_mtqsf9sp9yjf982g"]
+  ✓ lineage carries a temporal digest for the run — {"eventCount":6,"transitions":{"summary_updated":1,"memory_written":1,"belief_created":1,"relationship_created":1,"message_recorded":1,"conversation_updated":1},"entities":5}
+  ✓ the conclusion is itself a ledger event — msg_mtqsf9sp9yjf982g
+  ✓ the conclusion event carries the final approved text — 55 chars
+  ✓ the conclusion event carries the governance measurement — {"flags":[],"approved":true}
+  ✓ the message lineage points back at the run — 1 event(s)
+  ✓ the telemetry record and the ledger agree about the run — 6 ledger event(s) on the record
+  ✓ the record exposes its model calls — 5 call(s)
+  ✓ a belief's lineage reaches back to the run that created it — ["run_mtqsf9ppnncbzc41","run_mtqsf9ulz99dnm8i"]
+  (16ms)
+
+── 8. change analytics are readable and consistent with the ledger
+  ✓ the analytics event total equals the ledger total — 22 == 22
+  ✓ change rate per entity is computed — 12 entit(y/ies), top belief 0.2/day
+  ✓ a stability index is computed, with a reading — 0.8772 — the store is settling
+  ✓ churn is bucketed over time — 1 bucket(s), 0.733/day
+  ✓ relationships have their own stability reading — 0.8934
+  ✓ the overview summarizes beliefs, relationships and coherence — {"beliefs":[{"status":"active","count":1,"avg_confidence":0.676},{"status":"hypothesis","count":1,"avg_confidence":0.54}],"relationships":1,"coherence":[{"verdict":"coherent","count":1},{"verdict":"contradiction","count":1},{"verdict":"unverified","count":1}]}
+  ✓ the overview states the ledger is append-only
+  ✓ the user↔system relationship is alive with an effective strength — 1 relationship(s), top effective strength 0.3580
+  ✓ relationships carry direction and kind — {"kind":"user_system","direction":"directed"}
+  ✓ the ledger endpoint reports the transition vocabulary — 28 transition types, 22 row(s) returned
+  ✓ ledger queries can be filtered by transition — 1 contradiction_detected row(s)
+  (37ms)
+
+── 9. the Policy Engine refuses law-violating adaptations and logs them
+  ✓ a banned model is refused — 409 refused
+  ✓ the refusal cites the model ban — ["pin.model_ban: 'gpt_5_4' is banned outright: it 503s on this account and took a previous deploy down"]
+  ✓ modifying the law layer is refused — ["phase15.law_layer_immutable: the law layer cannot be modified at runtime, by an endpoint, or by an adaptation. Changing a law is a reviewed code change to server/council/laws.js"]
+  ✓ introducing auth is refused — ["pin.no_auth: no login or account system is added; conversations stay thread-based"]
+  ✓ weakening the veto is refused — ["pin.veto_integrity: the Governor's veto is sovereign. Nothing may weaken it, route around it, or ship a draft it refused"]
+  ✓ a second channel to the user is refused — ["pin.single_send_path: there is one path from the user's message to the user's answer; observation is a side effect of it, never a second channel"]
+  ✓ a seventh council seat is refused — ["pin.six_operators: the council is six operators plus the web-search tool they consult. 'register_operator' would change the seats; subsystems may be added instead, and they do not vote"]
+  ✓ an unevidenced adaptation is refused, not deferred — ["charter.evidence: a proposal needs a stated justification of at least 20 characters; this one has 7","phase15.complexity_justification: complexity must justify itself; an unevidenced change is refused, not deferred","charter.evidence: no law was cited. Cite at least one of: charter.truth, charter.evidence, charter.agency, charter.dignity, pin.veto_integrity, pin.single_send_path, pin.model_ban, pin.no_auth, pin.secrets_env_only, pin.additive_schema, pin.six_operators, pin.telemetry_side_effect, pin.ledger_append_only, phase15.observe_only, phase15.complexity_justification, phase15.law_layer_immutable"]
+  ✓ a destructive migration is refused — ["pin.additive_schema: the migration is not additive: it drops, truncates, deletes, renames or rewrites existing structure","pin.additive_schema: 1 statement(s) are not CREATE/ADD COLUMN IF NOT EXISTS: DROP TABLE memories"]
+  ✓ persisting a credential is refused — ["pin.secrets_env_only: credentials live in server environment variables only — never in the database, the bundle, the ledger, or telemetry","pin.secrets_env_only: the proposal itself contains something that looks like a credential; secrets are never stored, logged or proposed"]
+  ✓ a lawful, evidenced, additive adaptation is approved — approved, applied=false
+  ✓ approval authorizes and records — it does not execute at runtime — null
+  ✓ the approved proposal names the laws it satisfied — ["pin.additive_schema"]
+  ✓ the judgment records the justification verbatim — charter.evidence: the council may only assert what it can ve
+  ✓ an action nobody defined is refused — ["phase15.complexity_justification: 'make_it_smarter' is not a gated action the Policy Engine knows. Known actions: change_model, enable_strategy, disable_strategy, set_adaptive_mode, schema_change, add_subsystem, register_operator, remove_operator, modify_law, add_auth, store_secret, change_send_path, weaken_veto, rewrite_history, revert_improvement","phase15.complexity_justification: unknown action 'make_it_smarter'"]
+  ✓ every judgment — refusal and approval — is in the Improvement Ledger — 0 → 11 (11 rows for 11 proposals)
+  ✓ each row records what, why and which law — 11 row(s) inspected
+  ✓ refusals keep the laws they violated
+  ✓ nothing in the ledger was applied at runtime
+  ✓ the law layer reports itself immutable over HTTP — v1.0.0, 16 laws
+  ✓ charter laws and operational pins are both present — 4 charter + 12 pins
+  ✓ the law array cannot be extended at runtime — 16 law(s) after the attempt
+  ✓ an individual law cannot be rewritten at runtime — unchanged
+  ✓ assertLawLayerImmutable still passes — {"immutable":true,"problems":[],"count":16,"version":"1.0.0"}
+  ✓ the policy surface lists every gated action — 15 gated actions
+  (36ms)
+
+── 10. one strategy is registered, the orchestrator only observes, and nothing switched
+  ✓ exactly one strategy is seeded — ["council_pipeline"]
+  ✓ the seeded strategy is the canonical council pipeline — Council pipeline (canonical)
+  ✓ its selection signals are recorded — {"notes":"Matches every signal: this is the default and, in v1, the only path.","complexity":["simple","moderate","complex"],"task_types":["conversation","question_answering","research","planning","coding","analysis","creative","decision_support","action_execution"],"needs_web_search":[true,false],"needs_decomposition":[true,false],"min_history_messages":0}
+  ✓ the schema allows future rows (a real table, not a one-row enum) — 10 columns, 0 CHECK constraint(s) (all NOT NULL), id is TEXT not an enum
+  ✓ evidence was refreshed from telemetry — 1 evidence update(s)
+  ✓ the registry check explains why shared/registry.js did not fit — shared/registry.js left untouched and still dispatches stages; the durable registry is the `strategies` table plus this module
+  ✓ the adaptive orchestrator is in observe mode — observe (requested undefined)
+  ✓ observe mode cites the law that pins it — phase15.observe_only
+  ✓ no run has ever been switched — 0 switches
+  ✓ each run recorded which strategy would be selected and why — 5 decision(s), 0 switched
+  ✓ the observation carries its signals — Council pipeline (canonical) scored 10 (complexity 'unknown' in [simple, moderate, complex]; task_type 'unknown' in scope; decomposition signal covered; web-search signal covered; history 0 >= 0; is the default strategy)
+  ✓ asking for live switching is refused in v1 — ["phase15.observe_only: mode 'auto' would make live switches. v1 records which strategy would be selected and why; it changes nothing"]
+  ✓ the mode is still observe after the attempt
+  ✓ telemetry aggregates per strategy — [{"strategy":"council_pipeline","runs":5,"veto_rate":0.2,"error_rate":0.4}]
+  ✓ the switch analysis refuses on evidence grounds — phase15.observe_only: refused: 0 run(s) is below the 20-run evidence floor
+  ✓ a single success changes nothing — ["enough_runs","enough_trials","latency","cost","confidence"]
+  ✓ the cost rate table is editable constants, exposed read-only — 12 model rate(s), fallback $1/$3 per 1M tokens, 4 chars/token
+  ✓ the rate table covers the model the council actually used — ["gpt-4o-mini","gpt-4o","gpt-4o-2024-08-06","gpt-4.1-mini"]
+  ✓ the evaluation harness has no user-facing trigger — Offline and operator-invoked: node scripts/evaluate-strategies.mjs. There is no 
+  (26ms)
+
+==============================================================================
+SMOKE RESULT: 167 passed, 0 failed
+
+artifacts left behind: 22 ledger events, 5 telemetry records, 2 beliefs, 1 relationships, 3 coherence reports, 12 improvement rows, 5 adaptive observations
+==============================================================================

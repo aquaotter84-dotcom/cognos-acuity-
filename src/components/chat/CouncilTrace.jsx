@@ -2,6 +2,12 @@
 // council metadata from chatOrchestrate. Lets the user watch the pipeline reason:
 // Observer classification -> Strategist plan -> Specialist sub-tasks -> Critic ->
 // revisions -> Governor. Session-only (not persisted on the message).
+//
+// PHASE 14/15 ADDITION: one extra collapsible section, "Knowledge & telemetry",
+// showing what the run did to the store and what it cost. It renders only when
+// those fields are present, so an older persisted message draws exactly what it
+// drew before. Nothing here is a second channel to the user: it is the same
+// council object the message already carries.
 
 import { useState } from 'react';
 import { ChevronRight, Brain, ShieldCheck, AlertTriangle, RefreshCw } from 'lucide-react';
@@ -28,8 +34,14 @@ function Field({ label, value }) {
 export default function CouncilTrace({ council }) {
   const [open, setOpen] = useState(false);
   if (!council) return null;
-  const { classification, plan, subTasks, critic, revisions, governor, modelUsed, latencyMs, memoriesUsed, webSearch, stageTimings } = council || {};
+  const {
+    classification, plan, subTasks, critic, revisions, governor, modelUsed, latencyMs,
+    memoriesUsed, webSearch, stageTimings,
+    // Phase 14 — the knowledge layer; Phase 15 — the run's telemetry record.
+    coherence, knowledge, telemetry, strategy, runId
+  } = council || {};
   if (!classification && !plan && !critic && !webSearch && !stageTimings) return null;
+  const hasKnowledgeSection = Boolean(coherence || knowledge || telemetry || strategy || runId);
 
   const score = critic?.score;
   const summary = [
@@ -199,6 +211,63 @@ export default function CouncilTrace({ council }) {
                   <span className="tabular-nums">{(latencyMs / 1000).toFixed(1)}s</span>
                 </div>
               )}
+            </Section>
+          )}
+
+          {hasKnowledgeSection && (
+            <Section title="Knowledge & telemetry">
+              {coherence && coherence.checked && (
+                <Field label="coherence" value={`${coherence.verdict}${coherence.beliefsConsidered ? ` (of ${coherence.beliefsConsidered} belief${coherence.beliefsConsidered === 1 ? '' : 's'})` : ''}`} />
+              )}
+              {coherence && !coherence.checked && <Field label="coherence" value={`not checked — ${coherence.reason || 'monitor off'}`} />}
+              {coherence?.contradictions?.length > 0 && (
+                <div className="space-y-1 rounded border border-yellow-500/30 bg-yellow-500/5 px-2 py-1.5">
+                  <div className="text-[10px] uppercase tracking-wide text-yellow-500/80">contradiction — logged as a transition, not an error</div>
+                  {coherence.contradictions.map((c, i) => (
+                    <div key={i} className="text-muted-foreground/90">
+                      “{String(c.claim || '').slice(0, 140)}”
+                      {c.confidence != null && <span className="text-muted-foreground/60"> · confidence {Number(c.confidence).toFixed(2)}</span>}
+                      {c.beliefId && <span className="text-muted-foreground/50"> · belief {c.beliefId}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {coherence?.confirmations?.length > 0 && (
+                <Field label="confirmations" value={coherence.confirmations.map(c => String(c.claim || '').slice(0, 60)).join(' | ')} />
+              )}
+              {coherence?.hypotheses?.length > 0 && (
+                <Field label="new hypotheses" value={coherence.hypotheses.map(h => `${String(h.claim || '').slice(0, 60)} @${Number(h.confidence ?? 0).toFixed(2)}`).join(' | ')} />
+              )}
+              {knowledge && (
+                <Field label="ledger" value={`${knowledge.ledgerEvents ?? 0} event(s) written this run${knowledge.enabled === false ? ` — ${knowledge.reason || 'disabled'}` : ''}`} />
+              )}
+              {knowledge?.relationship && (
+                <Field label="relationship" value={`${knowledge.relationship.direction}${knowledge.relationship.strength != null ? ` → strength ${Number(knowledge.relationship.strength).toFixed(3)}` : ''}`} />
+              )}
+              {knowledge?.decay && (
+                <Field label="decay sweep" value={`${knowledge.decay.events ?? 0} weakened link(s) of ${knowledge.decay.considered ?? 0} considered`} />
+              )}
+              {telemetry && (
+                <Field
+                  label="telemetry"
+                  value={`${telemetry.status} · ${telemetry.modelCalls ?? 0} model call(s) · ${telemetry.tokens?.total ?? 0} tokens${telemetry.tokens?.measured ? '' : ' (estimated)'} · $${Number(telemetry.costUsd ?? 0).toFixed(5)}`}
+                />
+              )}
+              {telemetry?.confidence != null && (
+                <Field label="confidence" value={`${Number(telemetry.confidence).toFixed(2)} from ${telemetry.confidenceSource || 'n/a'}`} />
+              )}
+              {telemetry?.failures?.length > 0 && (
+                <div className="rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-destructive/90">
+                  {telemetry.failures.map((f, i) => (
+                    <div key={i}>{f.kind || f.type || 'failure'}{f.stage ? ` at ${f.stage}` : ''}{f.model ? ` (${f.model})` : ''}{f.message || f.error_message ? ` — ${String(f.message || f.error_message).slice(0, 120)}` : ''}</div>
+                  ))}
+                </div>
+              )}
+              {telemetry?.vetoed && (
+                <Field label="veto recorded" value={`${telemetry.vetoDraftOrigin || 'draft'} refused: ${telemetry.vetoReason || 'governor flag'} — nothing written to memory`} />
+              )}
+              {strategy && <Field label="strategy" value={`${strategy.id} · ${strategy.mode} mode · switched: ${strategy.switched ? 'yes' : 'no'}`} />}
+              {runId && <Field label="run" value={runId} />}
             </Section>
           )}
 

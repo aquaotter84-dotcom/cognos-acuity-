@@ -1,0 +1,13 @@
+
+> cognos@1.0.0 build
+> vite build
+
+vite v6.4.3 building for production...
+transforming...
+✓ 2124 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.49 kB │ gzip:   0.31 kB
+dist/assets/index-CPha_Tji.css   24.90 kB │ gzip:   5.68 kB
+dist/assets/index-DRzsMWWu.js   493.87 kB │ gzip: 152.55 kB
+✓ built in 3.65s

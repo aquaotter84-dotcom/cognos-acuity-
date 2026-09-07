@@ -21,7 +21,13 @@ import { createMessage } from "./shared/protocol.js";
 import { CognosError } from "./shared/errors.js";
 import { registerCouncil } from "./council/index.js";
 import { callLLM } from "./llm.js";
-import db from "./db.js";
+import db, { newId } from "./db.js";
+// Phase 14 — Dynamic Systems: the subsystems the council consults.
+import { registerKnowledgeStages } from "./knowledge/index.js";
+import { createTemporalReasoner } from "./knowledge/temporal.js";
+// Phase 15 — Meta-Cognition: the subsystems that observe it.
+import { createRunRecorder } from "./meta/telemetry.js";
+import { selectStrategy } from "./meta/adaptive.js";
 
 const rootLogger = createLogger("chatOrchestrate");
 
@@ -30,6 +36,22 @@ const rootLogger = createLogger("chatOrchestrate");
 // never invents substitute answers for a vetoed one.
 const SOVEREIGNTY_REFUSAL =
   "The Governor stopped that reply: it looked like it would leak something private, so it never ships. Ask me another way.";
+
+// What the SSE stream and the persisted trace are allowed to see of a coherence
+// report: the measurement, not the internal prompt material.
+function publicCoherence(report) {
+  if (!report) return null;
+  return {
+    checked: report.checked !== false,
+    verdict: report.verdict || "unchecked",
+    reason: report.reason || null,
+    note: report.note || null,
+    beliefsConsidered: report.beliefsConsidered ?? 0,
+    contradictions: (report.contradictions || []).map(c => ({ claim: c.claim, beliefId: c.belief_id, confidence: c.confidence, note: c.note })),
+    confirmations: (report.confirmations || []).map(c => ({ claim: c.claim, beliefId: c.belief_id, confidence: c.confidence })),
+    hypotheses: (report.newClaims || []).map(c => ({ claim: c.claim, confidence: c.confidence, scope: c.scope }))
+  };
+}
 
 const MEMORY_SCHEMA = {
   type: "object",
@@ -67,6 +89,9 @@ async function selectRelevantMemories(ctx, userMessage, pool, maxMemories) {
     const inventory = pool.map(m => ({ id: m.id, content: m.content }));
     const result = await callLLM(ctx, {
       model: ctx.config.models.memory,
+      // Phase 15.1: labels this call in the telemetry record. This call overlaps
+      // the Observer, so the bus's current stage would misattribute it.
+      purpose: "memoryRelevance",
       responseJsonSchema: MEMORY_RELEVANCE_SCHEMA,
       messages: [
         { role: "system", content: `You are a memory relevance agent. Given a user's message and a list of memories (with ids), return the ids of the memories most relevant to the message, in order of relevance, up to ${maxMemories}. Only include ids that genuinely relate to the message; if few are relevant, return fewer.` },
@@ -114,6 +139,7 @@ async function summarizeConversation(ctx, conversationId, history, userMessage, 
     ].join('\n');
     const result = await callLLM(ctx, {
       model: ctx.config.models.memory,
+      purpose: "summary",           // Phase 15.1: runs concurrently in the post batch
       responseJsonSchema: SUMMARIZE_SCHEMA,
       messages: [
         { role: "system", content: "Summarize the following conversation in 1-2 concise sentences. Capture what the user wanted and the outcome. Return only the summary text." },
@@ -122,7 +148,9 @@ async function summarizeConversation(ctx, conversationId, history, userMessage, 
     });
     const summary = result?.summary?.trim();
     if (summary) {
-      await ctx.db.Conversation.update(conversationId, { summary });
+      // Phase 14.1: a summary write is stored knowledge, so its transition is
+      // appended in the same transaction as the write.
+      await ctx.db.Conversation.update(conversationId, { summary }, { ledger: { runId: ctx.runId, messageId: null, kind: "run" } });
       return summary;
     }
   } catch (e) {
@@ -133,11 +161,40 @@ async function summarizeConversation(ctx, conversationId, history, userMessage, 
 
 /**
  * Run the council for one turn.
+ *
+ * Phase 15.1 wraps the pipeline so that EVERY run produces exactly one telemetry
+ * record — including a run that fails. The wrapper owns the record's lifecycle;
+ * the pipeline below is unchanged in what it returns and in how it fails.
+ *
  * @param {object} body    { conversationId, workspaceId, userMessage, style, attachments, webSearch }
- * @param {object} options { emit(event, payload), onToken(delta) }
+ * @param {object} options { emit(event, payload), onToken(delta), runId }
  */
 export async function runCouncilTurn(body, options = {}) {
+  const runId = options.runId || newId("run");
+  const config = getSystemConfig();
+  const recorder = createRunRecorder({
+    runId,
+    conversationId: body?.conversationId ?? null,
+    workspaceId: body?.workspaceId ?? null,
+    userMessage: body?.userMessage ?? null,
+    config,
+    logger: rootLogger.child("telemetry")
+  });
+  try {
+    return await executeCouncilTurn(body, options, { runId, recorder });
+  } catch (error) {
+    // A simulated or real upstream failure — bad model name, forced timeout,
+    // gateway 5xx — lands here. It becomes a documented failure in telemetry
+    // (kind, stage, model, HTTP status, latency) before the error propagates to
+    // the existing error path untouched.
+    await recorder.finalize({ status: "error", error });
+    throw error;
+  }
+}
+
+async function executeCouncilTurn(body, options = {}, run = {}) {
   const { emit = () => {}, onToken = null } = options;
+  const { runId, recorder } = run;
   const { conversationId, workspaceId, userMessage, style, attachments, webSearch } = body;
   if (!conversationId || !workspaceId || !userMessage) {
     throw new CognosError("Missing required fields", { code: "VALIDATION", category: "input", status: 400 });
@@ -152,6 +209,21 @@ export async function runCouncilTurn(body, options = {}) {
 
   eventBus.subscribe("orchestration.stage.start", (e) => { logger.info("stage.start", e); emit("stage.start", e); });
   eventBus.subscribe("orchestration.stage.complete", (e) => { logger.info("stage.complete", e); emit("stage.complete", e); });
+
+  // Phase 15.1 — telemetry subscribes to the SAME bus rather than threading new
+  // callbacks through every operator. Stage start/complete, latency and status
+  // arrive here without one council operator changing.
+  recorder.attachBus(eventBus);
+
+  // Phase 15.4 — the adaptive orchestrator selects a strategy and records why.
+  // Observe mode only: this changes nothing about what runs (there is one
+  // strategy), it makes the selection visible.
+  const selection = await selectStrategy({
+    db,
+    signals: { workspaceId, messageChars: String(userMessage || "").length },
+    logger
+  });
+  recorder.setSelection(selection);
 
   // --- Stage: context assembly ---
   const contextAgent = defineAgent({
@@ -186,6 +258,7 @@ export async function runCouncilTurn(body, options = {}) {
       try {
         const memResult = await callLLM(ctx, {
           model: ctx.config.models.memory,
+          purpose: "memoryExtraction",   // Phase 15.1: runs concurrently in the post batch
           responseJsonSchema: MEMORY_SCHEMA,
           messages: [
             {
@@ -210,7 +283,13 @@ export async function runCouncilTurn(body, options = {}) {
               is_enabled: true
             }));
           if (records.length > 0) {
-            await ctx.db.Memory.bulkCreate(records);
+            // Phase 14.1: the memory rows, their ledger events, their confidence
+            // samples and the beliefs they project into are ONE transaction.
+            await ctx.db.Memory.bulkCreate(records, {
+              ledger: { runId: ctx.runId, messageId: conversationId, kind: "run" },
+              config: ctx.config.knowledge,
+              origin: "council_memory_extraction"
+            });
           }
         }
       } catch (e) {
@@ -246,8 +325,26 @@ export async function runCouncilTurn(body, options = {}) {
   registry.register(memoryAgent.name, memoryAgent);
   registry.register(auditAgent.name, auditAgent);
   registerCouncil(registry);
+  // Phase 14/15 subsystems: registered as pipeline stages BESIDE contextAssembly,
+  // memoryExtraction and auditLog. They are not council seats and they do not
+  // vote — the six operators in registerCouncil() are unchanged.
+  registerKnowledgeStages(registry);
 
-  const ctx = { db, config, logger, timings: {}, stream: Boolean(onToken), onToken };
+  // Token forwarding is wrapped so the recorder can measure time-to-first-token.
+  // The wrapper calls the original onToken with the original delta: the stream
+  // the user sees is byte-for-byte the one that existed before Phase 15.
+  const forwardToken = onToken ? (delta) => { recorder.noteFirstToken(); onToken(delta); } : null;
+
+  const ctx = {
+    db, config, logger, timings: {},
+    stream: Boolean(forwardToken), onToken: forwardToken,
+    // Phase 15.1 — the run's recorder. server/llm.js reports every model call to
+    // it, which is how a timeout or a 502 becomes a record instead of a mystery.
+    runId, telemetry: recorder,
+    // Phase 14.3 — the temporal reasoner. A helper any operator can call during
+    // the run (the Critic does, in council/critic.js); NOT a new operator.
+    temporal: createTemporalReasoner({ db, workspaceId, runId, logger })
+  };
 
   const startTime = Date.now();
 
@@ -319,6 +416,32 @@ export async function runCouncilTurn(body, options = {}) {
   // revises with the critique and is re-evaluated. Capped at maxRevisions.
   let currentResponse = synthResult;
 
+  // --- Phase 14.5: the Coherence Monitor ---
+  // DETECTS, before the Critic, so the Critic and the Governor both see the
+  // report as data they can act on. It writes nothing here: persistence happens
+  // after the Governor's verdict, because a vetoed draft must never become
+  // knowledge. Best-effort — a failure yields verdict "error" and the pipeline
+  // continues exactly as it did before Phase 14.
+  let coherenceReport = null;
+  const coherenceEnabled = config.knowledge?.coherenceEnabled !== false;
+  if (coherenceEnabled) {
+    const coherenceResult = await orchestrator.dispatch("coherenceMonitor", createMessage({
+      type: "knowledge.coherence", from: "orchestrator", content: currentResponse
+    }), ctx);
+    currentResponse = coherenceResult;
+    coherenceReport = coherenceResult.coherence || null;
+    recorder.setCoherence(coherenceReport);
+    emit("coherence", publicCoherence(coherenceReport));
+  }
+
+  // The Critic's score is the confidence the council already expresses (15.1).
+  const noteCritic = (evaluation) => {
+    if (evaluation && !evaluation.skipped && typeof evaluation.score === "number") {
+      recorder.setConfidence(evaluation.score / 10, "critic.score/10");
+    }
+    if (evaluation?.temporal) recorder.setKnowledge?.({ criticTemporal: evaluation.temporal.summary ?? null });
+  };
+
   // Phase 13 — Law 4 (adaptive reasoning) & economic intelligence: the problem
   // determines the reasoning. Simple requests skip the costly critic revision loop;
   // only moderate/complex tasks warrant it. The Strategist already passes through
@@ -342,10 +465,11 @@ export async function runCouncilTurn(body, options = {}) {
       type: "council.critique", from: "orchestrator", content: currentResponse
     }), ctx);
     emit("critic", { critic: criticResult.evaluation });
+    noteCritic(criticResult.evaluation);
   } else {
     deferredCritic = orchestrator.dispatch("critic", createMessage({
       type: "council.critique", from: "orchestrator", content: currentResponse
-    }), ctx).then(r => { emit("critic", { critic: r.evaluation }); return r; });
+    }), ctx).then(r => { emit("critic", { critic: r.evaluation }); noteCritic(r.evaluation); return r; });
     criticResult = { evaluation: null };
   }
 
@@ -367,10 +491,23 @@ export async function runCouncilTurn(body, options = {}) {
       content: { ...currentResponse, critique: criticResult.evaluation, revision: true }
     });
     currentResponse = await orchestrator.dispatch("synthesizer", reviseMsg, ctx);
+    // A revised draft is a new draft: the coherence measurement of the previous
+    // one no longer describes it, so the monitor runs again (bounded by
+    // maxRevisions, which is 1).
+    if (coherenceEnabled) {
+      const recheck = await orchestrator.dispatch("coherenceMonitor", createMessage({
+        type: "knowledge.coherence", from: "orchestrator", content: currentResponse
+      }), ctx);
+      currentResponse = recheck;
+      coherenceReport = recheck.coherence || null;
+      recorder.setCoherence(coherenceReport);
+      emit("coherence", publicCoherence(coherenceReport));
+    }
     criticResult = await orchestrator.dispatch("critic", createMessage({
       type: "council.critique", from: "orchestrator", content: currentResponse
     }), ctx);
     emit("critic", { critic: criticResult.evaluation });
+    noteCritic(criticResult.evaluation);
   }
 
   const latencyMs = Date.now() - startTime;
@@ -381,10 +518,14 @@ export async function runCouncilTurn(body, options = {}) {
   // PRESERVED BEHAVIOUR: the Governor is the sovereignty layer. It refuses to
   // approve output that is empty or that leaks credentials. It flags rather than
   // fabricates — it will never substitute invented text for a failed response.
+  // Phase 14.5: the Governor receives the coherence report as data. Its
+  // rule-based decision logic is untouched — coherence can never flip `approved`
+  // and can never add a flag. It rides along so the verdict, the trace and the
+  // telemetry record all carry what the monitor measured.
   const governorMsg = createMessage({
     type: "council.govern",
     from: "orchestrator",
-    content: { responseText: currentResponse.responseText }
+    content: { responseText: currentResponse.responseText, coherence: coherenceReport, runId }
   });
   const governorResult = await orchestrator.dispatch("governor", governorMsg, ctx);
   emit("governor", { approved: governorResult.approved, flags: governorResult.flags });
@@ -401,6 +542,25 @@ export async function runCouncilTurn(body, options = {}) {
   if (vetoed && (governorResult.flags || []).includes("potential_secret_leak")) {
     finalResponseText = SOVEREIGNTY_REFUSAL;
   }
+
+  // Phase 15.1 — a veto is recorded with the operator that produced the rejected
+  // draft and the Governor's reason. The draft text itself is never stored: the
+  // record keeps its length and SHA-256 only (pin.veto_integrity).
+  const draftOrigin = revisionCount > 0
+    ? "synthesizer (revision)"
+    : (synthResult.needsSynthesis ? "synthesizer" : "specialist");
+  recorder.setVeto({
+    approved: governorResult.approved,
+    flags: governorResult.flags,
+    draftText: vetoed ? currentResponse.responseText : null,
+    draftOrigin,
+    finalText: finalResponseText
+  });
+  recorder.setResult({
+    taskType: currentResponse.taskType,
+    complexity: observerResult.classification?.complexity ?? null,
+    responseChars: String(finalResponseText || "").length
+  });
 
   // --- Post-response stages (best-effort, run concurrently) ---
   // Memory extraction, audit logging, and summarization do not affect the
@@ -425,21 +585,75 @@ export async function runCouncilTurn(body, options = {}) {
       status: "success"
     }
   });
-  const summaryEnabled = ctx.config.orchestrator.summaryEnabled !== false;
-  const [, , summaryResult, deferredCriticResult] = await Promise.allSettled([
-    orchestrator.dispatch("memoryExtraction", memMsg, ctx),
+  // Phase 14 — a vetoed draft writes NOTHING to memory and nothing to the
+  // summary. The veto has teeth downstream of the answer too: the refusal line
+  // is what ships, and it is not treated as a fact about the user.
+  const memoryEnabled = !vetoed;
+  const summaryEnabled = ctx.config.orchestrator.summaryEnabled !== false && !vetoed;
+
+  // Knowledge writes are serialized (memory -> projection -> telemetry) so two
+  // transactions never race over the same belief, while audit, summary and the
+  // deferred critic still overlap them.
+  const knowledgeChain = (async () => {
+    const [memoryOutcome, deferredCriticOutcome] = await Promise.all([
+      memoryEnabled
+        ? orchestrator.dispatch("memoryExtraction", memMsg, ctx)
+        : Promise.resolve({ skipped: "governor_veto" }),
+      deferredCritic || Promise.resolve(null)
+    ]);
+    if (deferredCriticOutcome) {
+      criticResult = deferredCriticOutcome;
+      noteCritic(criticResult.evaluation);
+    }
+    const projection = await orchestrator.dispatch("knowledgeProjection", createMessage({
+      type: "knowledge.project",
+      from: "orchestrator",
+      content: {
+        workspaceId, conversationId, runId,
+        coherence: coherenceReport,
+        vetoed,
+        governor: { approved: governorResult.approved, flags: governorResult.flags },
+        finalText: finalResponseText,
+        // The rejected draft reaches the ledger only as a length and a digest.
+        draftText: vetoed ? currentResponse.responseText : null,
+        draftOrigin
+      }
+    }), ctx);
+    const telemetryStage = await orchestrator.dispatch("telemetryRecord", createMessage({
+      type: "meta.telemetry",
+      from: "orchestrator",
+      content: { runId, vetoed, status: vetoed ? "vetoed" : "success" }
+    }), ctx);
+    return { memory: memoryOutcome, knowledge: projection.knowledge, telemetry: telemetryStage.telemetry };
+  })();
+
+  const [, summaryResult, knowledgeOutcome] = await Promise.allSettled([
     orchestrator.dispatch("auditLog", auditMsg, ctx),
     summaryEnabled
       ? summarizeConversation(ctx, conversationId, contextResult.history, userMessage, finalResponseText)
       : Promise.resolve(null),
-    deferredCritic || Promise.resolve(null)
+    knowledgeChain
   ]);
   const conversationSummary = summaryResult.status === "fulfilled" ? summaryResult.value : null;
-  if (deferredCritic && deferredCriticResult.status === "fulfilled" && deferredCriticResult.value) {
-    criticResult = deferredCriticResult.value;
+  const knowledgeResult = knowledgeOutcome.status === "fulfilled" ? knowledgeOutcome.value : null;
+  if (knowledgeOutcome.status === "rejected") {
+    logger.warn("knowledge/telemetry chain failed", { error: String(knowledgeOutcome.reason) });
   }
 
+  // Safety net: finalize() is idempotent, so the run is recorded exactly once
+  // even if the chain above could not reach the telemetry stage.
+  await recorder.finalize({ status: vetoed ? "vetoed" : "success" });
+
   await eventBus.publish("orchestration.complete", { latencyMs });
+
+  const knowledgeDetail = knowledgeResult?.knowledge ?? null;
+  emit("knowledge", knowledgeDetail ? {
+    ledgerEvents: knowledgeDetail.ledgerEvents ?? 0,
+    coherence: knowledgeDetail.coherence ?? null,
+    relationship: knowledgeDetail.relationship ?? null,
+    decay: knowledgeDetail.decay ?? null,
+    veto: knowledgeDetail.veto ?? null
+  } : null);
 
   return {
     response: finalResponseText,
@@ -447,6 +661,9 @@ export async function runCouncilTurn(body, options = {}) {
     modelUsed: currentResponse.modelUsed,
     latencyMs,
     summary: conversationSummary,
+    // Phase 14/15: the run's identity, so the persisted message, the ledger and
+    // the telemetry record all point at each other.
+    runId,
     council: {
       memoriesUsed: (contextResult.memories || []).map(m => ({ id: m.id, preview: String(m.content || '').slice(0, 120), evidence: m.evidence_level || null, volatility: m.volatility || null })),
       classification: observerResult.classification,
@@ -457,8 +674,17 @@ export async function runCouncilTurn(body, options = {}) {
       critic: criticResult.evaluation,
       revisions: { count: revisionCount, triggered: revisionTriggered, maxRevisions },
       adaptive: { complexity: observerResult.classification?.complexity, path: isSimple ? 'direct' : 'full' },
-      governor: { approved: governorResult.approved, flags: governorResult.flags },
-      stageTimings: ctx.timings || {}
+      governor: { approved: governorResult.approved, flags: governorResult.flags, coherence: publicCoherence(coherenceReport) },
+      stageTimings: ctx.timings || {},
+      // Phase 14 — what the knowledge layer did with this exchange.
+      coherence: publicCoherence(coherenceReport),
+      knowledge: knowledgeDetail,
+      // Phase 15 — this run's telemetry record, as written. runId is repeated
+      // here so the council trace in the UI can follow a conclusion back to its
+      // ledger events and telemetry record.
+      runId,
+      telemetry: recorder.summary ? recorder.summary() : null,
+      strategy: { id: selection.strategyId, mode: selection.mode, reason: selection.reason, switched: false }
     }
   };
 }
