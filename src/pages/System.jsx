@@ -598,7 +598,7 @@ export default function System() {
                   <label className="text-[10px] text-muted-foreground/70">
                     action
                     <select className="mt-0.5 block w-full bg-muted/50 border border-border rounded px-2 py-1 text-xs" value={proposal.action} onChange={(e) => setProposal(p => ({ ...p, action: e.target.value }))}>
-                      {(policy?.gatedActions || []).map(a => <option key={a} value={a}>{a}</option>)}
+                      {Object.keys(policy?.gatedActions || {}).map(a => <option key={a} value={a}>{a}</option>)}
                     </select>
                   </label>
                   <label className="text-[10px] text-muted-foreground/70">
