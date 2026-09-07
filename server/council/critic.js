@@ -1,7 +1,3 @@
-
-
-
-
 // Council operator — Critic (critique). Evaluates the generated response for quality
 // and completeness. Best-effort: disabled via config or degrades to "skipped" on any
 // failure. Marks the TaskContext complete when present.
