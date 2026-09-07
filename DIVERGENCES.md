@@ -249,8 +249,8 @@ generated from it by `scripts/generate-migrations.mjs`.
 | `relationships` | living structures with strength, direction and decay (14.4) |
 | `coherence_reports` | the monitor's measurement per run (14.5) |
 
-Plus one additive column on an existing table: `memories.confidence NUMERIC`
-(and `memories.confidence_set_ms`). No existing table was dropped, renamed,
+Plus two additive columns on one existing table: `memories.confidence NUMERIC`
+and `memories.confidence_as_of_ms BIGINT`. No existing table was dropped, renamed,
 truncated or rewritten; `audit_events` remains its own separate log and is not
 the ledger.
 
