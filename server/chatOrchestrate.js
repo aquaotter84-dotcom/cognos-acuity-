@@ -37,6 +37,15 @@ const rootLogger = createLogger("chatOrchestrate");
 const SOVEREIGNTY_REFUSAL =
   "The Governor stopped that reply: it looked like it would leak something private, so it never ships. Ask me another way.";
 
+// Clause 3 (enforcement): the flags that send a draft back to the Synthesizer
+// once, and — if it still fails — release the fixed epistemic refusal below.
+// Same rule as the leak refusal: fixed text, never model-generated.
+const EPISTEMIC_FLAGS = new Set(["minimum_cause_without_floor", "authority_citation_unverifiable"]);
+const isEpistemicFlag = (f) => EPISTEMIC_FLAGS.has(f);
+
+const EPISTEMIC_REFUSAL =
+  "The Governor stopped that reply: even after revision it claimed things the record cannot carry, so it never ships. Ask me another way.";
+
 // What the SSE stream and the persisted trace are allowed to see of a coherence
 // report: the measurement, not the internal prompt material.
 function publicCoherence(report) {
@@ -578,13 +587,79 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
   // rule-based decision logic is untouched — coherence can never flip `approved`
   // and can never add a flag. It rides along so the verdict, the trace and the
   // telemetry record all carry what the monitor measured.
-  const governorMsg = createMessage({
+  //
+  // CLAUSE 3 (enforcement): the Governor's rulebook now audits the FINAL text
+  // itself — determinate minimum-cause floors without the honest floor phrase
+  // ("not determinable from this record"), and authority citations to a record
+  // this session never loaded. A draft the rules refuse does not ship: it goes
+  // back to the Synthesizer ONCE (council.governorMaxRevisions) with the
+  // Governor's findings and the last Critic evaluation as the critique,
+  // coherence re-runs, and the Governor rules again. If the revised draft
+  // still fails, the fixed epistemic refusal ships and the draft is never
+  // stored. The extra pass is skipped entirely on the simple path, the same
+  // way the Critic loop is.
+  const governorRecord = {
+    memories: Array.isArray(contextResult.memories)
+      ? contextResult.memories.map((m) => ({ id: m?.id ?? null, content: String(m?.content ?? "") }))
+      : [],
+    councilRecord: contextResult.councilRecord || null
+  };
+  const buildGovernorMsg = (responseText, coherence) => createMessage({
     type: "council.govern",
     from: "orchestrator",
-    content: { responseText: currentResponse.responseText, coherence: coherenceReport, runId }
+    content: { responseText, coherence, runId, record: governorRecord }
   });
-  const governorResult = await orchestrator.dispatch("governor", governorMsg, ctx);
-  emit("governor", { approved: governorResult.approved, flags: governorResult.flags });
+  let governorResult = await orchestrator.dispatch("governor", buildGovernorMsg(currentResponse.responseText, coherenceReport), ctx);
+  emit("governor", { approved: governorResult.approved, flags: governorResult.flags, findings: governorResult.findings || [] });
+
+  const governorMaxRevisions = isSimple ? 0 : (ctx.config.council.governorMaxRevisions || 0);
+  let governorRevisionCount = 0;
+  while (
+    governorResult.approved === false &&
+    (governorResult.flags || []).some(isEpistemicFlag) &&
+    governorRevisionCount < governorMaxRevisions
+  ) {
+    governorRevisionCount++;
+    emit("governorRevision", {
+      count: governorRevisionCount,
+      maxRevisions: governorMaxRevisions,
+      flags: (governorResult.flags || []).filter(isEpistemicFlag)
+    });
+    const governorFindings = (governorResult.findings || []).map((f) => `- ${f}`).join("\n");
+    const criticLine = (criticResult?.evaluation && !criticResult.evaluation.skipped)
+      ? `The Critic's last evaluation of the draft (score ${criticResult.evaluation.score}/10): ${criticResult.evaluation.reasoning}`
+      : null;
+    const reviseMsg = createMessage({
+      type: "council.revise",
+      from: "orchestrator",
+      content: {
+        ...currentResponse,
+        critique: {
+          source: "governor",
+          score: 1,
+          needs_revision: true,
+          reasoning: [governorFindings, criticLine].filter(Boolean).join("\n")
+        },
+        revision: true
+      }
+    });
+    currentResponse = await orchestrator.dispatch("synthesizer", reviseMsg, ctx);
+    // A revised draft is a new draft: the coherence measurement of the previous
+    // one no longer describes it, so the monitor runs again.
+    if (coherenceEnabled) {
+      const recheck = await orchestrator.dispatch("coherenceMonitor", createMessage({
+        type: "knowledge.coherence", from: "orchestrator", content: currentResponse
+      }), ctx);
+      currentResponse = recheck;
+      coherenceReport = recheck.coherence || null;
+      recorder.setCoherence(coherenceReport);
+      emit("coherence", publicCoherence(coherenceReport));
+    }
+    // The Governor's rules are deterministic and are the final judge of the
+    // redraft; the Critic does not re-run (bounded cost).
+    governorResult = await orchestrator.dispatch("governor", buildGovernorMsg(currentResponse.responseText, coherenceReport), ctx);
+    emit("governor", { approved: governorResult.approved, flags: governorResult.flags, findings: governorResult.findings || [], revision: governorRevisionCount });
+  }
 
   // --- The veto has teeth ---
   // If the Governor refuses, the draft does NOT ship. A flagged text that
@@ -595,16 +670,21 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
   // text, never the vetoed one.
   const vetoed = governorResult.approved === false;
   let finalResponseText = currentResponse.responseText;
-  if (vetoed && (governorResult.flags || []).includes("potential_secret_leak")) {
+  const governorFlags = governorResult.flags || [];
+  if (vetoed && governorFlags.includes("potential_secret_leak")) {
     finalResponseText = SOVEREIGNTY_REFUSAL;
+  } else if (vetoed && governorFlags.some(isEpistemicFlag)) {
+    finalResponseText = EPISTEMIC_REFUSAL;
   }
 
   // Phase 15.1 — a veto is recorded with the operator that produced the rejected
   // draft and the Governor's reason. The draft text itself is never stored: the
   // record keeps its length and SHA-256 only (pin.veto_integrity).
-  const draftOrigin = revisionCount > 0
-    ? "synthesizer (revision)"
-    : (synthResult.needsSynthesis ? "synthesizer" : "specialist");
+  const draftOrigin = governorRevisionCount > 0
+    ? `synthesizer (${revisionCount > 0 ? "critic + " : ""}governor revision)`
+    : (revisionCount > 0
+      ? "synthesizer (revision)"
+      : (synthResult.needsSynthesis ? "synthesizer" : "specialist"));
   recorder.setVeto({
     approved: governorResult.approved,
     flags: governorResult.flags,
@@ -728,7 +808,12 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
       taskContextId: strategistResult.taskContext?.id || null,
       subTasks: specialistResult.subTaskOutputs || null,
       critic: criticResult.evaluation,
-      revisions: { count: revisionCount, triggered: revisionTriggered, maxRevisions },
+      revisions: {
+        count: revisionCount,
+        triggered: revisionTriggered,
+        maxRevisions,
+        governor: { count: governorRevisionCount, triggered: governorRevisionCount > 0, maxRevisions: governorMaxRevisions }
+      },
       adaptive: { complexity: observerResult.classification?.complexity, path: isSimple ? 'direct' : 'full' },
       governor: { approved: governorResult.approved, flags: governorResult.flags, coherence: publicCoherence(coherenceReport) },
       stageTimings: ctx.timings || {},

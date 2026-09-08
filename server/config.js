@@ -38,7 +38,13 @@ export function getSystemConfig() {
       criticEnabled: process.env.COGNOS_CRITIC_ENABLED !== "false",
       governorEnabled: process.env.COGNOS_GOVERNOR_ENABLED !== "false",
       maxRevisions: 1,
-      revisionScoreThreshold: 6
+      revisionScoreThreshold: 6,
+      // Clause 3 (enforcement): one Governor-stage redraft when the final text
+      // fails the Governor's deterministic audit rules (minimum-cause floors
+      // without the honest floor phrase; authority citations to a record that
+      // was never loaded). 0 disables the redraft and the fixed refusal ships
+      // on the first violation.
+      governorMaxRevisions: 1
     },
     search: {
       enabled: process.env.COGNOS_SEARCH_ENABLED !== "false",

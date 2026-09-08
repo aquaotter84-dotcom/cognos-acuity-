@@ -11,6 +11,8 @@ const SYNTH_BASE = "You are the Synthesizer of the COGNOS council. Integrate the
 
 const REVISE_BASE = "You are the Synthesizer of the COGNOS council revising a previous response. The Critic evaluated the previous response and found it inadequate or incorrect. Produce an improved, accurate response that addresses the critique and properly answers the user's underlying request. Output only the revised response in markdown.";
 
+const GOV_REVISE_BASE = "You are the Synthesizer of the COGNOS council revising a previous response. The Governor, the council's sovereignty gate, refused the previous response: its deterministic audit rules found claims that must not ship. Produce a revised response that removes or honestly qualifies every claim the findings name, and that properly answers the user's underlying request. Output only the revised response in markdown.";
+
 export const synthesizerAgent = defineAgent({
   name: "synthesizer",
   type: "stage",
@@ -20,11 +22,19 @@ export const synthesizerAgent = defineAgent({
     // --- Phase 4: revision path — critique supplied, rewrite the response ---
     if (content.critique) {
       const { critique, responseText, userMessage, history, workspace, memories, classification } = content;
-      const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, REVISE_BASE, content.style, content.councilRecord);
+      // Clause 3 (enforcement): when the critique comes from the GOVERNOR
+      // (source: "governor"), it is a deterministic refusal, not a Critic
+      // score — the revision prompt says so, and the refusal text is quoted
+      // as findings instead of a 1-10 score.
+      const isGovernorRevision = critique.source === "governor";
+      const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, isGovernorRevision ? GOV_REVISE_BASE : REVISE_BASE, content.style, content.councilRecord);
+      const evalLine = isGovernorRevision
+        ? `Governor refusal — deterministic audit findings:\n${critique.reasoning}`
+        : `Critic evaluation (score ${critique.score}/10): ${critique.reasoning}`;
       const chatMessages = [
         { role: "system", content: systemPrompt },
         ...history.map(msg => ({ role: msg.role, content: msg.content })),
-        { role: "user", content: `Original request:\n${userMessage}\n\nPrevious response:\n${responseText}\n\nCritic evaluation (score ${critique.score}/10): ${critique.reasoning}\n\nWrite the revised response:` }
+        { role: "user", content: `Original request:\n${userMessage}\n\nPrevious response:\n${responseText}\n\n${evalLine}\n\nWrite the revised response:` }
       ];
       const revisedText = await callLLM(ctx, { model: ctx.config.models.primary, messages: chatMessages });
       return { ...content, responseText: revisedText, modelUsed: ctx.config.models.primary };
