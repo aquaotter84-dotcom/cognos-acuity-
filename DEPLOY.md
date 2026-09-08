@@ -22,7 +22,10 @@ every statement is `IF NOT EXISTS`, so it is safe on every cold start — includ
 the Phase 14/15 tables (`knowledge_events`, `beliefs`, `confidence_history`,
 `relationships`, `coherence_reports`, `telemetry_runs`, `telemetry_model_calls`,
 `strategies`, `strategy_evaluations`, `adaptive_decisions`,
-`improvement_ledger`) and the one additive column (`memories.confidence`).
+`improvement_ledger`), the additive memory-confidence fields, Phase 16's
+nullable latency-observability fields, and Phase 17's `sources`,
+`source_chunks`, `agent_runs`, `agent_steps`, `agent_events`, and
+`agent_approvals` tables.
 
 If you would rather apply the DDL explicitly before traffic arrives:
 
@@ -72,11 +75,28 @@ Project → Settings → Environment Variables (Production **and** Preview):
 | `COGNOS_MODEL` | recommended | e.g. `gpt-4o-mini` |
 | `COGNOS_FAST_MODEL` | optional | cheap model for Observer/Critic/memory |
 | `BLUESMINDS_API_URL` | optional | defaults to `https://api.bluesminds.com/v1` |
+| `COGNOS_LLM_TIMEOUT_MS` | optional | one logical model-call deadline including retries; default `60000`, clamp 1–180 seconds |
+| `COGNOS_LLM_MAX_RETRIES` | optional | retries transient network/408/429/5xx gateway failures; default `1`, clamp 0–2; same prompt and model |
+| `COGNOS_LLM_SERVICE_TIER` | optional | provider-supported transport tier; leave unset unless verified |
+| `COGNOS_PROMPT_CACHE_KEY` | optional | provider-supported exact-prefix routing key; max 64 chars, never sensitive |
 | `TAVILY_API_KEY` | optional | better web search; DuckDuckGo without it |
+| `COGNOS_SOURCES_ENABLED` | optional | source-ingestion kill switch; default `true` |
+| `COGNOS_SOURCE_MAX_BYTES` | optional | document bytes, default `4000000` (platform request-body limits still apply) |
+| `COGNOS_SOURCE_MAX_TEXT_CHARS` | optional | extracted characters, default `750000` |
+| `COGNOS_LINK_MAX_BYTES` | optional | fetched bytes, default `2000000` |
+| `COGNOS_LINK_TIMEOUT_MS` | optional | safe link fetch timeout, default `12000` |
+| `COGNOS_AGENT_ENABLED` | optional | non-off bounded agent modes; default `true`; does not enable writes |
 | `COGNOS_RUNTIME_SECRET` | optional | set → gate on; unset → app opens straight to chat |
 
 None of these are exposed to the browser — there are no `VITE_*` variables in
 this app, so nothing can leak into the bundle by construction.
+
+Document uploads are base64 JSON requests so the platform's request-body cap is
+reached before the server's decoded-byte cap on some plans. Keep the default
+4 MB browser limit or lower `COGNOS_SOURCE_MAX_BYTES` if the deployment platform
+has a smaller cap. Link retrieval happens server-side and permits only public
+HTTP(S) destinations on ports 80/443; do not add a generic proxy rewrite around
+it, because that would bypass the DNS-pinned SSRF boundary.
 
 ### ⚠️ Function duration — read this
 
@@ -100,6 +120,25 @@ reasoning model that is commonly **30–90 s**. Vercel's limits:
 
 Note that SSE keeps the connection open, so the user *sees* progress the whole
 time — but the platform still kills the function at the cap.
+
+### Diagnosing HTTP 504
+
+A council error that says **“model provider gateway timed out (HTTP 504)”** means
+the configured OpenAI-compatible model endpoint returned the 504. COGNOS now
+retries that transient response once by default after 250 ms, using the exact
+same prompt and model, inside the original logical deadline. Raw proxy HTML such
+as an OpenResty error page is discarded and never persisted or shown to users.
+Set `COGNOS_LLM_MAX_RETRIES=0` to disable or `2` for two retries; do not raise it
+beyond the enforced bound.
+
+Inspect `/system` or `/api/meta/telemetry/<runId>`: a recovered incident has an
+attempt-1 `http_error`/`gateway`, an attempt-2 `success`, and the retained failure
+is marked `recovered: true`. Repeated final 504s indicate provider/model
+availability or a request the upstream gateway cannot finish before its own
+limit. Changing `COGNOS_LLM_TIMEOUT_MS` cannot extend an upstream proxy's timeout.
+If Vercel itself ends the request before COGNOS emits an SSE error, use the plan
+or self-hosting options above; an application retry cannot outlive the platform
+function.
 
 ## 4. Local development
 
@@ -125,9 +164,18 @@ curl https://<your-app>.vercel.app/api/health
 {
   "ok": true,
   "model": "gpt-4o-mini",
+  "modelRequestPolicy": { "timeoutMs": 60000, "maxRetries": 1 },
   "databaseConfigured": true,
   "modelKeyConfigured": true,
+  "llmServiceTier": "provider-default",
+  "promptCacheKeyConfigured": false,
   "searchProvider": "duckduckgo",
+  "sources": true,
+  "agent": {
+    "enabled": true,
+    "modes": ["off", "observe", "read_only"],
+    "autonomousWrites": false
+  },
   "gate": false,
   "ledger": true,
   "coherence": true,
@@ -135,8 +183,9 @@ curl https://<your-app>.vercel.app/api/health
   "adaptiveMode": "observe",
   "adaptiveModeForced": false,
   "strategy": "council_pipeline",
-  "laws": 16,
-  "lawLayerVersion": "1.0.0"
+  "laws": 19,
+  "lawLayerVersion": "1.2.0",
+  "identityVersion": "1.1.0"
 }
 ```
 
@@ -145,7 +194,7 @@ missing or scoped to the wrong environment. Then open the app and send one
 message — you should see council stages appear live, and the thread should
 still be there after a refresh.
 
-### Verifying Phase 14/15 on a deploy
+### Verifying governed subsystems on a deploy
 
 Send one message, then:
 
@@ -154,17 +203,46 @@ curl 'https://<your-app>.vercel.app/api/meta/telemetry?limit=1'   # one record f
 curl 'https://<your-app>.vercel.app/api/knowledge/events?limit=20' # its ledger rows
 curl 'https://<your-app>.vercel.app/api/knowledge/overview'
 curl 'https://<your-app>.vercel.app/api/meta/laws'
+curl 'https://<your-app>.vercel.app/api/identity'                    # canonical self-model + runtime state
+curl 'https://<your-app>.vercel.app/api/sources?limit=5'
+curl 'https://<your-app>.vercel.app/api/agent/tools'
 ```
+
+Open **About COGNOS** and confirm the runtime facts match `/api/identity`; ask
+“what are you and how do you work?” in Chat and confirm the answer says COGNOS,
+identifies six operators, names the Governor as final authority, and states its
+runtime limits without exposing any environment values.
+
+Upload a small TXT/Markdown file through the Chat paperclip, attach it to a turn,
+and confirm its council trace lists the immutable source id and citable chunks.
+Use **Observe** with an explicit URL and confirm the plan remains proposed; use
+**Read only** and confirm the trace records each bounded read. A private address
+such as `http://127.0.0.1/` must fail inside the agent step and must never be
+fetched.
 
 The telemetry record's `message_id` should equal the assistant message the
 browser received, and `ledger_events` should equal the number of rows the run
 wrote before the record was finalized. `/system` in the UI shows the same thing
 with replay and the Policy Engine.
 
+After at least 20 representative production turns, run the read-only evidence
+report from a trusted operator environment using the same `DATABASE_URL`:
+
+```bash
+npm run latency -- --limit=200 --days=7
+```
+
+It separates known-warm and cold-instance candidates, database setup, stage and
+provider response latency, and reports whether prompt caching or a requested
+service tier was actually observed. It will not recommend a post-processing
+outbox before its evidence floor is met.
+
 **Cost note.** Telemetry adds no model calls on the happy path — the coherence
 monitor is one extra call per turn (cheap model, `COGNOS_COHERENCE_ENABLED=false`
 turns it off), and everything else is bookkeeping inside the turn that already
-happened. Set `COGNOS_LEDGER_ENABLED=false` and `COGNOS_TELEMETRY_ENABLED=false`
+happened. Document parsing and link retrieval add no model call, but attached
+source excerpts increase prompt tokens and a read-only agent link adds bounded
+network latency before context assembly. Set `COGNOS_LEDGER_ENABLED=false` and `COGNOS_TELEMETRY_ENABLED=false`
 to fall back to pre-Phase-14 behaviour without a redeploy of code.
 
 **Vercel function duration.** The post-response batch now includes the knowledge

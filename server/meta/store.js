@@ -25,9 +25,9 @@ export function createMetaStore(run) {
              cost_usd, cost_rate_known, confidence, confidence_source, coherence_verdict,
              coherence_contradictions, vetoed, veto_flags, veto_reason, veto_draft_origin, veto_draft_sha256,
              retries, failures, failure_count, adaptive, ledger_events, knowledge, task_type, complexity,
-             response_chars, error_message)
+             response_chars, error_message, performance)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,
-                   $25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40)
+                   $25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41)
            ON CONFLICT (id) DO UPDATE SET
              status = EXCLUDED.status, ended_ms = EXCLUDED.ended_ms, latency_ms = EXCLUDED.latency_ms,
              time_to_first_token_ms = EXCLUDED.time_to_first_token_ms, stages = EXCLUDED.stages,
@@ -43,7 +43,8 @@ export function createMetaStore(run) {
              retries = EXCLUDED.retries, failures = EXCLUDED.failures, failure_count = EXCLUDED.failure_count,
              adaptive = EXCLUDED.adaptive, ledger_events = EXCLUDED.ledger_events, knowledge = EXCLUDED.knowledge,
              task_type = EXCLUDED.task_type, complexity = EXCLUDED.complexity,
-             response_chars = EXCLUDED.response_chars, error_message = EXCLUDED.error_message
+             response_chars = EXCLUDED.response_chars, error_message = EXCLUDED.error_message,
+             performance = EXCLUDED.performance
            RETURNING *`,
           [rec.id, rec.workspace_id ?? null, rec.conversation_id ?? null, rec.message_id ?? null,
            rec.strategy_id || "council_pipeline", rec.status || "success", rec.started_ms, rec.ended_ms ?? null,
@@ -57,7 +58,8 @@ export function createMetaStore(run) {
            rec.veto_draft_origin ?? null, rec.veto_draft_sha256 ?? null,
            int(rec.retries, 0), json(rec.failures ?? []), int(rec.failure_count, 0),
            json(rec.adaptive ?? null), int(rec.ledger_events, 0), json(rec.knowledge ?? null),
-           rec.task_type ?? null, rec.complexity ?? null, rec.response_chars ?? null, rec.error_message ?? null]
+           rec.task_type ?? null, rec.complexity ?? null, rec.response_chars ?? null, rec.error_message ?? null,
+           json(rec.performance ?? null)]
         );
         return rows[0];
       },
@@ -135,7 +137,8 @@ export function createMetaStore(run) {
         if (!list.length) return [];
         const cols = ["id", "run_id", "seq", "stage", "purpose", "model", "requested_model", "status", "http_status",
           "latency_ms", "streamed", "tokens_prompt", "tokens_completion", "tokens_total", "tokens_measured",
-          "chars_out", "cost_usd", "error_class", "error_message", "attempt"];
+          "chars_out", "cost_usd", "error_class", "error_message", "request_id", "attempt", "response_headers_ms",
+          "response_decode_ms", "prompt_cached_tokens", "requested_service_tier", "service_tier"];
         const values = [];
         const tuples = list.map((c, i) => {
           const base = i * cols.length;

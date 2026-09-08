@@ -41,6 +41,8 @@ export default function Chat() {
   const [conversationSummary, setConversationSummary] = useState(null);
   const [style, setStyle] = useState('balanced');
   const [webSearch, setWebSearch] = useState(false);
+  const [selectedSources, setSelectedSources] = useState([]);
+  const [agentMode, setAgentMode] = useState('off');
   const [isProcessing, setIsProcessing] = useState(false);
   const [draft, setDraft] = useState(null);   // { text, live } — the in-flight assistant turn
   const abortRef = useRef(null);
@@ -48,6 +50,7 @@ export default function Chat() {
 
   useEffect(() => {
     setActiveConversationId(conversationId);
+    setSelectedSources([]);
     stopSpeaking();
     return stopSpeaking;
   }, [conversationId, setActiveConversationId, stopSpeaking]);
@@ -81,8 +84,10 @@ export default function Chat() {
   }, [messages, draft]);
 
   // --- THE SEND PATH -------------------------------------------------------
-  const handleSend = useCallback(async (text) => {
+  const handleSend = useCallback(async (text, options = {}) => {
     if (!activeWorkspace || isProcessing) return;
+    const turnSources = Array.isArray(options.sources) ? options.sources : [];
+    const turnAgentMode = options.agentMode || 'off';
 
     stopSpeaking();
     setIsProcessing(true);
@@ -94,7 +99,16 @@ export default function Chat() {
     // Optimistic user bubble; replaced by the persisted row on the `start` event.
     const tempId = `temp_${Date.now()}`;
     setMessages(prev => [...prev, {
-      id: tempId, role: 'user', content: text, created_date: new Date().toISOString()
+      id: tempId,
+      role: 'user',
+      content: text,
+      created_date: new Date().toISOString(),
+      attachments: turnSources.map(source => ({
+        source_id: source.id,
+        name: source.name,
+        source_type: source.kind,
+        file_type: source.media_type
+      }))
     }]);
 
     const markStage = (stage, status, ms) => setDraft(d => {
@@ -109,10 +123,18 @@ export default function Chat() {
 
     try {
       await sendMessage(
-        { conversationId, userMessage: text, style, webSearch },
+        {
+          conversationId,
+          userMessage: text,
+          style,
+          webSearch,
+          agentMode: turnAgentMode,
+          attachments: turnSources.map(source => ({ source_id: source.id }))
+        },
         {
           start: (data) => {
             setMessages(prev => prev.map(m => (m.id === tempId ? data.userMessage : m)));
+            setSelectedSources([]);
             if (!conversationId && data.conversationId) {
               setActiveConversationId(data.conversationId);
               setSearchParams({ c: data.conversationId });
@@ -123,6 +145,7 @@ export default function Chat() {
           'stage.complete': (e) => markStage(e.stage, e.status === 'error' ? 'error' : 'done', e.ms),
           memories: (d) => mergeLive(d),
           observer: (d) => mergeLive(d),
+          agent: (d) => mergeLive({ agent: d }),
           webSearch: (d) => mergeLive({ webSearch: d }),
           strategist: (d) => mergeLive({ plan: d.plan }),
           critic: (d) => mergeLive(d),
@@ -227,7 +250,17 @@ export default function Chat() {
         )}
       </div>
 
-      <ChatInput onSend={handleSend} disabled={isProcessing} isProcessing={isProcessing} onStop={handleStop} />
+      <ChatInput
+        onSend={handleSend}
+        disabled={isProcessing}
+        isProcessing={isProcessing}
+        onStop={handleStop}
+        conversationId={conversationId}
+        sources={selectedSources}
+        onSourcesChange={setSelectedSources}
+        agentMode={agentMode}
+        onAgentModeChange={setAgentMode}
+      />
     </div>
   );
 }

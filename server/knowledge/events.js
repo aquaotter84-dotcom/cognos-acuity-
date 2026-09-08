@@ -45,6 +45,9 @@ export const TRANSITIONS = Object.freeze({
   goal_updated: T("task_context", true, "a task goal was created or restated"),
   task_context_updated: T("task_context", true, "sub-tasks, status or final response changed"),
 
+  // immutable document/link evidence
+  source_snapshot_created: T("source", false, "a parsed document or fetched page snapshot entered the evidence store"),
+
   // conclusions
   message_recorded: T("message", false, "a council conclusion (or a documented failure) was persisted"),
 
@@ -67,7 +70,7 @@ export const ENTITY_TYPES = Object.freeze(
   Array.from(new Set(Object.values(TRANSITIONS).map(t => t.entityType)))
 );
 
-export const SOURCE_KINDS = Object.freeze(["run", "message", "api", "sweep", "operator", "system"]);
+export const SOURCE_KINDS = Object.freeze(["run", "message", "api", "sweep", "operator", "system", "source_ingestion"]);
 
 export function isTransition(name) {
   return Object.prototype.hasOwnProperty.call(TRANSITIONS, name);

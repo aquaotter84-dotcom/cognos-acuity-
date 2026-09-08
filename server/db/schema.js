@@ -1,12 +1,14 @@
-// Schema for the Phase 14 (Dynamic Systems) and Phase 15 (Meta-Cognition) tables.
+// Schema for Phase 14 (Dynamic Systems), Phase 15 (Meta-Cognition), and
+// Phase 16's additive latency-observability columns, and Phase 17's governed
+// source-ingestion and bounded-agent records.
 //
 // HARD CONSTRAINT: additive only. Nothing here alters the meaning of an existing
-// column, drops anything, or rewrites a row. The two ALTER TABLE statements add
-// nullable columns with defaults, so every existing row keeps its semantics.
+// column, drops anything, or rewrites a row. ALTER TABLE statements only add
+// nullable columns, so every existing row keeps its semantics.
 //
 // This module is the single source of truth. server/db.js concatenates these
 // strings onto its existing idempotent SCHEMA and applies them lazily on first
-// query (the established convention); scripts/write-migrations.mjs writes the
+// query (the established convention); scripts/generate-migrations.mjs writes the
 // exact same text out to migrations/*.sql for reviewers and for a manual apply.
 // `npm run smoke` asserts the files and the strings have not drifted.
 
@@ -308,7 +310,137 @@ CREATE INDEX IF NOT EXISTS improvement_ledger_decision_idx ON improvement_ledger
 CREATE INDEX IF NOT EXISTS improvement_ledger_action_idx ON improvement_ledger (action, ts_ms DESC);
 `;
 
+// ---------------------------------------------------------------------------
+// Phase 16 — Latency and model-transport observability. Measurements only: no
+// reasoning decision, prompt, operator, or stored conclusion changes. Existing
+// rows remain valid with NULL performance/provider/request-correlation fields.
+// ---------------------------------------------------------------------------
+export const PHASE16_SCHEMA = `
+ALTER TABLE telemetry_runs ADD COLUMN IF NOT EXISTS performance JSONB;
+
+ALTER TABLE telemetry_model_calls ADD COLUMN IF NOT EXISTS request_id TEXT;
+ALTER TABLE telemetry_model_calls ADD COLUMN IF NOT EXISTS response_headers_ms INTEGER;
+ALTER TABLE telemetry_model_calls ADD COLUMN IF NOT EXISTS response_decode_ms INTEGER;
+ALTER TABLE telemetry_model_calls ADD COLUMN IF NOT EXISTS prompt_cached_tokens INTEGER;
+ALTER TABLE telemetry_model_calls ADD COLUMN IF NOT EXISTS requested_service_tier TEXT;
+ALTER TABLE telemetry_model_calls ADD COLUMN IF NOT EXISTS service_tier TEXT;
+`;
+
+// ---------------------------------------------------------------------------
+// Phase 17 — Sources + bounded agent mode. Source snapshots and chunks are
+// immutable evidence. Agent runs/steps are materialized state; agent_events and
+// agent_approvals are append-only records of every transition and decision.
+// No table grants an agent a council seat or a user-facing answer channel.
+// ---------------------------------------------------------------------------
+export const PHASE17_SCHEMA = `
+CREATE TABLE IF NOT EXISTS sources (
+  id                 TEXT PRIMARY KEY,
+  workspace_id       TEXT NOT NULL,
+  conversation_id    TEXT,
+  kind               TEXT NOT NULL,
+  name               TEXT NOT NULL,
+  canonical_url      TEXT,
+  final_url          TEXT,
+  media_type         TEXT NOT NULL,
+  byte_size          INTEGER NOT NULL,
+  content_sha256     TEXT NOT NULL,
+  extracted_text     TEXT NOT NULL,
+  extraction         JSONB NOT NULL,
+  risk_flags         JSONB NOT NULL,
+  fetched_at         TIMESTAMPTZ,
+  created_date       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS sources_workspace_created_idx ON sources (workspace_id, created_date DESC);
+CREATE INDEX IF NOT EXISTS sources_conversation_idx ON sources (conversation_id, created_date DESC);
+CREATE INDEX IF NOT EXISTS sources_sha_idx ON sources (workspace_id, content_sha256);
+CREATE UNIQUE INDEX IF NOT EXISTS sources_workspace_kind_sha_unique_idx ON sources (workspace_id, kind, content_sha256, COALESCE(canonical_url, ''));
+CREATE INDEX IF NOT EXISTS sources_url_idx ON sources (workspace_id, canonical_url);
+
+CREATE TABLE IF NOT EXISTS source_chunks (
+  id                 TEXT PRIMARY KEY,
+  source_id          TEXT NOT NULL REFERENCES sources(id) ON DELETE RESTRICT,
+  ordinal            INTEGER NOT NULL,
+  locator            JSONB NOT NULL,
+  content            TEXT NOT NULL,
+  content_sha256     TEXT NOT NULL,
+  char_start         INTEGER NOT NULL,
+  char_end           INTEGER NOT NULL,
+  created_date       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS source_chunks_ordinal_idx ON source_chunks (source_id, ordinal);
+CREATE INDEX IF NOT EXISTS source_chunks_source_idx ON source_chunks (source_id, ordinal);
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id                 TEXT PRIMARY KEY,
+  council_run_id     TEXT,
+  workspace_id       TEXT NOT NULL,
+  conversation_id    TEXT,
+  objective          TEXT NOT NULL,
+  mode               TEXT NOT NULL,
+  status             TEXT NOT NULL,
+  budget             JSONB NOT NULL,
+  plan               JSONB NOT NULL,
+  summary            JSONB,
+  started_ms         BIGINT NOT NULL,
+  ended_ms           BIGINT,
+  error_message      TEXT,
+  created_date       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_runs_council_run_idx ON agent_runs (council_run_id);
+CREATE INDEX IF NOT EXISTS agent_runs_workspace_idx ON agent_runs (workspace_id, created_date DESC);
+
+CREATE TABLE IF NOT EXISTS agent_steps (
+  id                 TEXT PRIMARY KEY,
+  agent_run_id       TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE RESTRICT,
+  ordinal            INTEGER NOT NULL,
+  tool_name          TEXT NOT NULL,
+  risk_level         TEXT NOT NULL,
+  requires_approval  BOOLEAN NOT NULL DEFAULT FALSE,
+  status             TEXT NOT NULL,
+  input              JSONB NOT NULL,
+  output             JSONB,
+  error_message      TEXT,
+  idempotency_key    TEXT NOT NULL,
+  started_ms         BIGINT,
+  ended_ms           BIGINT,
+  created_date       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_steps_ordinal_idx ON agent_steps (agent_run_id, ordinal);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_steps_idempotency_idx ON agent_steps (idempotency_key);
+
+CREATE TABLE IF NOT EXISTS agent_events (
+  id                 TEXT PRIMARY KEY,
+  seq                BIGSERIAL,
+  agent_run_id       TEXT NOT NULL,
+  step_id            TEXT,
+  event_type         TEXT NOT NULL,
+  from_status        TEXT,
+  to_status          TEXT,
+  detail             JSONB,
+  ts_ms              BIGINT NOT NULL,
+  created_date       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS agent_events_seq_idx ON agent_events (seq);
+CREATE INDEX IF NOT EXISTS agent_events_run_idx ON agent_events (agent_run_id, seq);
+
+CREATE TABLE IF NOT EXISTS agent_approvals (
+  id                 TEXT PRIMARY KEY,
+  agent_run_id       TEXT NOT NULL,
+  step_id            TEXT NOT NULL,
+  decision           TEXT NOT NULL,
+  scope_sha256       TEXT NOT NULL,
+  reason             TEXT,
+  decided_ms         BIGINT NOT NULL,
+  created_date       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agent_approvals_step_idx ON agent_approvals (step_id, decided_ms DESC);
+`;
+
 export const PHASE_SCHEMAS = [
   { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
-  { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA }
+  { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
+  { id: "0003", phase: 16, name: "phase16_latency_observability", sql: PHASE16_SCHEMA },
+  { id: "0004", phase: 17, name: "phase17_sources_and_agents", sql: PHASE17_SCHEMA }
 ];

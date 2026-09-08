@@ -4,6 +4,8 @@
 import { newId, ledgerEnabled } from "../db.js";
 import { runCouncilTurn } from "../chatOrchestrate.js";
 import { isClientAbort, throwIfAborted } from "../shared/cancellation.js";
+import { beginRequestTiming, elapsedMs, monotonicNow, timed } from "../shared/performance.js";
+import { normalizeAgentMode } from "../agent/runner.js";
 
 export function registerChatRoute(app, { wrap, db, logger }) {
   // --- THE SEND PATH -----------------------------------------------------------
@@ -17,22 +19,52 @@ export function registerChatRoute(app, { wrap, db, logger }) {
   // There is no second, non-streaming variant. There is no code after this handler
   // that also sends chat.
   app.post("/api/chat", wrap(async (req, res) => {
-    const { userMessage, style, attachments, webSearch } = req.body || {};
+    const requestTiming = beginRequestTiming();
+    const setupStarted = monotonicNow();
+    const { userMessage, style, attachments: requestedAttachments, webSearch } = req.body || {};
     if (typeof userMessage !== "string" || !userMessage.trim()) {
       return res.status(400).json({ error: "userMessage is required" });
     }
 
-    const workspace = await db.Workspace.ensureDefault();
+    const workspaceStep = await timed(() => db.Workspace.ensureDefault());
+    const workspace = workspaceStep.value;
+    const agentMode = normalizeAgentMode(req.body?.agentMode || "off");
+
+    // Resolve source attachments server-side. Names, hashes, text and URLs from
+    // the browser are never trusted into a model prompt or persisted message.
+    const requestedSourceIds = [...new Set((Array.isArray(requestedAttachments) ? requestedAttachments : [])
+      .map(attachment => attachment?.source_id)
+      .filter(id => typeof id === "string" && /^src_[a-z0-9]+$/i.test(id)))]
+      .slice(0, 8);
+    const sourceStep = await timed(() => db.Source.listByIds(workspace.id, requestedSourceIds));
+    const resolvedSources = sourceStep.value;
+    const attachments = resolvedSources.map(source => ({
+      source_id: source.id,
+      name: source.name,
+      source_type: source.kind,
+      file_type: source.media_type,
+      content_sha256: source.content_sha256,
+      file_url: null
+    }));
 
     let conversationId = req.body?.conversationId || null;
     let createdConversation = null;
+    let conversationMs = 0;
     if (!conversationId) {
-      createdConversation = await db.Conversation.create({
+      const conversationStep = await timed(() => db.Conversation.create({
         workspace_id: workspace.id,
         title: userMessage.slice(0, 50) + (userMessage.length > 50 ? "..." : ""),
         last_message_preview: userMessage
-      });
+      }));
+      createdConversation = conversationStep.value;
+      conversationMs = conversationStep.ms;
       conversationId = createdConversation.id;
+    } else {
+      const conversationStep = await timed(() => db.Conversation.get(conversationId));
+      conversationMs = conversationStep.ms;
+      if (!conversationStep.value || conversationStep.value.workspace_id !== workspace.id) {
+        return res.status(404).json({ error: "Conversation not found in this workspace" });
+      }
     }
 
     // Phase 15.1: the run is identified here, before the council starts, so both
@@ -40,14 +72,25 @@ export function registerChatRoute(app, { wrap, db, logger }) {
     // telemetry record and to the ledger.
     const runId = newId("run");
 
-    const userMsg = await db.Message.create({
+    const userMessageStep = await timed(() => db.Message.create({
       conversation_id: conversationId,
       workspace_id: workspace.id,
       role: "user",
       content: userMessage,
       attachments: attachments?.length ? attachments : null,
       processing_status: "complete"
-    });
+    }));
+    const userMsg = userMessageStep.value;
+    const preCouncilPerformance = {
+      runtime: requestTiming,
+      preCouncil: {
+        totalMs: elapsedMs(setupStarted),
+        workspaceMs: workspaceStep.ms,
+        sourceResolveMs: sourceStep.ms,
+        conversationMs,
+        userMessageMs: userMessageStep.ms
+      }
+    };
 
     // The SSE connection is the lifetime of the turn. If the browser presses
     // Stop or disconnects, propagate that cancellation through the orchestrator
@@ -76,10 +119,11 @@ export function registerChatRoute(app, { wrap, db, logger }) {
 
     try {
       const result = await runCouncilTurn(
-        { conversationId, workspaceId: workspace.id, userMessage, style, attachments, webSearch },
+        { conversationId, workspaceId: workspace.id, userMessage, style, attachments, webSearch, agentMode },
         {
           runId,
           signal: turnAbort.signal,
+          performance: preCouncilPerformance,
           emit: (event, payload) => send(event, payload),
           onToken: (delta) => send("token", { delta })
         }

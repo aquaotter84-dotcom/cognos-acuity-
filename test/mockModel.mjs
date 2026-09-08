@@ -41,7 +41,11 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
     hang: false,              // never respond -> exercises the AbortController
     failStatus: null,         // e.g. 500 / 504 -> upstream HTTP failure
     failRoles: null,          // null = every role, else a Set of roles to fail
+    failCount: null,          // null = keep failing; number = fail this many matching attempts
+    failBody: null,           // optional raw body, including proxy HTML for sanitization tests
+    failContentType: null,
     rejectUnknownModel: true, // 400 model_not_found for model ids matching /nonexistent|bad-/
+    cachedTokens: 0,
     requests: []
   };
 
@@ -50,7 +54,8 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
       answer: "This is the council's answer. The charter was applied.",
       memories: [{ content: "The user prefers Python for data work.", memory_type: "semantic", importance: 7, evidence_level: "direct", volatility: "medium" }],
       coherence: null, observer: { ...state.observer }, critic: { ...state.critic },
-      hang: false, failStatus: null, failRoles: null
+      hang: false, failStatus: null, failRoles: null, failCount: null,
+      failBody: null, failContentType: null
     }, patch);
   };
 
@@ -67,6 +72,8 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
         role,
         model: payload.model,
         stream: !!payload.stream,
+        serviceTier: payload.service_tier || null,
+        promptCacheKey: payload.prompt_cache_key || null,
         at: Date.now(),
         content: (payload.messages || [])
           .map(m => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)))
@@ -77,9 +84,13 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
         res.writeHead(400, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({ error: { message: `The model '${payload.model}' does not exist`, type: "invalid_request_error", code: "model_not_found" } }));
       }
-      if (state.failStatus && (!state.failRoles || state.failRoles.includes(role))) {
-        res.writeHead(state.failStatus, { "Content-Type": "application/json" });
-        return res.end(JSON.stringify({ error: { message: `upstream ${state.failStatus}`, type: "server_error" } }));
+      const matchingFailure = state.failStatus && (!state.failRoles || state.failRoles.includes(role));
+      const failureRemaining = state.failCount === null || Number(state.failCount) > 0;
+      if (matchingFailure && failureRemaining) {
+        if (state.failCount !== null) state.failCount = Math.max(0, Number(state.failCount) - 1);
+        const body = state.failBody ?? JSON.stringify({ error: { message: `upstream ${state.failStatus}`, type: "server_error" } });
+        res.writeHead(state.failStatus, { "Content-Type": state.failContentType || "application/json" });
+        return res.end(body);
       }
       if (state.hang) return;             // hold the socket open: the client must abort
 
@@ -90,11 +101,13 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({
           model: payload.model,
+          service_tier: payload.service_tier || "default",
           choices: [{ message: { content }, finish_reason: "stop" }],
           usage: {
             prompt_tokens: (payload.messages || []).reduce((n, m) => n + approxTokens(m.content), 0),
             completion_tokens: approxTokens(content),
-            total_tokens: (payload.messages || []).reduce((n, m) => n + approxTokens(m.content), 0) + approxTokens(content)
+            total_tokens: (payload.messages || []).reduce((n, m) => n + approxTokens(m.content), 0) + approxTokens(content),
+            prompt_tokens_details: { cached_tokens: state.cachedTokens }
           }
         }));
       };
@@ -126,11 +139,13 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         model: payload.model,
+        service_tier: payload.service_tier || "default",
         choices: [{ message: { content: String(answer) }, finish_reason: "stop" }],
         usage: {
           prompt_tokens: (payload.messages || []).reduce((n, m) => n + approxTokens(typeof m.content === "string" ? m.content : JSON.stringify(m.content)), 0),
           completion_tokens: approxTokens(answer),
-          total_tokens: 0
+          total_tokens: 0,
+          prompt_tokens_details: { cached_tokens: state.cachedTokens }
         }
       }));
     });

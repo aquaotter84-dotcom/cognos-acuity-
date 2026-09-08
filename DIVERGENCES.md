@@ -15,21 +15,22 @@ injection survive intact.
 
 ## 1. Preserved verbatim (the mind)
 
-Copied byte-for-byte, only import paths and `ctx.base44.entities` → `ctx.db` changed:
+Originally copied byte-for-byte except import/storage bindings; later governed
+changes are named explicitly in the final column and in the cited sections:
 
 | File | Origin |
 |---|---|
 | `server/council/charter.js` | `base44/shared/council/charter.ts` — the four principles: truth, evidence, agency, dignity |
 | `server/council/observer.js` | Observer prompt, task-type list, JSON schema, fallback classification |
-| `server/council/strategist.js` | Strategist decomposition prompt, `ALLOWED_AGENTS`, schema |
-| `server/council/specialist.js` | All nine `SPECIALIST_PROMPTS`, decomposed + direct paths |
-| `server/council/synthesizer.js` | `SYNTH_BASE`, `REVISE_BASE`, synthesis + revision paths |
-| `server/council/critic.js` | Critic prompt, charter check schema, skip/degrade behaviour — **prompt text still byte-identical**; Phase 14 appends a data section to the *user* turn (§9.5) |
-| `server/council/governor.js` | Sovereignty gate, `SECRET_PATTERNS`, flag logic — **decision logic untouched**; Phase 14 passes coherence through as information only (§9.5) |
+| `server/council/strategist.js` | Strategist decomposition, `ALLOWED_AGENTS`, schema; Phase 17 adds source names—not source contents—to planning (§14) |
+| `server/council/specialist.js` | All nine `SPECIALIST_PROMPTS`, decomposed + direct paths; source turns add untrusted-evidence instructions and excerpts (§14) |
+| `server/council/synthesizer.js` | `SYNTH_BASE`, `REVISE_BASE`, synthesis + revision paths; source evidence follows drafts through synthesis/revision (§14) |
+| `server/council/critic.js` | Critic schema and skip/degrade behaviour; Phase 15 adds the epistemic audit and Phase 17 adds source/citation review (§9.5, §14) |
+| `server/council/governor.js` | Sovereignty gate and `SECRET_PATTERNS`; later deterministic audits add enforceable epistemic and exact-source-citation vetoes (§11, §14) |
 | `server/council/index.js` | Registry wiring |
 | `server/shared/*.js` | orchestrator, registry, protocol, runtime, eventBus, errors, logging |
-| `server/llm.js` (lower half) | `STYLE_DIRECTIVES`, `styleDirective`, `buildContextSystemPrompt` and the COGNOS identity base prompt — **still byte-identical**; only `callLLM` above it gained telemetry (§10.1) |
-| `server/chatOrchestrate.js` | Memory-relevance prompt, memory-extraction prompt, summarization prompt, Phase 4 revision loop, Phase 13 adaptive rule — **all verbatim**; the pipeline gained three non-council stages and a veto consequence (§9, §10) |
+| `server/llm.js` (lower half) | `STYLE_DIRECTIVES`, `styleDirective`, and the COGNOS identity base prompt remain; source turns add one higher-priority untrusted-evidence clause (§14) |
+| `server/chatOrchestrate.js` | Memory relevance, summarization, Phase 4 revision, and Phase 13 adaptive rule remain; memory extraction now distinguishes source claims from user facts and the pipeline gained governed non-council stages (§9, §10, §14) |
 | `src/components/chat/CouncilTrace.jsx` | Was unchanged; Phase 14/15 add one collapsible section that renders only when the new fields are present (§9.7) |
 
 The Phase 13 pipeline order was:
@@ -38,6 +39,9 @@ The Phase 13 pipeline order was:
 Phase 14/15 insert three **non-council** stages (they do not vote and are not
 seats) and keep every existing edge exactly where it was:
 `contextAssembly → observer → webSearch → strategist → specialist → synthesizer → coherenceMonitor → critic ⟳ (coherence re-checked after any revision) → governor → (memory ‖ deferred critic) → knowledgeProjection → telemetryRecord ‖ audit ‖ summary`
+
+Phase 17 conditionally prefixes `agentPrepare` when a source is attached or a
+non-off agent mode is selected. It prepares evidence only and has no answer edge.
 
 ---
 
@@ -85,13 +89,12 @@ Verified: `grep -rin "base44\|bluesminds\|VITE_"` over `server/`, `src/`, config
 These existed **only** because Base44 supplied them. There is no honest
 equivalent, so they were removed rather than faked:
 
-- **File attachments, screen share, camera capture.** These needed
-  `integrations.Core.UploadFile` — a hosted blob store returning public URLs the
-  model could fetch. Rebuilding it means adding S3/R2 and a signed-URL service,
-  which is a new subsystem, not a port. The multimodal plumbing survives in
-  `llm.js` (`withAttachments` folds image URLs into the user turn), so wiring a
-  blob store later is a small change. **The UI controls are gone; a paperclip
-  that silently fails would be a lie.**
+- **Screen share, camera capture, and uploaded-image vision** remain removed.
+  They depended on `integrations.Core.UploadFile`, a hosted blob store returning
+  public URLs the model could fetch. Phase 17 adds an honest paperclip for
+  server-extracted PDF/DOCX/text/Markdown/CSV evidence and public links without
+  pretending to restore that image/blob path (§14). The dormant multimodal
+  `withAttachments` helper remains, but no UI claims image upload support.
 - **Hosted LiveKit voice agent** (`livekit-agent/`, `AgentChat.jsx`,
   `useConversationMode`, the original `SpeakButton`). It needs a LiveKit server,
   tokens, and the service-role secret path, so the full-duplex agent remains
@@ -105,7 +108,8 @@ equivalent, so they were removed rather than faked:
   are a large second subsystem (a 445-line belief-derivation engine with
   confidence propagation, plus two scheduled Base44 workflows). They are
   **preserved in the repo history and not ported here.** Porting them is a
-  follow-up of comparable size to this one; say the word.
+  Phase 17 does not resurrect those workflows: its source snapshots and bounded
+  read-only agent are new, smaller governed subsystems (§14).
 - **Multi-user workspaces, sharing, `member_ids`, RLS.** All of it keyed to
   platform user IDs. With no accounts there is one workspace and no row-level
   security. `WorkspaceMembers`, `ShareMemoryModal` are gone.
@@ -376,10 +380,11 @@ shape.
 ### 10.1 The single telemetry capture point
 
 `server/llm.js`'s `callLLM` is the only place a model is called, so it is the
-only place instrumented. It gained an optional `purpose` label and a
-**report-once** `observeModelCall(...)` on every exit path: success, timeout,
-abort, network error, HTTP error, stream error, parse error. Nothing else in the
-app was threaded with callbacks. `server/llm.js` also now exports
+only place instrumented. It has an optional `purpose` label and reports every
+physical request attempt exactly once on every exit path: success, timeout,
+abort, network error, HTTP error, stream error, parse error. A bounded retry is
+therefore two attributable call rows rather than one failure being overwritten.
+Nothing else in the app is threaded with callbacks. `server/llm.js` also exports
 `BANNED_MODELS` so the Policy Engine and `resolveModel()` cannot drift apart —
 the ban list, the alias table, the resolution order and the defaults are
 unchanged (`pin.model_ban`).
@@ -499,12 +504,15 @@ of degrading to the HTTP phrase `Conflict`.
 
 The former all-in-one Express module was split into focused registrars:
 `server/routes/chat.js`, `server/routes/knowledge.js`, and
-`server/routes/meta.js`. `server/index.js` is now the composition root and still
-registers the same 43 routes in the same order. Cancellation, governed release,
-and shared query parsing are isolated leaf modules; reusable System-page UI
-primitives moved to `src/components/system/SystemUi.jsx`. `test/integrity.mjs` covers
-the three new contracts and pins the 43-route surface, while the expanded smoke
-run retains the full Phase 14/15 regression surface.
+`server/routes/meta.js`. `server/index.js` is now the composition root. Phase 17
+adds a focused `server/routes/sources.js` registrar. The later read-only identity
+manifest adds `GET /api/identity`, bringing the reviewed surface to 51 local
+routes while retaining exactly one `POST /api/chat` answer route.
+Cancellation, governed release, and shared query parsing are isolated leaf
+modules; reusable System-page UI primitives moved to
+`src/components/system/SystemUi.jsx`. `test/integrity.mjs` pins the complete
+route surface, while the expanded smoke run retains the full earlier regression
+surface.
 
 ---
 
@@ -529,3 +537,263 @@ mode cancels active playback. Completed assistant messages retain explicit
 Web Speech synthesis API receive normal text behavior and disabled voice controls.
 `test/voice.mjs` pins speech-text normalization and lossless chunking; the existing
 integrity suite continues to pin the upstream governance boundary.
+
+---
+
+## 13. Latency without reducing reasoning
+
+This pass changes measurement and scheduling, not the council's thought. No
+operator, prompt, model default, context budget, revision rule, or Governor rule
+was removed or weakened.
+
+### 13.1 Evidence before adaptation
+
+`npm run latency -- --limit=200 --days=7` reads persisted telemetry and reports
+p50/p95 for run orchestration, governed-answer readiness, post-processing,
+pre-council database setup, individual stages, and model calls by purpose. It
+also separates first-request cold-instance candidates from known-warm requests.
+`server/meta/latency.js` contains the pure percentile/report logic so the report
+is regression-tested and does not need a mutating HTTP route.
+
+Phase 16 adds nullable `performance` metadata to `telemetry_runs` and response
+header/decode, returned service-tier, and cached-token measurements to
+`telemetry_model_calls`. Migration `0003` is additive and idempotent; old rows
+remain valid with NULL fields.
+
+### 13.2 One proven critical-path removal
+
+The adaptive strategy registry remains observe-only and still selects exactly
+the canonical council pipeline. Its database reads now begin alongside context
+assembly and are joined immediately afterward. The selection, explanation, and
+adaptive decision are unchanged, but their independent wait no longer precedes
+the context database reads.
+
+### 13.3 Runtime, database, and provider timing
+
+Each chat turn records process age, request ordinal, a conservative
+`coldInstanceCandidate` flag, and the separate workspace/conversation/user-message
+setup times. Every model call records time to response headers separately from
+response body decoding. These are observations only; they are never input to an
+operator or adaptive runtime switch.
+
+### 13.4 Provider acceleration is explicit and transport-only
+
+`COGNOS_LLM_SERVICE_TIER` and `COGNOS_PROMPT_CACHE_KEY` are omitted unless an
+operator explicitly configures them for a gateway that supports the corresponding
+OpenAI-compatible fields. They are request routing hints only. Tests submit the
+same messages with and without the hints and require byte-identical prompt
+content and the same response. Returned `service_tier` and
+`usage.prompt_tokens_details.cached_tokens` are captured so the latency report
+can prove whether the provider honored them. No undocumented BluesMinds support
+is assumed.
+
+### 13.5 Why a durable post-processing outbox is not silently enabled
+
+An outbox could send `done` before memory extraction, summary, knowledge
+projection, deferred Critic telemetry, and final telemetry settle. That would
+change immediate consistency and the completed council trace unless a durable,
+idempotent worker and next-turn barrier were designed and operated. Doing it
+without production evidence would violate the request to sacrifice nothing.
+
+The latency report therefore applies an explicit evidence floor: at least 20
+completed instrumented runs, with post-processing occupying at least 20% of p50
+run latency, before it labels an outbox a `candidate`. It never enables
+one. A candidate still requires a separately reviewed additive design; fewer
+samples produce `insufficient_evidence`, and a smaller tail produces
+`not_justified`. This completes the requested assessment without turning an
+unmeasured optimization into a consistency regression.
+
+### 13.6 Validation contract
+
+`test/performance.mjs` pins percentile arithmetic, the outbox evidence floor,
+strategy/context overlap, opt-in provider fields, unchanged prompt content,
+and persistence of cold/DB/model/cache/service-tier measurements. The existing
+integrity suite continues to prove that no pre-Governor answer text crosses SSE,
+Stop cancels active work without persistence, and the single send path remains
+unchanged.
+
+---
+
+## 14. Governed documents, links, and bounded agent mode
+
+### 14.1 Documents are immutable evidence snapshots, not executable files
+
+Phase 17 restores document analysis without restoring the removed Base44 blob or
+file APIs. The browser sends a bounded base64 payload to COGNOS; the server
+validates the file signature/media type and extracts PDF, DOCX, UTF-8 text,
+Markdown, or CSV without executing scripts or macros. DOCX central-directory
+sizes are checked before decompression and macro-bearing containers are refused.
+PDF extraction preserves page locators. Raw bytes are not retained: the durable
+snapshot is the exact extracted text, its SHA-256 digest, extraction metadata,
+and immutable page/section chunks. Re-uploading the same extracted content in a
+workspace reuses the existing snapshot rather than creating mutable copies.
+
+`source_snapshot_created` is appended to the knowledge ledger in the same
+transaction as a new source and its chunks. The source/chunk stores expose no
+update or delete accessor. Client-provided names, URLs, or source text never
+enter prompts from a chat attachment; `/api/chat` resolves the submitted source
+id back to server-owned rows.
+
+### 14.2 Links are retrieval, not an open proxy
+
+`server/sources/safeFetch.js` deliberately does not call global `fetch`. It
+resolves every hostname, rejects the entire result set if any address is local,
+private, link-local, reserved, documentation-only, multicast, or otherwise
+non-public, and pins the actual connection to the validated DNS answer. Every
+redirect is revalidated. URL credentials, non-HTTP(S) schemes, nonstandard
+ports, redirect loops, HTTPS-to-HTTP downgrades, unexpected content encoding,
+large bodies, and slow responses are refused. Cookies and authorization headers
+are never forwarded.
+
+HTML scripts, styles, iframes, embeds, forms, and similar executable containers
+are removed before readable-text extraction. Explicit linked PDF/DOCX/text
+content uses the same bounded document extractors. The resulting page is an
+immutable source snapshot, never live authority.
+
+### 14.3 Prompt injection is treated as evidence about the source
+
+Deterministic scanners record common instruction-override, system-prompt,
+role-impersonation, tool-coercion, and credential-exfiltration patterns as
+`risk_flags`; the source text is not silently rewritten. Every model that sees
+source excerpts receives a higher-priority instruction that sources are
+untrusted data, not commands. Strategists receive source names only; Specialists,
+the Synthesizer, and the Critic receive citable evidence. Memory extraction is
+explicitly told not to turn document claims into facts about the user.
+
+Evidence packs label every excerpt with a server-produced locator such as
+`[src_…:p3]`. A deterministic Governor audit rejects any source id or locator
+that was not supplied to that turn. `source_citation_unverifiable` participates
+in the existing one-pass Governor revision/fixed-refusal path, so fabricated
+provenance cannot cross the governed release point.
+
+### 14.4 Agent mode is useful autonomy with a deliberately hard ceiling
+
+Agent mode is integrated into the existing chat composer and existing
+`POST /api/chat` path. It is a subsystem (`agentPrepare`), not a seventh council
+seat. It has three explicit per-turn modes:
+
+- `off`: no autonomous plan;
+- `observe`: persist proposed reads but execute no agent tools;
+- `read_only`: read attached snapshots and open at most three explicit URLs,
+  within six total sequential steps.
+
+The typed registry contains only `read_source` and `open_link`. There is no shell,
+filesystem, arbitrary HTTP, memory-write, message-send, or generic function tool.
+The budget advertises zero writes. Every run and step has an idempotency key and
+materialized status; every transition is also appended to `agent_events`.
+Failures are contained and visible. Cancellation marks the run cancelled and
+stops before another step. Agent preparation is awaited before context assembly,
+so there is no background or next-turn visibility race.
+
+`agent_approvals` exists as additive, append-only schema for a future reviewed
+approval design, but Phase 17 exposes no approval POST route and no write tool.
+A table is not treated as an approval barrier. The Policy Engine refuses both
+`enable_agent_write_tool` and `weaken_source_boundary`, citing the new immutable
+laws `pin.agent_bounded` and `pin.source_untrusted`. Phase 17 raised the law
+layer to 1.1.0; the later truthful-self-model pin raises the current version to
+1.2.0. Consequential autonomy remains intentionally unavailable until
+its executor, diff/preview, exact scope hash, next-turn barrier, idempotency, and
+recovery behavior are separately implemented and proven.
+
+### 14.5 Voice and existing council integrity
+
+Source locator tokens stay visible in answer text but are stripped from browser
+speech so citations do not degrade voice mode. All source-informed drafts still
+flow through the same Specialist/Synthesizer, Coherence Monitor, Critic,
+Governor, and sole approved-text release function. Source ingestion and agent
+status routes return evidence/provenance, never a conversational answer.
+
+`test/sources-agent.mjs` exercises real PDF/text extraction, HTML executable
+removal, archive/chunk boundaries, prompt-injection flags, URL and SSRF rules,
+exact Governor citations, immutable persistence, server-owned attachment
+resolution, observe mode, read-only partial failure, cancellation, Policy Engine
+refusals, and the one chat route. The voice, latency, integrity, and 170-assertion
+smoke suites remain separate regression gates.
+
+---
+
+## 15. Canonical identity and self-knowledge
+
+The old prompt contained only the generic sentence “You are COGNOS, an
+intelligent AI reasoning assistant.” That named the assistant but did not give it
+a grounded account of its own architecture, authority boundaries, runtime
+capabilities, or limits. A model asked how the product worked therefore had to
+infer details from incidental prompt context and could confidently invent them.
+
+`server/identity.js` is now the single versioned source of truth for public
+self-knowledge. Its deeply frozen manifest names **COGNOS** (not Cognito), states
+that it is software rather than a person or model provider, explains all six
+operators and their authority, describes the twelve-step turn lifecycle, lists
+capabilities and supporting subsystems, records hard boundaries, and maps each
+major implementation area to its repository location. Runtime availability is
+constructed separately from `getSystemConfig()`, so “built in” never silently
+means “enabled in this deployment.” The manifest contains no credentials, user
+data, private prompt text, or hidden model chain-of-thought.
+
+A compact form is appended after mutable workspace, memory, and source context in
+every answer-producing Specialist/Synthesizer prompt and in the Critic's audit
+prompt. This ordering and explicit precedence prevent a workspace instruction,
+memory, document, webpage, or tool result from renaming COGNOS or inventing a
+capability. Decomposed Specialist calls receive the same self-model, avoiding a
+gap where only direct answers knew the architecture.
+
+`GET /api/identity` exposes the full manifest and safe runtime state as read-only
+transparency data. It is not a conversational endpoint and cannot create an
+answer. The new lazy-loaded **About COGNOS** page renders the exact same object as
+a readable architecture tour: identity rules, principles, six operators, turn
+flow, capabilities and availability, subsystems, runtime facts, hard limits, and
+implementation map. The Welcome screen links naturally into a governed
+self-explanation through the existing chat path.
+
+The law layer adds `pin.truthful_self_model` and is now version **1.2.0**. The
+Policy Engine recognizes and refuses `modify_identity`: changing identity is a
+reviewed code change, never a live adaptation. `test/identity.mjs` pins the name,
+deep immutability, exactly six operators, Governor sovereignty, complete flow,
+runtime-state distinction, prompt precedence, non-secret API response, Policy
+refusal, and the continued existence of exactly one `POST /api/chat` answer
+route. The complete local Express surface is now 51 routes, 50 excluding the
+local static-file fallback.
+
+---
+
+## 16. Bounded recovery from transient model-gateway failures
+
+The model boundary previously failed a complete council turn immediately when
+the configured OpenAI-compatible endpoint returned a transient HTTP 504. It also
+placed the provider's raw response body in the persisted assistant error; an
+OpenResty HTML error page therefore appeared verbatim in Chat. This was truthful
+but neither resilient nor an appropriate public error boundary.
+
+`server/llm.js` now retries transient network failures and HTTP
+408/429/500/502/503/504 responses once by default (`COGNOS_LLM_MAX_RETRIES`,
+clamped to 0–2). The retry is transport-only: it serializes the payload once and
+reuses the exact bytes, model, service tier, and prompt-cache key. Backoff is
+bounded (250 ms exponential, at most two seconds), honors a short `Retry-After`,
+and starts another attempt only when at least one second remains after the wait.
+The existing `COGNOS_LLM_TIMEOUT_MS` is one logical deadline across all attempts,
+so recovery cannot multiply a 60-second call into a 120-second function overrun.
+Client cancellation aborts the active attempt or backoff immediately. A provider
+stream can be retried only before any candidate delta exists, preventing a
+partial draft from being duplicated.
+
+Provider error bodies are read through an 8 KiB cap. Public errors map gateway,
+rate-limit, credential, and server statuses to concise descriptions; raw HTML,
+proxy branding, bearer values, API-key patterns, and database URLs never enter
+the user-visible error or telemetry. Non-transient request errors are not
+retried. A persistent 504 now reads “The model provider gateway timed out (HTTP
+504) after 2 attempts,” rather than rendering an HTML document.
+
+Telemetry records each physical attempt with its attempt number. When a later
+attempt succeeds, the earlier failure remains in the run but is marked
+`recovered: true` with the recovering attempt, preserving both the incident and
+the successful outcome. Health, Settings, `/api/identity`, and About COGNOS show
+the active logical deadline and retry count. The canonical self-model is bumped
+to version 1.1.0 because model transport and recovery are now part of what
+COGNOS truthfully knows about itself.
+
+`test/performance.mjs` reproduces the reported HTML 504, proves the second request
+uses identical prompt/model content, validates recovery and persistent-failure
+bounds, rejects HTML leakage, and verifies durable attempt/recovery attribution
+through a complete governed turn. Retries do not create another answer path and
+all recovered candidate text still passes through the Critic and Governor before
+release.

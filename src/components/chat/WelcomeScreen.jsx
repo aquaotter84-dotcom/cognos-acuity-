@@ -3,12 +3,12 @@
 // Base44 asset, so it is replaced with an inline SVG mark — no platform domain.
 // Copy and suggestion cards are unchanged.
 
-import { Sparkles, BookOpen, Lightbulb, Code } from 'lucide-react';
+import { Sparkles, BookOpen, Cpu, Code } from 'lucide-react';
 
 const suggestions = [
+  { icon: Cpu, title: 'Meet COGNOS', text: 'Explain what COGNOS is, how every part works, what you can do, and your limits' },
   { icon: Sparkles, title: 'Brainstorm ideas', text: 'Help me brainstorm ideas for a new project' },
   { icon: BookOpen, title: 'Explain a concept', text: 'Explain how neural networks work in simple terms' },
-  { icon: Lightbulb, title: 'Solve a problem', text: 'What are some strategies for improving productivity?' },
   { icon: Code, title: 'Write code', text: 'Write a Python function to sort a list of dictionaries' },
 ];
 
@@ -39,7 +39,7 @@ export default function WelcomeScreen({ onSuggestion }) {
       <Mark />
       <h1 className="text-2xl font-bold tracking-tight mb-2">Welcome to COGNOS</h1>
       <p className="text-sm text-muted-foreground mb-8 text-center max-w-md">
-        Your intelligent AI reasoning assistant. Start a conversation or try one of the suggestions below.
+        A governed AI reasoning council with one identity, visible evidence, bounded tools, and a sovereign final-answer gate.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
         {suggestions.map(({ icon: Icon, title, text }) => (

@@ -8,7 +8,7 @@ import { chunkSpeechText, markdownToSpeechText } from '../src/lib/speechText.js'
 
 const markdown = `# Result
 
-Use **COGNOS** with [the guide](https://example.com/guide).
+Use **COGNOS** with [the guide](https://example.com/guide) [src_report:p2].
 
 \`inline code\` is retained.
 
@@ -25,6 +25,7 @@ const spoken = markdownToSpeechText(markdown);
 assert.equal(spoken.includes('https://'), false);
 assert.equal(spoken.includes('**'), false);
 assert.equal(spoken.includes('const secret'), false);
+assert.equal(spoken.includes('src_report'), false);
 assert.match(spoken, /Code block omitted from speech/);
 assert.match(spoken, /COGNOS/);
 assert.match(spoken, /the guide/);
@@ -42,4 +43,4 @@ const chatSource = await readFile(new URL('../src/pages/Chat.jsx', import.meta.u
 assert.match(chatSource, /speakAutomatically\(data\.response,/);
 assert.doesNotMatch(chatSource, /speakAutomatically\((?:data\.delta|draft|data\.message\.content)/);
 
-console.log('VOICE RESULT: 12 passed, 0 failed');
+console.log('VOICE RESULT: 13 passed, 0 failed');

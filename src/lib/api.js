@@ -61,6 +61,7 @@ const req = request;
 
 export const api = {
   health: () => req("/api/health"),
+  identity: () => req("/api/identity"),
 
   getWorkspace: () => req("/api/workspace"),
   updateWorkspace: (data) => req("/api/workspace", { method: "PATCH", body: data }),
@@ -76,6 +77,15 @@ export const api = {
   deleteMemory: (id) => req(`/api/memories/${id}`, { method: "DELETE" }),
 
   listActivity: () => req("/api/activity"),
+
+  // --- Phase 17: immutable document/link sources + bounded agent records ---
+  listSources: (params = {}) => req(`/api/sources${qs(params)}`),
+  source: (id) => req(`/api/sources/${id}`),
+  uploadDocument: (data) => req("/api/sources/documents", { method: "POST", body: data }),
+  openLink: (data) => req("/api/sources/links", { method: "POST", body: data }),
+  agentTools: () => req("/api/agent/tools"),
+  agentRuns: (params = {}) => req(`/api/agent/runs${qs(params)}`),
+  agentRun: (id) => req(`/api/agent/runs/${id}`),
 
   // --- Phase 14: the knowledge layer (read-only) ---------------------------
   knowledgeEvents: (params = {}) => req(`/api/knowledge/events${qs(params)}`),

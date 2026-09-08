@@ -171,11 +171,18 @@ export default function Settings() {
             <div className="rounded-xl border border-border bg-card p-3 text-xs">
               {health ? (
                 <>
+                  <Row label="COGNOS self-model" value={`v${health.identityVersion || 'unknown'}`} />
                   <Row label="Model" value={health.model} />
                   <Row label="Fast model" value={health.fastModel} />
+                  <Row label="Model deadline" value={health.modelRequestPolicy?.timeoutMs != null ? `${health.modelRequestPolicy.timeoutMs}ms total` : 'unknown'} />
+                  <Row label="Transient model retries" value={health.modelRequestPolicy?.maxRetries ?? 'unknown'} />
                   <Row label="Model key configured" value={health.modelKeyConfigured ? 'yes' : 'no'} />
+                  <Row label="LLM service tier" value={health.llmServiceTier || 'provider-default'} />
+                  <Row label="Prompt-cache routing" value={health.promptCacheKeyConfigured ? 'configured' : 'automatic/provider-default'} />
                   <Row label="Database configured" value={health.databaseConfigured ? 'yes' : 'no'} />
                   <Row label="Web search" value={health.searchProvider} />
+                  <Row label="Document/link sources" value={health.sources ? 'enabled' : 'disabled'} />
+                  <Row label="Agent mode" value={health.agent?.enabled ? `${(health.agent.modes || []).join(', ')} · writes ${health.agent.autonomousWrites ? 'enabled' : 'disabled'}` : 'disabled'} />
                   <Row label="Access gate" value={health.gate ? 'enabled' : 'disabled'} />
                 </>
               ) : <p className="text-muted-foreground">Loading…</p>}

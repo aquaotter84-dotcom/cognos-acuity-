@@ -37,11 +37,14 @@ export const GATED_ACTIONS = Object.freeze({
   register_operator: "Add a council operator",
   remove_operator: "Remove a council operator",
   modify_law: "Change the law layer",
+  modify_identity: "Change the canonical COGNOS self-model at runtime",
   add_auth: "Introduce accounts or authentication",
   store_secret: "Persist a credential outside the environment",
   change_send_path: "Add or replace the path from user message to user answer",
   weaken_veto: "Reduce what the Governor may refuse",
   rewrite_history: "Delete or alter ledger, telemetry or improvement rows",
+  enable_agent_write_tool: "Give agent mode a write-capable or consequential tool",
+  weaken_source_boundary: "Relax source prompt-injection, citation, or SSRF protections",
   revert_improvement: "Record the reversal of an earlier improvement row"
 });
 
@@ -97,6 +100,10 @@ function checkAction(proposal) {
       violations.push(violation("phase15.law_layer_immutable", "the law layer cannot be modified at runtime, by an endpoint, or by an adaptation. Changing a law is a reviewed code change to server/council/laws.js"));
       break;
 
+    case "modify_identity":
+      violations.push(violation("pin.truthful_self_model", "the canonical self-model cannot be rewritten by a prompt, endpoint, memory, source, or runtime adaptation. A truthful identity change requires a reviewed code change to server/identity.js"));
+      break;
+
     case "register_operator":
     case "remove_operator":
       violations.push(violation("pin.six_operators", `the council is six operators plus the web-search tool they consult. '${action}' would change the seats; subsystems may be added instead, and they do not vote`));
@@ -120,6 +127,14 @@ function checkAction(proposal) {
 
     case "rewrite_history":
       violations.push(violation("pin.ledger_append_only", "the ledger, telemetry and improvement tables are append-only. Correction is a new transition, not an edit"));
+      break;
+
+    case "enable_agent_write_tool":
+      violations.push(violation("pin.agent_bounded", "Phase 17 agent mode is read-only. A write-capable tool requires a separately reviewed approval barrier, idempotent executor, and cancellation/consistency proof before it can be enabled"));
+      break;
+
+    case "weaken_source_boundary":
+      violations.push(violation("pin.source_untrusted", "source text remains untrusted evidence; SSRF, exact-locator citation, content, redirect, timeout, and size boundaries cannot be weakened at runtime"));
       break;
 
     case "change_model": {

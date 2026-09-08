@@ -16,7 +16,7 @@
 //
 // PHASE 14 ADDITION (additive, same conventions):
 //   * Every statement is still CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT
-//     EXISTS. The Phase 14 and Phase 15 tables live in server/db/schema.js and
+//     EXISTS. The Phase 14–17 additive schemas live in server/db/schema.js and
 //     are concatenated onto SCHEMA below, so one lazy migration applies them all
 //     and migrations/*.sql stays byte-identical to what the app runs.
 //   * withTransaction(fn) hands the callback a store whose accessors are bound
@@ -38,13 +38,14 @@ import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { newId, num } from "./db/util.js";
-import { PHASE14_SCHEMA, PHASE15_SCHEMA } from "./db/schema.js";
+import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA } from "./db/schema.js";
 import { appendEvent, snapshot } from "./knowledge/events.js";
 import {
   createKnowledgeStore, TRACKED_FIELDS,
   MEMORY_TRACKED_FIELDS, CONVERSATION_TRACKED_FIELDS, TASK_CONTEXT_TRACKED_FIELDS
 } from "./knowledge/store.js";
 import { createMetaStore } from "./meta/store.js";
+import { createSourceAgentStore } from "./sources/store.js";
 import { confidenceFromEvidence, statementKey, projectMemoryWrite, retireBeliefByKey } from "./knowledge/beliefs.js";
 import { linkCoActivations } from "./knowledge/relationships.js";
 
@@ -180,7 +181,7 @@ CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events (created_date DESC)
 `
 // Phase 14 (Dynamic Systems) and Phase 15 (Meta-Cognition). Additive only:
 // new tables, new indexes, and two nullable columns on memories.
-+ PHASE14_SCHEMA + PHASE15_SCHEMA;
++ PHASE14_SCHEMA + PHASE15_SCHEMA + PHASE16_SCHEMA + PHASE17_SCHEMA;
 
 function isNeon(url) {
   return /\.neon\.tech/i.test(url) || /neon\.database/i.test(url);
@@ -738,10 +739,12 @@ function createStore(run) {
   const core = createCoreStore(run);
   const knowledge = createKnowledgeStore(run);
   const meta = createMetaStore(run);
+  const sources = createSourceAgentStore(run);
   return {
     ...core,
     ...knowledge,
     ...meta,
+    ...sources,
     query: run,
     ready,
     withTransaction,
@@ -772,6 +775,13 @@ export const Strategy = db.Strategy;
 export const AdaptiveDecision = db.AdaptiveDecision;
 export const StrategyEvaluation = db.StrategyEvaluation;
 export const ImprovementLedger = db.ImprovementLedger;
+// Phase 17 — immutable sources and bounded-agent execution records.
+export const Source = db.Source;
+export const SourceChunk = db.SourceChunk;
+export const AgentRun = db.AgentRun;
+export const AgentStep = db.AgentStep;
+export const AgentEvent = db.AgentEvent;
+export const AgentApproval = db.AgentApproval;
 
 export { TRACKED_FIELDS, MEMORY_TRACKED_FIELDS, CONVERSATION_TRACKED_FIELDS, TASK_CONTEXT_TRACKED_FIELDS };
 
