@@ -108,6 +108,11 @@ export async function bootHarness(env = {}) {
   async function stop() {
     await new Promise(r => http.close(r));
     await model.stop();
+    // Close the app pool before stopping the PostgreSQL wire server; otherwise
+    // pg correctly reports its idle socket being terminated as an unhandled
+    // pool error in test processes that do not call process.exit immediately.
+    const { closeDatabase } = await import("../server/db.js");
+    await closeDatabase();
     await dbServer.stop();
   }
 

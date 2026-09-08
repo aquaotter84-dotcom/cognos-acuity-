@@ -66,14 +66,13 @@ export const specialistAgent = defineAgent({
       ...history.map(msg => ({ role: msg.role, content: msg.content })),
       { role: "user", content: userContent }
     ];
-    // SANCTIONED UPGRADE (streaming): on the direct path the final answer is the
-    // user-visible text, so tokens are forwarded to the SSE stream as they arrive.
-    // Everything else about this stage is unchanged.
+    // The Specialist produces a draft, not yet user-visible text. The complete
+    // draft stays server-side until the Critic and Governor have ruled; only the
+    // orchestrator's governed release point may emit answer chunks over SSE.
     const responseText = await callLLM(ctx, {
       model: ctx.config.models.primary,
       messages: chatMessages,
-      ...(attachments && attachments.length ? { file_urls: attachments.map(a => a.file_url).filter(Boolean) } : {}),
-      ...(ctx.stream && ctx.onToken ? { stream: true, onToken: ctx.onToken } : {})
+      ...(attachments && attachments.length ? { file_urls: attachments.map(a => a.file_url).filter(Boolean) } : {})
     });
     return {
       ...message.content,

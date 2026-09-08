@@ -12,19 +12,52 @@ function qs(params = {}) {
   return str ? `?${str}` : "";
 }
 
-async function req(path, options = {}) {
+export class ApiError extends Error {
+  constructor(message, { status = 0, statusText = "", body = null } = {}) {
+    super(message || statusText || "Request failed");
+    this.name = "ApiError";
+    this.status = status;
+    this.statusText = statusText;
+    this.body = body;
+    this.code = body?.code || null;
+  }
+}
+
+/**
+ * Same-origin JSON request helper. Non-2xx responses retain their parsed body
+ * on ApiError.body so a domain response such as a Policy Engine refusal (409)
+ * reaches the UI intact instead of collapsing to the string "Conflict".
+ */
+export async function request(path, options = {}) {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
     ...options,
     body: options.body ? JSON.stringify(options.body) : undefined
   });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try { detail = (await res.json()).error || detail; } catch { /* non-JSON */ }
-    throw new Error(detail);
+
+  let body = null;
+  if (res.status !== 204) {
+    const text = await res.text();
+    if (text) {
+      try { body = JSON.parse(text); }
+      catch { body = text; }
+    }
   }
-  return res.status === 204 ? null : res.json();
+
+  if (!res.ok) {
+    const message = typeof body === "object" && body
+      ? body.error || body.message || (Array.isArray(body.reasons) ? body.reasons[0] : null)
+      : (typeof body === "string" ? body : null);
+    throw new ApiError(message || res.statusText, {
+      status: res.status,
+      statusText: res.statusText,
+      body
+    });
+  }
+  return body;
 }
+
+const req = request;
 
 export const api = {
   health: () => req("/api/health"),

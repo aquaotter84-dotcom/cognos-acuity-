@@ -15,7 +15,7 @@
 //   3. a conflicting exchange produces a ledger transition, not a crash or a silent overwrite
 //   4. a vetoed run records the veto in telemetry and writes nothing to memory
 //   5. a bad model name appears in telemetry as a documented failure
-//   6. a forced timeout (streaming abort) appears in telemetry as a documented failure
+//   6. a forced model timeout appears in telemetry as a documented failure
 //   7. every conclusion carries temporal lineage back to its events and its run
 //   8. change analytics are readable and consistent with the ledger
 //   9. the Policy Engine refuses law-violating adaptations and logs the justification
@@ -122,6 +122,10 @@ await scenario("1. one exchange \u2192 answer + ledger events + exactly one tele
   run1 = done.runId; conv1 = done.conversationId; msg1 = done.message;
   check("the user got an answer", Boolean(done.message?.content?.length), `${done.message?.content?.length ?? 0} chars`);
   check("the start frame carries the run id", r.one("start")?.runId === run1, run1);
+  check("the token stream is exactly the governed final answer", r.tokens === done.response, `${r.tokens.length} governed chars`);
+  const firstTokenFrame = r.events.findIndex(e => e.event === "token");
+  const lastGovernorFrame = r.events.reduce((at, e, i) => e.event === "governor" ? i : at, -1);
+  check("no answer text crosses SSE before the Governor rules", firstTokenFrame > lastGovernorFrame, `governor frame ${lastGovernorFrame}, first token frame ${firstTokenFrame}`);
 
   const c = done.council || {};
   const pinned = ["classification", "plan", "critic", "revisions", "governor", "stageTimings", "memoriesUsed", "adaptive", "taskContextId", "subTasks"];
@@ -291,12 +295,11 @@ await scenario("4. a vetoed run records the veto and writes nothing to memory", 
   const governor = r.done?.council?.governor;
   check("the Governor refused the draft", governor?.approved === false && (governor?.flags || []).length > 0, JSON.stringify(governor?.flags ?? null));
   check("the user received the sovereignty refusal, never the draft", String(r.done?.message?.content || "").includes("The Governor stopped that reply") && !String(r.done?.message?.content || "").includes(SECRET), String(r.done?.message?.content || "").slice(0, 70));
-  // Pre-existing behaviour, unchanged by Phase 14/15: the specialist streams its
-  // draft as it writes (base ec38f1b, ctx.stream), and the client discards that
-  // buffer in its finally block when `done` arrives. What the veto guarantees is
-  // that the draft is not the answer: it is not in the done payload, not
-  // persisted, not in memory and not in the ledger.
-  check("the vetoed draft is not the delivered answer", !JSON.stringify(r.done || {}).includes(SECRET) && !String(r.done?.message?.content || "").includes(SECRET), `${r.tokens.length} chars streamed then discarded by the client`);
+  // The complete draft remains server-side until the Governor rules. A vetoed
+  // draft must not appear in token frames, the final payload, persistence,
+  // memory, or the ledger; only the fixed refusal may cross SSE.
+  check("the vetoed draft never crossed the SSE boundary", !r.tokens.includes(SECRET) && r.tokens === r.done?.response, `${r.tokens.length} governed refusal chars`);
+  check("the vetoed draft is not the delivered answer", !JSON.stringify(r.done || {}).includes(SECRET) && !String(r.done?.message?.content || "").includes(SECRET), "final payload is clean");
   check("the persisted message is the refusal, not the draft", String((await one("SELECT content FROM messages WHERE id=$1", [r.done.message.id]))?.content || "").includes("The Governor stopped that reply"), undefined);
   check("no row anywhere in the store contains the vetoed draft", (await count("messages", " WHERE content LIKE $1", [`%${SECRET}%`])) === 0 && (await count("memories", " WHERE content LIKE $1", [`%${SECRET}%`])) === 0, "0 messages, 0 memories");
 
@@ -352,7 +355,7 @@ await scenario("5. a bad model name appears in telemetry as a documented failure
 });
 
 // --- 6 ----------------------------------------------------------------------
-await scenario("6. a forced timeout (streaming abort) appears in telemetry as a documented failure", async () => {
+await scenario("6. a forced model timeout appears in telemetry as a documented failure", async () => {
   process.env.COGNOS_LLM_TIMEOUT_MS = "1200";
   h.model.reset();
   h.model.state.hang = true;                 // hold every socket open: the client must abort

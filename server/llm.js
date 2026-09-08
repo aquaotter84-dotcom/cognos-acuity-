@@ -13,6 +13,7 @@
 // base44/shared/llm.ts on the cognos/full-integration branch.
 
 import { withCharter } from "./council/charter.js";
+import { clientAbortError, isClientAbort, throwIfAborted } from "./shared/cancellation.js";
 
 // Hard constraint: default gpt-4o-mini, env override allowed, and gpt_5_4 is
 // never routed to (503s on this account — it took the previous deploy down).
@@ -92,9 +93,11 @@ function schemaEnvelope(responseJsonSchema) {
 }
 
 export async function callLLM(ctx, { messages, responseJsonSchema = null, model = null, file_urls = null, add_context_from_internet = null, stream = false, onToken = null, purpose = null }) {
+  const externalSignal = ctx?.signal || null;
+  throwIfAborted(externalSignal);
+
   const { apiKey, url } = apiConfig();
   const selectedModel = mapModel(model);
-
   const payload = {
     model: selectedModel,
     messages: withAttachments(messages, file_urls),
@@ -102,19 +105,30 @@ export async function callLLM(ctx, { messages, responseJsonSchema = null, model 
     ...(stream ? { stream: true } : {})
   };
 
-  // Bound every upstream call. A hung provider must not consume the entire
-  // serverless function budget and kill the whole turn with no output.
+  // Every call has its own timeout, and also cooperates with cancellation of the
+  // enclosing chat request. The source is tracked so a user pressing Stop is
+  // recorded as an abort, while an unresponsive provider remains a timeout.
   const timeoutMs = Number(process.env.COGNOS_LLM_TIMEOUT_MS || 60_000);
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  let abortSource = null;
+  const onClientAbort = () => {
+    if (abortSource === null) abortSource = "client";
+    ac.abort(externalSignal?.reason);
+  };
+  if (externalSignal) externalSignal.addEventListener("abort", onClientAbort, { once: true });
+  const timer = setTimeout(() => {
+    if (abortSource === null) abortSource = "timeout";
+    ac.abort();
+  }, timeoutMs);
+  const cleanup = () => {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", onClientAbort);
+  };
 
   // --- Phase 15.1 telemetry hook ------------------------------------------
-  // One observation per call, on EVERY exit path: success, timeout, abort,
-  // upstream HTTP error, malformed JSON. This is the capture point that turns
-  // "the model hung" from a mystery into a record. It is a side effect: the
-  // observation is wrapped, it cannot throw, and it changes nothing about the
-  // call, the thrown error, or the returned value. When ctx.telemetry is absent
-  // (any caller outside an orchestration run) it is a no-op.
+  // One observation per call, on EVERY exit path: success, timeout, client
+  // abort, upstream HTTP error, malformed JSON. This remains a side effect and
+  // cannot change the model call's result.
   const telemetry = ctx?.telemetry || null;
   const startedAt = Date.now();
   const promptChars = (payload.messages || []).reduce((n, m) => n + (typeof m.content === "string" ? m.content.length : JSON.stringify(m.content || "").length), 0);
@@ -136,7 +150,19 @@ export async function callLLM(ctx, { messages, responseJsonSchema = null, model 
     } catch { /* an observation must never break a model call */ }
   };
 
+  const abortError = (charsOut = 0) => {
+    if (abortSource === "client" || externalSignal?.aborted) {
+      const error = clientAbortError(externalSignal?.reason);
+      report({ status: "abort", errorClass: "abort", errorMessage: error.message, charsOut });
+      return error;
+    }
+    const error = new Error(`Model request timed out after ${timeoutMs}ms`);
+    report({ status: "timeout", errorClass: "timeout", errorMessage: error.message, charsOut });
+    return error;
+  };
+
   let response;
+  let streamedText = "";
   try {
     response = await fetch(url, {
       method: "POST",
@@ -144,28 +170,16 @@ export async function callLLM(ctx, { messages, responseJsonSchema = null, model 
       body: JSON.stringify(payload),
       signal: ac.signal
     });
-  } catch (e) {
-    clearTimeout(timer);
-    if (e.name === "AbortError") {
-      // The AbortController fired: the provider did not answer inside the budget.
-      report({ status: "timeout", errorClass: "timeout", errorMessage: `Model request timed out after ${timeoutMs}ms` });
-      throw new Error(`Model request timed out after ${timeoutMs}ms`);
+
+    if (!response.ok) {
+      const detail = await response.text();
+      report({ status: "http_error", httpStatus: response.status, errorMessage: detail.slice(0, 400) });
+      throw new Error(`Model request failed (${response.status}): ${detail.slice(0, 400)}`);
     }
-    report({ status: "network_error", errorClass: "network", errorMessage: String(e?.message || e).slice(0, 400) });
-    throw e;
-  }
 
-  if (!response.ok) {
-    clearTimeout(timer);
-    const detail = await response.text();
-    report({ status: "http_error", httpStatus: response.status, errorMessage: detail.slice(0, 400) });
-    throw new Error(`Model request failed (${response.status}): ${detail.slice(0, 400)}`);
-  }
-
-  // --- Streaming path: used only by the Specialist/Synthesizer final answer ---
-  if (stream) {
-    let full = "";
-    try {
+    // Streaming here is provider-facing only. User-facing answer chunks are
+    // released separately, after the Governor has ruled on the complete draft.
+    if (stream) {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -182,47 +196,57 @@ export async function callLLM(ctx, { messages, responseJsonSchema = null, model 
           if (data === "[DONE]") continue;
           try {
             const delta = JSON.parse(data)?.choices?.[0]?.delta?.content;
-            if (delta) { full += delta; onToken?.(delta); }
+            if (delta) { streamedText += delta; onToken?.(delta); }
           } catch { /* skip malformed chunk */ }
         }
       }
-      // No `usage` on a streamed completion unless the provider volunteers one,
-      // so the recorder estimates from characters and flags it as estimated.
-      report({ status: "success", charsOut: full.length });
-      return full;
-    } catch (e) {
-      const aborted = e?.name === "AbortError";
-      report({
-        status: aborted ? "timeout" : "stream_error",
-        errorClass: aborted ? "timeout" : "stream",
-        errorMessage: aborted ? `Model request timed out after ${timeoutMs}ms` : String(e?.message || e).slice(0, 400),
-        charsOut: full.length
-      });
-      throw aborted ? new Error(`Model request timed out after ${timeoutMs}ms`) : e;
-    } finally { clearTimeout(timer); }
-  }
+      throwIfAborted(externalSignal);
+      report({ status: "success", charsOut: streamedText.length });
+      return streamedText;
+    }
 
-  clearTimeout(timer);
-  const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content ?? "";
-  // Token usage, where the provider exposes it. Measured beats estimated, and
-  // the record says which one it got.
-  const usage = data?.usage || null;
-  if (!responseJsonSchema) {
-    report({ status: "success", usage, charsOut: typeof content === "string" ? content.length : 0 });
-    return content;
-  }
-  if (typeof content !== "string") {
-    report({ status: "success", usage, charsOut: 0 });
-    return content;
-  }
-  try {
-    const parsed = JSON.parse(content);
-    report({ status: "success", usage, charsOut: content.length });
-    return parsed;
-  } catch {
-    report({ status: "parse_error", errorClass: "malformed_json", usage, errorMessage: "Model returned JSON-schema content that could not be parsed", charsOut: content.length });
-    throw new Error("Model returned JSON-schema content that could not be parsed");
+    let data;
+    try {
+      data = await response.json();
+    } catch (error) {
+      if (ac.signal.aborted || externalSignal?.aborted) throw abortError();
+      report({ status: "parse_error", errorClass: "malformed_response", errorMessage: "Model returned a response envelope that could not be parsed" });
+      throw error;
+    }
+    throwIfAborted(externalSignal);
+
+    const content = data?.choices?.[0]?.message?.content ?? "";
+    const usage = data?.usage || null;
+    if (!responseJsonSchema) {
+      report({ status: "success", usage, charsOut: typeof content === "string" ? content.length : 0 });
+      return content;
+    }
+    if (typeof content !== "string") {
+      report({ status: "success", usage, charsOut: 0 });
+      return content;
+    }
+    try {
+      const parsed = JSON.parse(content);
+      report({ status: "success", usage, charsOut: content.length });
+      return parsed;
+    } catch {
+      report({ status: "parse_error", errorClass: "malformed_json", usage, errorMessage: "Model returned JSON-schema content that could not be parsed", charsOut: content.length });
+      throw new Error("Model returned JSON-schema content that could not be parsed");
+    }
+  } catch (error) {
+    if (isClientAbort(error, externalSignal)) {
+      if (!reported) report({ status: "abort", errorClass: "abort", errorMessage: "Council turn cancelled by the client", charsOut: streamedText.length });
+      throw clientAbortError(externalSignal?.reason || error);
+    }
+    if (error?.name === "AbortError" || ac.signal.aborted) {
+      throw abortError(streamedText.length);
+    }
+    if (!reported) {
+      report({ status: "network_error", errorClass: "network", errorMessage: String(error?.message || error).slice(0, 400), charsOut: streamedText.length });
+    }
+    throw error;
+  } finally {
+    cleanup();
   }
 }
 

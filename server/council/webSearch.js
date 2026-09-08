@@ -16,11 +16,12 @@
 import { defineAgent } from "../shared/runtime.js";
 import { callLLM } from "../llm.js";
 
-async function searchTavily(query, apiKey) {
+async function searchTavily(query, apiKey, signal) {
   const res = await fetch("https://api.tavily.com/search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ api_key: apiKey, query, max_results: 6, search_depth: "basic", include_answer: true })
+    body: JSON.stringify({ api_key: apiKey, query, max_results: 6, search_depth: "basic", include_answer: true }),
+    signal
   });
   if (!res.ok) throw new Error(`Tavily failed (${res.status})`);
   const data = await res.json();
@@ -34,9 +35,9 @@ async function searchTavily(query, apiKey) {
 
 // Keyless fallback. DuckDuckGo's Instant Answer API returns abstracts and related
 // topics — thin compared with a paid index, but real and free.
-async function searchDuckDuckGo(query) {
+async function searchDuckDuckGo(query, signal) {
   const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&no_redirect=1`;
-  const res = await fetch(url, { headers: { "User-Agent": "COGNOS/1.0" } });
+  const res = await fetch(url, { headers: { "User-Agent": "COGNOS/1.0" }, signal });
   if (!res.ok) throw new Error(`DuckDuckGo failed (${res.status})`);
   const data = await res.json();
   const lines = [];
@@ -55,9 +56,9 @@ async function searchDuckDuckGo(query) {
 async function runSearch(ctx, query) {
   const tavilyKey = process.env.TAVILY_API_KEY;
   if (ctx.config.search.provider === "tavily" && tavilyKey) {
-    return { raw: await searchTavily(query, tavilyKey), provider: "tavily" };
+    return { raw: await searchTavily(query, tavilyKey, ctx.signal), provider: "tavily" };
   }
-  return { raw: await searchDuckDuckGo(query), provider: "duckduckgo" };
+  return { raw: await searchDuckDuckGo(query, ctx.signal), provider: "duckduckgo" };
 }
 
 export const webSearchAgent = defineAgent({
@@ -90,6 +91,7 @@ export const webSearchAgent = defineAgent({
       if (!results) return { ...content };
       return { ...content, searchQuery: query, searchResults: results, webSearchModel: `${provider} + ${ctx.config.models.memory}` };
     } catch (e) {
+      if (ctx.signal?.aborted) throw e;
       ctx.logger.warn("web search failed", { error: String(e) });
       return { ...content };
     }
