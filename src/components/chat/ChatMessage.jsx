@@ -1,16 +1,19 @@
 // Ported from the original src/components/chat/ChatMessage.jsx.
-// Changes: the Base44 <Image> wrapper became a plain <img>, and the live council
-// panel renders in place of the finished trace while the turn is streaming.
+// Changes: the Base44 <Image> wrapper became a plain <img>; the live council
+// panel renders while streaming; completed answers expose local speech controls.
 
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Copy, Check } from 'lucide-react';
+import { Copy, Check, Square, Volume2 } from 'lucide-react';
 import CouncilTrace from '@/components/chat/CouncilTrace';
 import LiveCouncil from '@/components/chat/LiveCouncil';
+import { useVoice } from '@/lib/voiceContext';
 
 export default function ChatMessage({ message, council, live, isStreaming }) {
   const [copied, setCopied] = useState(false);
+  const { supported: voiceSupported, speakingId, speak, stop } = useVoice();
   const isUser = message.role === 'user';
+  const isThisSpeaking = speakingId === message.id;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content);
@@ -66,7 +69,17 @@ export default function ChatMessage({ message, council, live, isStreaming }) {
         )}
         {isStreaming ? <LiveCouncil live={live} /> : (council && <CouncilTrace council={council} />)}
         {!isStreaming && message.content && (
-          <div className="mt-1 flex items-center gap-2 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+          <div className="mt-1 flex items-center gap-3 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+            {voiceSupported && (
+              <button
+                onClick={() => (isThisSpeaking ? stop() : speak(message.content, { id: message.id }))}
+                className={`flex items-center gap-1 text-xs transition-colors ${isThisSpeaking ? 'text-accent' : 'text-muted-foreground hover:text-foreground'}`}
+                title={isThisSpeaking ? 'Stop speaking' : 'Read this response aloud'}
+              >
+                {isThisSpeaking ? <Square className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+                {isThisSpeaking ? 'Stop' : 'Listen'}
+              </button>
+            )}
             <button onClick={handleCopy} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
               {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
               {copied ? 'Copied' : 'Copy'}

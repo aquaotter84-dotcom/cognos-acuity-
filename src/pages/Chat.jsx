@@ -4,17 +4,19 @@
 //   handleSend -> sendMessage() (SSE) -> /api/chat -> runCouncilTurn -> events
 // There is no second path, no fake typewriter, no orphaned tail. The original
 // simulated streaming locally by revealing an already-complete string; that
-// simulation is deleted and replaced with real token streaming.
+// simulation is deleted. Council progress streams live, while answer chunks are
+// released only after the Governor has approved the complete final text.
 //
 // DIVERGENCES: no base44 client, no auth, no attachments/vision (no blob store),
-// no LiveKit voice-conversation mode, no auto-speak. Style selector and the web
-// search toggle are preserved.
+// and no LiveKit dependency. Browser-native speech output can auto-speak only
+// the governed final answer. Style selector and the web-search toggle remain.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Menu, Globe } from 'lucide-react';
+import { Menu, Globe, Volume2, VolumeX } from 'lucide-react';
 import { api, sendMessage } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
+import { useVoice } from '@/lib/voiceContext';
 import ChatMessage from '@/components/chat/ChatMessage';
 import ChatInput from '@/components/chat/ChatInput';
 import WelcomeScreen from '@/components/chat/WelcomeScreen';
@@ -23,6 +25,14 @@ const STYLES = ['balanced', 'casual', 'technical', 'strategic'];
 
 export default function Chat() {
   const { activeWorkspace, setActiveConversationId, refreshConversations, openSidebar } = useCognos();
+  const {
+    supported: voiceSupported,
+    settings: voiceSettings,
+    isSpeaking,
+    speakAutomatically,
+    stop: stopSpeaking,
+    toggleEnabled: toggleVoiceMode,
+  } = useVoice();
   const [searchParams, setSearchParams] = useSearchParams();
   const conversationId = searchParams.get('c');
 
@@ -36,7 +46,11 @@ export default function Chat() {
   const abortRef = useRef(null);
   const messagesEndRef = useRef(null);
 
-  useEffect(() => { setActiveConversationId(conversationId); }, [conversationId, setActiveConversationId]);
+  useEffect(() => {
+    setActiveConversationId(conversationId);
+    stopSpeaking();
+    return stopSpeaking;
+  }, [conversationId, setActiveConversationId, stopSpeaking]);
 
   useEffect(() => {
     if (!conversationId) {
@@ -70,6 +84,7 @@ export default function Chat() {
   const handleSend = useCallback(async (text) => {
     if (!activeWorkspace || isProcessing) return;
 
+    stopSpeaking();
     setIsProcessing(true);
     setDraft({ text: '', live: { stages: [] } });
 
@@ -117,6 +132,12 @@ export default function Chat() {
             setMessages(prev => [...prev, data.message]);
             if (data.council) setCouncilTraces(prev => ({ ...prev, [data.message.id]: data.council }));
             if (data.summary) setConversationSummary(data.summary);
+            if (data.response) {
+              // `done.response` is the exact post-Governor text. The provider
+              // checks the current mode at callback time, so disabling voice
+              // during a turn also prevents playback of its eventual answer.
+              speakAutomatically(data.response, { id: data.message.id });
+            }
             refreshConversations();
           },
           error: (data) => {
@@ -143,7 +164,7 @@ export default function Chat() {
       setIsProcessing(false);
       abortRef.current = null;
     }
-  }, [activeWorkspace, isProcessing, conversationId, style, webSearch, setSearchParams, setActiveConversationId, refreshConversations]);
+  }, [activeWorkspace, isProcessing, conversationId, style, webSearch, setSearchParams, setActiveConversationId, refreshConversations, speakAutomatically, stopSpeaking]);
 
   const handleStop = () => abortRef.current?.abort();
 
@@ -160,6 +181,16 @@ export default function Chat() {
           <h2 className="text-sm font-medium truncate">{activeWorkspace?.name || 'COGNOS'}</h2>
           {conversationSummary && <p className="text-xs text-muted-foreground truncate">{conversationSummary}</p>}
         </div>
+        <button
+          onClick={toggleVoiceMode}
+          disabled={!voiceSupported}
+          aria-pressed={voiceSettings.enabled}
+          aria-label={voiceSettings.enabled ? 'Turn voice mode off' : 'Turn voice mode on'}
+          className={`p-1.5 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${voiceSettings.enabled ? 'text-accent bg-accent/10' : 'text-muted-foreground hover:text-foreground'} ${isSpeaking ? 'animate-pulse' : ''}`}
+          title={!voiceSupported ? 'Speech output is not supported in this browser' : voiceSettings.enabled ? 'Voice mode on — click to turn off' : 'Turn voice mode on'}
+        >
+          {voiceSettings.enabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+        </button>
         <button
           onClick={() => setWebSearch(v => !v)}
           className={`p-1.5 rounded-lg transition-colors ${webSearch ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground'}`}

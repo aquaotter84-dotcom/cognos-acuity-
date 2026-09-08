@@ -1,6 +1,6 @@
 // Council operator — Observer (perception). Classifies the incoming request so the
-// rest of the council can route and plan. Degrades gracefully: on any failure it
-// returns a safe default classification so the core chat never breaks.
+// rest of the council can route and plan. Degrades gracefully on ordinary model
+// failures; a deliberate client cancellation always propagates.
 
 import { defineAgent } from "../shared/runtime.js";
 import { callLLM } from "../llm.js";
@@ -42,6 +42,7 @@ export const observerAgent = defineAgent({
       }
       return { ...message.content, classification };
     } catch (e) {
+      if (ctx.signal?.aborted) throw e;
       ctx.logger.warn("observer failed, using fallback classification", { error: String(e) });
       return { ...message.content, classification: fallback };
     }

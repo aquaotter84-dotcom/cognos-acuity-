@@ -1,26 +1,42 @@
-// No AuthProvider, no ProtectedRoute, no login/register/forgot/reset routes,
-// no OAuth consent. The app opens straight to chat.
+// No AuthProvider, ProtectedRoute, or auth routes: COGNOS opens directly to chat.
+import { lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import CognosLayout from '@/components/CognosLayout';
-import Chat from '@/pages/Chat';
-import Memory from '@/pages/Memory';
-import Activity from '@/pages/Activity';
-import System from '@/pages/System';
-import Settings from '@/pages/Settings';
+import { VoiceProvider } from '@/lib/voiceContext';
+
+// Pages are split at route boundaries. The System console is intentionally
+// substantial; loading it only when visited keeps the core chat bundle lean.
+const Chat = lazy(() => import('@/pages/Chat'));
+const Memory = lazy(() => import('@/pages/Memory'));
+const Activity = lazy(() => import('@/pages/Activity'));
+const System = lazy(() => import('@/pages/System'));
+const Settings = lazy(() => import('@/pages/Settings'));
+
+function PageFallback() {
+  return (
+    <div className="flex-1 flex items-center justify-center bg-background">
+      <div className="w-7 h-7 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+}
 
 export default function App() {
   return (
-    <Router>
-      <Routes>
-        <Route element={<CognosLayout />}>
-          <Route path="/" element={<Chat />} />
-          <Route path="/memory" element={<Memory />} />
-          <Route path="/activity" element={<Activity />} />
-          <Route path="/system" element={<System />} />
-          <Route path="/settings" element={<Settings />} />
-        </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </Router>
+    <VoiceProvider>
+      <Router>
+        <Suspense fallback={<PageFallback />}>
+          <Routes>
+            <Route element={<CognosLayout />}>
+              <Route path="/" element={<Chat />} />
+              <Route path="/memory" element={<Memory />} />
+              <Route path="/activity" element={<Activity />} />
+              <Route path="/system" element={<System />} />
+              <Route path="/settings" element={<Settings />} />
+            </Route>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
+      </Router>
+    </VoiceProvider>
   );
 }

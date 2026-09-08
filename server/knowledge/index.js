@@ -13,7 +13,9 @@
 //   knowledgeProjection RECORDS, after the Governor's verdict, in one
 //                       transaction: coherence transitions, the veto event,
 //                       relationship dynamics, the bounded decay sweep.
-//   telemetryRecord     WRITES the run's telemetry record (Phase 15.1).
+//   telemetryRecord     PREPARES the run's final telemetry counts. The
+//                       orchestration wrapper writes once the run is known not
+//                       to have been cancelled.
 
 import { createHash } from "node:crypto";
 import { defineAgent } from "../shared/runtime.js";
@@ -160,8 +162,9 @@ export const telemetryRecordAgent = defineAgent({
       // The ledger is the authority on how many transitions this run caused.
       const total = await ctx.db.KnowledgeEvent.countForRun(ctx.runId).catch(() => null);
       if (total != null) recorder.setLedgerTotal(total);
-      const status = content.vetoed ? "vetoed" : (content.status || "success");
-      await recorder.finalize({ status, messageId: content.messageId ?? null });
+      // Do not finalize inside this concurrent post-processing chain. The
+      // orchestrator checks its AbortSignal after every post stage and only then
+      // writes the terminal status, so a late Stop cannot be frozen as success.
     } catch (e) {
       ctx.logger.warn("telemetry record failed", { error: String(e) });
     }

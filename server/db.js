@@ -231,6 +231,15 @@ export async function query(text, params = []) {
   return res.rows;
 }
 
+/** Graceful lifecycle hook for tests and self-hosted shutdown. */
+export async function closeDatabase() {
+  const active = pool;
+  pool = null;
+  readyPromise = null;
+  schemaPromise = null;
+  if (active?.end) await active.end();
+}
+
 export { newId };
 
 function set(fields, allowed, startIndex = 1) {

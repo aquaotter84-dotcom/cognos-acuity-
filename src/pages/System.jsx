@@ -10,66 +10,10 @@
 // not change a model, a schema or the send path at runtime.
 
 import { useCallback, useEffect, useState } from 'react';
-import { Menu, Network, History, Scale, Gauge, Link2, GitBranch, RefreshCw, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Menu, Network, RefreshCw, ShieldCheck } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
-
-const TABS = [
-  { id: 'ledger', label: 'Ledger', icon: History },
-  { id: 'replay', label: 'Replay', icon: GitBranch },
-  { id: 'coherence', label: 'Coherence', icon: Link2 },
-  { id: 'telemetry', label: 'Telemetry', icon: Gauge },
-  { id: 'laws', label: 'Laws', icon: Scale },
-];
-
-const fmtTime = (v) => (v ? new Date(typeof v === 'number' ? v : v).toLocaleString() : '—');
-const fmtMs = (v) => (v == null ? '—' : `${Math.round(Number(v))}ms`);
-const fmtMoney = (v) => (v == null ? '—' : `$${Number(v).toFixed(5)}`);
-const fmtNum = (v, d = 2) => (v == null ? '—' : Number(v).toFixed(d));
-
-function Card({ title, subtitle, children, action }) {
-  return (
-    <section className="rounded-lg border border-border bg-card">
-      <header className="flex items-center gap-2 px-3 py-2 border-b border-border/60">
-        <div className="flex-1 min-w-0">
-          <h3 className="text-xs font-semibold">{title}</h3>
-          {subtitle && <p className="text-[10px] text-muted-foreground/70 leading-snug">{subtitle}</p>}
-        </div>
-        {action}
-      </header>
-      <div className="p-3">{children}</div>
-    </section>
-  );
-}
-
-function Pill({ tone = 'muted', children }) {
-  const tones = {
-    muted: 'bg-muted text-muted-foreground',
-    ok: 'bg-green-500/15 text-green-400',
-    warn: 'bg-yellow-500/15 text-yellow-400',
-    bad: 'bg-destructive/15 text-destructive',
-    info: 'bg-primary/15 text-primary',
-  };
-  return <span className={`px-1.5 py-0.5 rounded font-medium uppercase text-[10px] whitespace-nowrap ${tones[tone] || tones.muted}`}>{children}</span>;
-}
-
-function Json({ value, className = '' }) {
-  if (value === null || value === undefined) return <span className="text-muted-foreground/50">null</span>;
-  return (
-    <pre className={`text-[10px] leading-relaxed whitespace-pre-wrap break-words font-mono text-foreground/80 bg-muted/40 rounded p-2 max-h-64 overflow-auto scrollbar-thin ${className}`}>
-      {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
-    </pre>
-  );
-}
-
-function Empty({ children }) {
-  return <p className="text-xs text-muted-foreground py-6 text-center">{children}</p>;
-}
-
-function ErrorNote({ error }) {
-  if (!error) return null;
-  return <p className="text-xs text-destructive flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5 shrink-0" />{error}</p>;
-}
+import { Card, Empty, ErrorNote, Json, Pill, SYSTEM_TABS, fmtMoney, fmtMs, fmtNum, fmtTime } from '@/components/system/SystemUi';
 
 export default function System() {
   const { openSidebar } = useCognos();
@@ -174,8 +118,12 @@ export default function System() {
         proposed_by: 'operator:system-page'
       }));
     } catch (e) {
-      // A refusal answers 409 with the decision body — that IS the result.
-      setProposalResult({ decision: 'refused', error: e.message || String(e) });
+      // A refusal answers 409 with a structured decision body — that IS the
+      // result. ApiError preserves it so the cited laws and ledger row remain
+      // visible instead of collapsing to the HTTP phrase “Conflict”.
+      setProposalResult(e.body?.decision
+        ? e.body
+        : { decision: 'refused', error: e.message || String(e) });
     } finally { setBusy(false); load(); }
   };
 
@@ -200,7 +148,7 @@ export default function System() {
       </header>
 
       <div className="flex gap-1 px-3 md:px-4 py-2 border-b border-border/60 overflow-x-auto scrollbar-thin shrink-0">
-        {TABS.map(({ id, label, icon: Icon }) => (
+        {SYSTEM_TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             onClick={() => setTab(id)}
@@ -483,7 +431,7 @@ export default function System() {
                     {runs.map(r => (
                       <button key={r.id} onClick={() => openRun(r.id)} className="w-full text-left rounded border border-border/60 hover:border-primary/40 px-2.5 py-2 text-xs">
                         <div className="flex flex-wrap items-center gap-2">
-                          <Pill tone={r.status === 'success' ? 'ok' : r.status === 'vetoed' ? 'warn' : 'bad'}>{r.status}</Pill>
+                          <Pill tone={r.status === 'success' ? 'ok' : r.status === 'vetoed' ? 'warn' : r.status === 'cancelled' ? 'muted' : 'bad'}>{r.status}</Pill>
                           <span className="text-muted-foreground/80 truncate">{String(r.id).slice(0, 20)}</span>
                           {r.vetoed && <Pill tone="warn">vetoed</Pill>}
                           {r.coherence_verdict === 'contradiction' && <Pill tone="warn">contradiction</Pill>}

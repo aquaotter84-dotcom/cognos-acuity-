@@ -22,6 +22,19 @@ On top of the council sit two subsystems that **observe** it and that it may
 
 `/system` in the UI is a read-only window onto both.
 
+## Voice mode
+
+COGNOS can speak its answers using the browser's native speech-synthesis engine.
+Turn voice mode on from the Chat header, or configure its browser voice, speed,
+pitch, volume, and automatic playback under **Settings → Voice**. Every completed
+assistant message also has **Listen / Stop** controls.
+
+Voice playback receives only the final `done.response` after the Governor has
+approved it. Specialist drafts and vetoed text are never passed to speech
+synthesis. Playback is local to the browser: no audio is uploaded or stored and
+no additional credentials are needed. Browser-native dictation in `ChatInput`
+continues to provide speech-to-text input where supported.
+
 ## Run it
 
 ```bash
@@ -75,7 +88,11 @@ here are additive only.
 api/
   index.js              Vercel serverless entrypoint (imports the Express app)
 server/
-  index.js              the Express app: routes + the single send path (SSE)
+  index.js              Express composition root (gate, health, core routes)
+  routes/
+    chat.js             the single send path (SSE) + disconnect cancellation
+    knowledge.js        Phase 14 read-only query routes
+    meta.js             Phase 15 read-only routes + Policy gate
   serve.js              local/self-hosted listener (Vercel does not use this)
   mock-openai.js        local OpenAI-compatible mock (development aid)
   mock-latency.js       local latency injector (development aid)
@@ -92,7 +109,8 @@ server/
     index.js            registry wiring
     laws.js             Phase 15: the immutable law layer (charter + pins)
   shared/               orchestrator, registry, protocol, runtime, eventBus,
-                        errors, logging  (all verbatim)
+                        errors, logging, cooperative cancellation, and the
+                        single governance-approved answer release point
   db/
     schema.js           base + PHASE14_SCHEMA + PHASE15_SCHEMA (source of truth)
     util.js             newId/num/int/clamp01/nowMs (leaf helpers, no cycles)
@@ -122,13 +140,18 @@ src/
   pages/                Chat, Memory, Activity, System, Settings
   components/chat/      ChatMessage, ChatInput, CouncilTrace, LiveCouncil,
                         Sidebar, MobileNav, WelcomeScreen
+  components/system/    shared System-page UI primitives and tab metadata
   components/CognosLayout.jsx
   lib/api.js            the app's API client + the SSE send path
+  lib/voiceContext.jsx  persisted browser speech playback and controls
+  lib/speechText.js     Markdown normalization + long-answer speech chunking
 test/                   harness only — not part of the app
   pglite.mjs            real Postgres wire protocol over PGlite
   mockModel.mjs         scriptable model: contradictions, vetoes, 400s, hangs
   harness.mjs           boots the real app + db + mock model
-  smoke.mjs             the Phase 14/15 acceptance run (167 assertions)
+  voice.mjs             speech normalization and lossless chunking regressions
+  integrity.mjs         governed-stream, cancellation, structured-error regressions
+  smoke.mjs             the Phase 14/15 acceptance run (170 assertions)
   demo.mjs              prints the artifacts: ledger rows, telemetry, replay
   baseline.mjs          the pre-Phase-14 surface, for regression comparison
 ```
@@ -145,6 +168,7 @@ Chat.jsx handleSend
         → contextAssembly → observer → webSearch → strategist
           → specialist → synthesizer → coherenceMonitor
           → critic ⟳ (coherence re-checked after any revision) → governor
+          → governance-approved answer release
           → (memoryExtraction ‖ deferred critic)
             → knowledgeProjection → telemetryRecord
           ‖ auditLog ‖ summarize
@@ -153,8 +177,17 @@ Chat.jsx handleSend
                 knowledge, done | error
 ```
 
+Council progress remains live, but **answer text is governance-gated**: model
+output stays server-side until the Critic and Governor have ruled on the complete
+final draft. Only that final text—or a fixed deterministic refusal—can appear in
+`token` frames. The chunks have no artificial typewriter delay.
+
+The browser's AbortController also defines the lifetime of the run. Pressing
+Stop or disconnecting aborts the active model/search request, records the run as
+`cancelled`, and does not create an assistant answer, memory, or summary.
+
 The conclusion, its ledger event, the conversation preview and the telemetry
-link are written in **one transaction** in `server/index.js`. If the Governor
+link are written in **one transaction** in `server/routes/chat.js`. If the Governor
 vetoes, the draft is discarded: no memory is extracted, the summary is not
 updated, and the ledger records `veto_raised` with the draft's length and digest
 only — never its text.
@@ -191,7 +224,10 @@ POST /api/meta/adaptations            propose an adaptation → judged + logged
 ```
 
 ```bash
-npm run smoke          # 167 assertions across the Phase 14/15 success criteria
+npm test               # voice + integrity + the full Phase 14/15 smoke run
+npm run voice          # speech normalization and chunking regressions
+npm run integrity      # governed stream, cancellation, structured API errors
+npm run smoke          # 170 assertions across the Phase 14/15 success criteria
 npm run demo           # print the artifacts: ledger rows, telemetry, replay, veto
 npm run migrate        # apply migrations/*.sql (refuses non-additive SQL)
 npm run migrations:generate

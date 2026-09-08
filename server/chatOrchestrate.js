@@ -28,6 +28,8 @@ import { createTemporalReasoner } from "./knowledge/temporal.js";
 // Phase 15 — Meta-Cognition: the subsystems that observe it.
 import { createRunRecorder } from "./meta/telemetry.js";
 import { selectStrategy } from "./meta/adaptive.js";
+import { isClientAbort, throwIfAborted } from "./shared/cancellation.js";
+import { releaseApprovedText } from "./shared/approvedStream.js";
 
 const rootLogger = createLogger("chatOrchestrate");
 
@@ -231,7 +233,7 @@ async function summarizeConversation(ctx, conversationId, history, userMessage, 
  * the pipeline below is unchanged in what it returns and in how it fails.
  *
  * @param {object} body    { conversationId, workspaceId, userMessage, style, attachments, webSearch }
- * @param {object} options { emit(event, payload), onToken(delta), runId }
+ * @param {object} options { emit(event, payload), onToken(delta), runId, signal }
  */
 export async function runCouncilTurn(body, options = {}) {
   const runId = options.runId || newId("run");
@@ -245,19 +247,19 @@ export async function runCouncilTurn(body, options = {}) {
     logger: rootLogger.child("telemetry")
   });
   try {
+    throwIfAborted(options.signal);
     return await executeCouncilTurn(body, options, { runId, recorder });
   } catch (error) {
-    // A simulated or real upstream failure — bad model name, forced timeout,
-    // gateway 5xx — lands here. It becomes a documented failure in telemetry
-    // (kind, stage, model, HTTP status, latency) before the error propagates to
-    // the existing error path untouched.
-    await recorder.finalize({ status: "error", error });
+    // Upstream failures and client cancellations both become documented runs.
+    // A cancellation is distinct from an error because the user deliberately
+    // stopped the turn; the HTTP layer therefore does not invent an error reply.
+    await recorder.finalize({ status: isClientAbort(error, options.signal) ? "cancelled" : "error", error });
     throw error;
   }
 }
 
 async function executeCouncilTurn(body, options = {}, run = {}) {
-  const { emit = () => {}, onToken = null } = options;
+  const { emit = () => {}, onToken = null, signal = null } = options;
   const { runId, recorder } = run;
   const { conversationId, workspaceId, userMessage, style, attachments, webSearch } = body;
   if (!conversationId || !workspaceId || !userMessage) {
@@ -395,14 +397,16 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
   // vote — the six operators in registerCouncil() are unchanged.
   registerKnowledgeStages(registry);
 
-  // Token forwarding is wrapped so the recorder can measure time-to-first-token.
-  // The wrapper calls the original onToken with the original delta: the stream
-  // the user sees is byte-for-byte the one that existed before Phase 15.
+  // The only token forwarder is held by the orchestrator, not handed to a model
+  // operator. That lets telemetry measure the first GOVERNED answer chunk and
+  // guarantees no unreviewed draft can cross the SSE boundary.
   const forwardToken = onToken ? (delta) => { recorder.noteFirstToken(); onToken(delta); } : null;
 
   const ctx = {
-    db, config, logger, timings: {},
-    stream: Boolean(forwardToken), onToken: forwardToken,
+    db, config, logger, timings: {}, signal,
+    // Draft text is never forwarded from a model call. It remains inside the
+    // council until the Governor has ruled on the complete final text; the sole
+    // user-facing release point is releaseApprovedText() below.
     // Phase 15.1 — the run's recorder. server/llm.js reports every model call to
     // it, which is how a timeout or a 502 becomes a record instead of a mystery.
     runId, telemetry: recorder,
@@ -698,6 +702,13 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
     responseChars: String(finalResponseText || "").length
   });
 
+  // --- The governed release point -----------------------------------------
+  // Until this line, no answer text has crossed SSE. The complete draft has
+  // passed the Critic/revision loop and the Governor/revision loop. A veto can
+  // release only its fixed deterministic refusal; the rejected draft remains
+  // entirely server-side and is represented later by length + SHA-256 only.
+  await releaseApprovedText(finalResponseText, { onToken: forwardToken, signal });
+
   // --- Post-response stages (best-effort, run concurrently) ---
   // Memory extraction, audit logging, and summarization do not affect the
   // response text. Running them concurrently (instead of serially) cuts the
@@ -770,6 +781,11 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
       : Promise.resolve(null),
     knowledgeChain
   ]);
+  // Promise.allSettled keeps optional post-processing failures from breaking a
+  // successful answer. Cancellation is not optional, so it must win even when
+  // an individual best-effort stage caught its own aborted model call.
+  throwIfAborted(signal);
+
   const conversationSummary = summaryResult.status === "fulfilled" ? summaryResult.value : null;
   const knowledgeResult = knowledgeOutcome.status === "fulfilled" ? knowledgeOutcome.value : null;
   if (knowledgeOutcome.status === "rejected") {

@@ -63,12 +63,15 @@ Verified: `grep -rin "base44\|bluesminds\|VITE_"` over `server/`, `src/`, config
 
 ## 3. Sanctioned upgrades
 
-1. **Live streaming.** `POST /api/chat` is Server-Sent Events. Council stage
-   start/complete events, the Observer classification, web-search briefing,
-   plan, critic score and governor verdict all stream as they happen, and the
-   final answer streams token-by-token from the Specialist.
-   *The original faked this:* `Chat.jsx` received a complete string and revealed
-   it with a `setTimeout` typewriter. That simulation is deleted.
+1. **Live council stream, governance-gated answer.** `POST /api/chat` is
+   Server-Sent Events. Council stage start/complete events, the Observer
+   classification, web-search briefing, plan, critic score and Governor verdict
+   stream as they happen. Draft answer text does **not**: it remains server-side
+   until the Governor has ruled on the complete final draft. Only the governed
+   final text (or a fixed deterministic refusal) is then released in chunks,
+   with no artificial typewriter delay. The original faked typing by revealing
+   an already-complete, ungoverned string with `setTimeout`; that simulation is
+   still deleted.
 2. **Mobile layout.** `100dvh` instead of `h-screen` (fixes iOS URL-bar clipping),
    `text-base` on the input (stops iOS zoom-on-focus), action buttons always
    visible on touch instead of `opacity-0 group-hover`, safe-area insets on
@@ -89,10 +92,13 @@ equivalent, so they were removed rather than faked:
   `llm.js` (`withAttachments` folds image URLs into the user turn), so wiring a
   blob store later is a small change. **The UI controls are gone; a paperclip
   that silently fails would be a lie.**
-- **LiveKit voice agent** (`livekit-agent/`, `AgentChat.jsx`, `useVoice`,
-  `useConversationMode`, `SpeakButton`). Needs a LiveKit server, tokens, and the
-  service-role secret path. Browser-native **speech-to-text dictation is kept**
-  (mic button in `ChatInput`); text-to-speech playback is not.
+- **Hosted LiveKit voice agent** (`livekit-agent/`, `AgentChat.jsx`,
+  `useConversationMode`, the original `SpeakButton`). It needs a LiveKit server,
+  tokens, and the service-role secret path, so the full-duplex agent remains
+  removed. Browser-native **speech-to-text dictation is kept** (mic button in
+  `ChatInput`), and browser-native **speech output is now implemented** without
+  new credentials. Output receives only the final Governor-approved SSE
+  `done.response`; it never receives council drafts or vetoed text.
 - **Beliefs, Dynamics, Insights, SystemMap, Documents pages** and the
   `deriveBeliefs` / `consolidateMemories` / `runCouncilAutonomous` functions plus
   the `BeliefSnapshot` / `ChangeEvent` / `Insight` / `Document` entities. These
@@ -193,6 +199,11 @@ that does not feed the next operator was changed. Measured A/B on a latency mock
 |---|---|---|---|
 | time to first token | 4262 ms | 3460 ms | **-19%** |
 | time to done | 6578 ms | 4769 ms | **-27%** |
+
+These measurements predate the governance-gated answer boundary in §11. The
+scheduling comparison remains valid as a historical A/B of the same two
+pipelines, but current `time_to_first_token_ms` means time to the first
+**governed** answer chunk, after the Governor's verdict.
 
 Three changes, each justified:
 
@@ -442,3 +453,79 @@ All optional; every one defaults to the behaviour described above.
 
 No secret is read from anywhere but the environment, and no new secret was
 added. No auth, no accounts, no login route.
+
+---
+
+## 11. Integrity boundary, cancellation, and route modularization
+
+This evolution closes three gaps discovered after Clause 3 made the Governor a
+real final-text gate.
+
+### 11.1 No draft text crosses SSE before governance
+
+The direct Specialist previously used provider streaming and forwarded each
+model delta immediately. The Governor ran only after the complete draft existed,
+so a vetoed draft was absent from `done`, memory and persistence but had already
+crossed the network. The old smoke scenario explicitly tolerated that buffer.
+That did not satisfy `pin.veto_integrity` strongly enough.
+
+The Specialist now produces a server-side draft. After all Critic and Governor
+revision passes, `server/shared/approvedStream.js` is the sole answer release
+point. It emits only the exact final response: an approved draft, a fixed
+sovereignty/epistemic refusal, or nothing for an empty response. It yields
+between bounded chunks for cancellation but adds no typewriter delay. Regression
+tests assert that the first token frame follows the last Governor frame, that
+concatenated token frames equal `done.response`, and that a secret-like vetoed
+draft never occurs anywhere in the SSE stream.
+
+### 11.2 Stop is cooperative cancellation, not just a hidden browser
+
+`server/routes/chat.js` binds an AbortController to the SSE response lifetime.
+A browser Stop/disconnect propagates through `runCouncilTurn`, every orchestrator
+stage boundary, `callLLM`, and direct web-search retrieval. An active upstream
+request is aborted immediately. Telemetry distinguishes `abort` from `timeout`
+and records the run as `cancelled`; the HTTP layer quietly creates no assistant
+error message, conclusion event, extracted memory or summary. The already-sent
+user message remains as the truthful record of the request.
+
+### 11.3 Structured domain errors survive the API client
+
+The browser request helper now throws `ApiError` with `status` and the parsed
+response on `body`. In particular, a Policy Engine `409` reaches the System page
+with its decision, reasons, cited laws and Improvement Ledger row intact instead
+of degrading to the HTTP phrase `Conflict`.
+
+### 11.4 Modular composition, unchanged route surface
+
+The former all-in-one Express module was split into focused registrars:
+`server/routes/chat.js`, `server/routes/knowledge.js`, and
+`server/routes/meta.js`. `server/index.js` is now the composition root and still
+registers the same 43 routes in the same order. Cancellation, governed release,
+and shared query parsing are isolated leaf modules; reusable System-page UI
+primitives moved to `src/components/system/SystemUi.jsx`. `test/integrity.mjs` covers
+the three new contracts and pins the 43-route surface, while the expanded smoke
+run retains the full Phase 14/15 regression surface.
+
+---
+
+## 12. Browser-native voice mode
+
+The removed LiveKit agent has not been restored: there is still no hosted voice
+session, service-role bypass, extra answer route, or audio persistence. Instead,
+`src/lib/voiceContext.jsx` provides a replaceable browser speech-synthesis layer.
+Its preferences are local to the browser and include mode, automatic playback,
+voice, speed, pitch, and volume. Long responses are normalized from Markdown and
+split into bounded utterances by the pure helpers in `src/lib/speechText.js`.
+
+Automatic speech is called only from the existing chat SSE `done` callback, with
+`done.response`. It is never called from `stage`, `token`, or Specialist output.
+That keeps the speech boundary downstream of the same Governor decision that
+gates visible answer text. Disabling voice mode while a turn is running is checked
+again when `done` arrives, so the pending answer stays silent.
+
+Starting a new turn, changing conversations, leaving Chat, or disabling voice
+mode cancels active playback. Completed assistant messages retain explicit
+**Listen / Stop** controls, and Settings has a local preview. Browsers without the
+Web Speech synthesis API receive normal text behavior and disabled voice controls.
+`test/voice.mjs` pins speech-text normalization and lossless chunking; the existing
+integrity suite continues to pin the upstream governance boundary.
