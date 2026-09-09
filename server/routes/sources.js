@@ -9,6 +9,8 @@
 
 import { ingestDocument, ingestLink, ingestImage } from "../sources/index.js";
 import { AGENT_MODES, TOOL_REGISTRY, decideResearchRun } from "../agent/runner.js";
+import { autonomyConfig } from "../autonomy/config.js";
+import { TIERS, describeSkills } from "../skills/index.js";
 
 function assertSourcesEnabled() {
   if (process.env.COGNOS_SOURCES_ENABLED === "false") {
@@ -183,17 +185,33 @@ export function registerSourceRoutes(app, { wrap, db, logger }) {
     res.json({ source, chunks, image: image || null, analyses });
   }));
 
-  app.get("/api/agent/tools", (req, res) => {
+  app.get("/api/agent/tools", wrap(async (req, res) => {
     const researchEnabled = process.env.COGNOS_RESEARCH_ENABLED !== "false";
+    const cfg = autonomyConfig();
     res.json({
       enabled: process.env.COGNOS_AGENT_ENABLED !== "false",
       modes: AGENT_MODES,
       tools: TOOL_REGISTRY,
       researchEnabled,
       autonomousWrites: false,
-      note: "Agent mode is a bounded read-only subsystem. Research mode proposes a plan and executes only after the user approves each step. It cannot release an answer or write memory."
+      // Phase 19: the autonomy skill registry. The shape is unchanged — this is
+      // an addition, so an existing reader keeps working. Skills are CODE, not
+      // data: this list is compiled from server/skills/, and no row in any
+      // table can add an entry to it. Only the per-resident allowlist is data.
+      autonomy: {
+        enabled: cfg.enabled,
+        defaultOff: cfg.defaultOff,
+        outboxMode: cfg.outboxMode,
+        builtTiers: cfg.builtTiers,
+        tiers: TIERS,
+        skills: describeSkills(cfg),
+        // The tiers this build will not execute, named rather than omitted, so
+        // the boundary is visible from the outside.
+        unbuiltTiers: ["T3", "T4", "T5"]
+      },
+      note: "Agent mode is a bounded read-only subsystem. Research mode proposes a plan and executes only after the user approves each step. It cannot release an answer or write memory. Autonomy skills are separate: they are code-owned, tier-gated, and every effect they produce is staged and judged before anything happens."
     });
-  });
+  }));
 
   app.get("/api/agent/runs", wrap(async (req, res) => {
     const workspace = await db.Workspace.ensureDefault();

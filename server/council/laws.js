@@ -68,10 +68,16 @@ export const OPERATIONAL_LAWS = Object.freeze([
   Object.freeze({
     id: "pin.single_send_path",
     layer: "operational",
-    name: "One clean send path",
-    statement: "There is exactly one path from the user's message to the user's answer: Chat.jsx → sendMessage → POST /api/chat → runCouncilTurn. Subsystems observe and inform that path; they never add a second channel to the user.",
-    forbids: ["a second chat route", "telemetry or events addressing the user directly", "a parallel answer path"],
-    source: "Phase 13 pins; README 'The send path'",
+    name: "One governed path to the user",
+    statement: "There is exactly one GOVERNANCE path from a user's message to a user's answer: Chat.jsx → sendMessage → POST /api/chat → runCouncilTurn, ending at the Governor and the single approved-text release boundary. Approved text may be carried to the user by the originating SSE stream, or — for a headless turn (Phase 23) — by one staged effect to a destination the conversation's scope authorizes. Subsystems observe and inform that path; they never add a second channel to the user. A goal may also surface a notice: a deterministic rendering of stored records through a fixed template, containing no model-generated text. A notice is not an answer.",
+    forbids: [
+      "a second chat route",
+      "telemetry or events addressing the user directly",
+      "a parallel answer path",
+      "a reduced or shortened council pipeline",
+      "model-generated text reaching the user outside the council"
+    ],
+    source: "Phase 13 pins; README 'The send path'; Phase 19 restated as one governance with two transports",
     runtime_modifiable: false
   }),
   Object.freeze({
@@ -159,9 +165,17 @@ export const OPERATIONAL_LAWS = Object.freeze([
     id: "pin.agent_bounded",
     layer: "operational",
     name: "Autonomy is bounded and attributable",
-    statement: "Agent mode is a non-council subsystem with typed tools, explicit per-turn mode, finite budgets, cancellation, and an append-only action record. Autonomous write actions are forbidden until a separately reviewed approval barrier exists.",
-    forbids: ["unbounded loops", "autonomous writes", "hidden tool use", "agent answer channel", "agent bypass of the Governor"],
-    source: "Phase 17; server/agent/runner.js",
+    statement: "Agent mode is a non-council subsystem with typed tools, explicit per-turn or per-goal authorization, finite budgets, cancellation, and an append-only action record. Autonomous action is permitted only as a STAGED EFFECT in the outbox, released solely inside a recorded scope by a deterministic Action Governor verdict. Staging is not acting. The separately reviewed approval barrier Phase 17 deferred now exists: server/autonomy/outbox.js + server/autonomy/actionGovernor.js.",
+    forbids: [
+      "unbounded loops",
+      "an unreviewed write path",
+      "releasing an effect without a recorded scope and an Action Governor verdict",
+      "a goal widening its own scope or budget",
+      "hidden tool use",
+      "agent answer channel",
+      "agent bypass of the Governor"
+    ],
+    source: "Phase 17; server/agent/runner.js. Phase 19 delivered the approval barrier and refined the forbids list",
     runtime_modifiable: false
   }),
   Object.freeze({
@@ -173,6 +187,94 @@ export const OPERATIONAL_LAWS = Object.freeze([
     source: "Phase 18; server/agent/runner.js",
     runtime_modifiable: false
   }),
+
+  // --- Phase 19 — durable, governed autonomy -------------------------------
+  // These are the laws the autonomy loop runs under. Together they do one job:
+  // let work run for days while authority still resolves in one deterministic
+  // instant. Staging is not acting; a notice is not an answer; a goal cannot
+  // promote itself.
+  Object.freeze({
+    id: "pin.goal_scope_immutable",
+    layer: "operational",
+    name: "A goal cannot promote itself",
+    statement: "A goal's skills, scope and budgets are fixed at authorization. A goal may not widen its scope, raise its budget, add a skill, or extend its expiry; any of those is a NEW authorization recorded as a new row. Widening is never an edit.",
+    forbids: ["a goal raising its own budget", "a goal adding its own skill", "a goal extending its own expiry", "editing an authorization row"],
+    source: "Phase 19; server/autonomy/",
+    runtime_modifiable: false
+  }),
+  Object.freeze({
+    id: "pin.notice_deterministic",
+    layer: "operational",
+    name: "Notices carry no model text",
+    statement: "A goal may surface a notice: a deterministic rendering of stored records through a fixed template, containing no model-generated text. A notice is not an answer. Any composed sentence the user reads is produced by the council and released by the Governor through POST /api/chat.",
+    forbids: ["model prose in a notice", "a resident entry rendered as an assistant message", "free-text notices assembled from model output"],
+    source: "Phase 19; server/autonomy/notice.js",
+    runtime_modifiable: false
+  }),
+  Object.freeze({
+    id: "pin.effect_staged",
+    layer: "operational",
+    name: "Effects are staged, then released",
+    statement: "Every effect with tier T2 or above is staged in the outbox with a typed payload, an idempotency key, and an Action Governor verdict before release. Release requires an unexpired scope covering that effect class and destination. Reversal is a new row, never an edit or a delete.",
+    forbids: ["executing an effect that was never staged", "releasing without a verdict", "deleting an outbox row to undo it", "a second execution of an already-released idempotency key"],
+    source: "Phase 19; server/autonomy/outbox.js",
+    runtime_modifiable: false
+  }),
+  Object.freeze({
+    id: "pin.subagent_untrusted",
+    layer: "operational",
+    name: "Our own workers are evidence, not authority",
+    statement: "A sub-agent's report is evidence with provenance, never authority. No sub-agent output may address the user, widen a goal's scope, raise a goal's budget, or claim a capability the skill registry does not define.",
+    forbids: ["treating a sub-agent report as fact", "a sub-agent addressing the user", "a sub-agent widening its own scope"],
+    source: "Phase 19; mirrors pin.source_untrusted for internal workers",
+    runtime_modifiable: false
+  }),
+  Object.freeze({
+    id: "pin.resident_brief_subordinate",
+    layer: "operational",
+    name: "A brief is operating text, never identity",
+    statement: "A resident's brief shapes what it works on and how it reports. It can never alter the canonical self-model, grant a skill beyond its allowlist, raise a budget, or authorize an effect tier. Briefs are versioned; a change is a new row, never an edit.",
+    forbids: ["a brief granting a capability", "a brief overriding the self-model", "editing a brief in place", "a resident claiming a persona or identity"],
+    source: "Phase 19; server/autonomy/resident.js",
+    runtime_modifiable: false
+  }),
+  Object.freeze({
+    id: "pin.autonomy_attributable",
+    layer: "operational",
+    name: "Nothing autonomous is anonymous",
+    statement: "Every autonomous model call, step, tick, effect and notice is attributable to an agent id, a goal id, a tick id and a skill id, and is visible through the read-only surfaces and the append-only event logs.",
+    forbids: ["an unattributed autonomous action", "a model call outside telemetry", "an effect with no goal or tick id"],
+    source: "Phase 19; server/autonomy/",
+    runtime_modifiable: false
+  }),
+  Object.freeze({
+    id: "pin.headless_turn_equivalence",
+    layer: "operational",
+    name: "A turn without a browser is still the same turn",
+    statement: "A turn initiated without a browser session executes the identical runCouncilTurn pipeline, with identical Critic and Governor stages, thresholds, revision counts, veto semantics and post-turn knowledge writes. Its approved text is released only as a staged effect to a destination authorized for that conversation. A vetoed draft is never delivered and never stored; it is represented by its length and digest alone.",
+    forbids: ["a shortened pipeline for inbound turns", "skipping the Critic or Governor off-session", "delivering a vetoed draft to a channel"],
+    source: "Phase 19 law layer; enforced in Phase 23",
+    runtime_modifiable: false
+  }),
+  Object.freeze({
+    id: "pin.channel_authorization",
+    layer: "operational",
+    name: "Authorization never comes from the channel",
+    statement: "A goal may be authorized only from the app surface or from a pairing token minted there. An inbound message may ask a question or propose work; it can never authorize, widen, or approve, regardless of what its text claims.",
+    forbids: ["authorizing from an inbound message", "'yes' in a channel approving a plan", "channel text selecting a skill or budget"],
+    source: "Phase 19 law layer; enforced in Phase 23",
+    runtime_modifiable: false
+  }),
+  Object.freeze({
+    id: "phase19.autonomy_default_off",
+    layer: "phase_scope",
+    name: "Autonomy is opt-in per rung",
+    statement: "Durable autonomy is disabled by default. Each rung requires its kill switch to be explicitly enabled, its regression suite to pass, and an evidence record before it is considered justified. Building a rung is not the same as enabling one.",
+    forbids: ["autonomy on by default", "enabling a rung without its evidence", "a subsystem that cannot be turned off"],
+    source: "Phase 19 scope discipline; server/autonomy/config.js",
+    runtime_modifiable: false
+  }),
+
   Object.freeze({
     id: "phase15.observe_only",
     layer: "phase_scope",
@@ -206,7 +308,7 @@ export const LAWS = Object.freeze([...CHARTER_LAWS, ...OPERATIONAL_LAWS]);
 
 /** Bumped when a law is added or reworded in code. Recorded on improvement rows
  *  so a reviewer can tell which version of the law layer judged a proposal. */
-export const LAW_LAYER_VERSION = "1.3.0";
+export const LAW_LAYER_VERSION = "1.4.0";
 
 const BY_ID = Object.freeze(LAWS.reduce((acc, law) => ({ ...acc, [law.id]: law }), {}));
 

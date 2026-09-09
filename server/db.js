@@ -25,6 +25,10 @@
 //     inside the same transaction — state and history commit or roll back
 //     together. withTransaction is re-entrant: calling it inside a transaction
 //     joins the ambient one instead of taking a second connection.
+//   * Phase 19 adds the autonomy stores (AutonomyAgent, AutonomyGoal, GoalEvent,
+//     GoalStep, GoalNote, GoalAuthorization, AutonomyOutbox, OutboxEvent,
+//     AutonomyNotice, AutonomyTick) and the additive message columns
+//     (agent_id, goal_id, note_id, resident_kind, origin).
 //   * The exported surface is unchanged: db.Workspace / Conversation / Message /
 //     Memory / TaskContext / AuditEvent / query / newId / isConfigured, plus the
 //     new stores (KnowledgeEvent, Belief, Relationship, Replay, CoherenceReport,
@@ -38,7 +42,7 @@ import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { newId, num } from "./db/util.js";
-import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA } from "./db/schema.js";
+import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA } from "./db/schema.js";
 import { appendEvent, snapshot } from "./knowledge/events.js";
 import {
   createKnowledgeStore, TRACKED_FIELDS,
@@ -46,6 +50,7 @@ import {
 } from "./knowledge/store.js";
 import { createMetaStore } from "./meta/store.js";
 import { createSourceAgentStore } from "./sources/store.js";
+import { createAutonomyStore } from "./autonomy/store.js";
 import { confidenceFromEvidence, statementKey, projectMemoryWrite, retireBeliefByKey } from "./knowledge/beliefs.js";
 import { linkCoActivations } from "./knowledge/relationships.js";
 
@@ -181,7 +186,7 @@ CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events (created_date DESC)
 `
 // Phase 14 (Dynamic Systems) and Phase 15 (Meta-Cognition). Additive only:
 // new tables, new indexes, and two nullable columns on memories.
-+ PHASE14_SCHEMA + PHASE15_SCHEMA + PHASE16_SCHEMA + PHASE17_SCHEMA + PHASE18_SCHEMA;
++ PHASE14_SCHEMA + PHASE15_SCHEMA + PHASE16_SCHEMA + PHASE17_SCHEMA + PHASE18_SCHEMA + PHASE19_SCHEMA;
 
 function isNeon(url) {
   return /\.neon\.tech/i.test(url) || /neon\.database/i.test(url);
@@ -799,11 +804,13 @@ function createStore(run) {
   const knowledge = createKnowledgeStore(run);
   const meta = createMetaStore(run);
   const sources = createSourceAgentStore(run);
+  const autonomy = createAutonomyStore(run);
   return {
     ...core,
     ...knowledge,
     ...meta,
     ...sources,
+    ...autonomy,
     query: run,
     ready,
     withTransaction,
@@ -842,6 +849,17 @@ export const AgentRun = db.AgentRun;
 export const AgentStep = db.AgentStep;
 export const AgentEvent = db.AgentEvent;
 export const AgentApproval = db.AgentApproval;
+// Phase 19 — durable autonomy: residents, goals, notes, outbox, ticks.
+export const AutonomyAgent = db.AutonomyAgent;
+export const AutonomyGoal = db.AutonomyGoal;
+export const GoalEvent = db.GoalEvent;
+export const GoalStep = db.GoalStep;
+export const GoalNote = db.GoalNote;
+export const GoalAuthorization = db.GoalAuthorization;
+export const AutonomyOutbox = db.AutonomyOutbox;
+export const OutboxEvent = db.OutboxEvent;
+export const AutonomyNotice = db.AutonomyNotice;
+export const AutonomyTick = db.AutonomyTick;
 
 export { TRACKED_FIELDS, MEMORY_TRACKED_FIELDS, CONVERSATION_TRACKED_FIELDS, TASK_CONTEXT_TRACKED_FIELDS };
 

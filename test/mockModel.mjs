@@ -20,7 +20,8 @@ const ROLES = [
   ["COGNOS Web Search tool", "webSearch"],
   ["Coherence Monitor", "coherence"],
   ["COGNOS Image Desk", "imageDesk"],
-  ["COGNOS Research Planner", "researchPlanner"]
+  ["COGNOS Research Planner", "researchPlanner"],
+  ["You are a bounded autonomous worker", "autonomyStep"]
 ];
 
 function roleOf(payload) {
@@ -49,6 +50,9 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
       ]
     },
     researchPlan: { plan: [], note: "No further research proposed." },
+    // The plan the bounded worker returns. A function lets a test script a
+    // sequence: escalate to a write skill, emit prose, try to widen scope.
+    autonomyStep: { thought: "nothing useful to add", skill: null, args: {}, done: true },
     hang: false,              // never respond -> exercises the AbortController
     failStatus: null,         // e.g. 500 / 504 -> upstream HTTP failure
     failRoles: null,          // null = every role, else a Set of roles to fail
@@ -137,6 +141,10 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
         }
         if (role === "imageDesk") return json(typeof state.imageDesk === "function" ? state.imageDesk(payload) : state.imageDesk);
         if (role === "researchPlanner") return json(typeof state.researchPlan === "function" ? state.researchPlan(payload) : state.researchPlan);
+        if (role === "autonomyStep") {
+          const step = typeof state.autonomyStep === "function" ? state.autonomyStep(payload) : state.autonomyStep;
+          return json(step);
+        }
         return json({});
       }
 
