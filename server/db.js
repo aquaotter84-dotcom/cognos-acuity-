@@ -38,7 +38,7 @@ import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { newId, num } from "./db/util.js";
-import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA } from "./db/schema.js";
+import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA } from "./db/schema.js";
 import { appendEvent, snapshot } from "./knowledge/events.js";
 import {
   createKnowledgeStore, TRACKED_FIELDS,
@@ -181,7 +181,7 @@ CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events (created_date DESC)
 `
 // Phase 14 (Dynamic Systems) and Phase 15 (Meta-Cognition). Additive only:
 // new tables, new indexes, and two nullable columns on memories.
-+ PHASE14_SCHEMA + PHASE15_SCHEMA + PHASE16_SCHEMA + PHASE17_SCHEMA;
++ PHASE14_SCHEMA + PHASE15_SCHEMA + PHASE16_SCHEMA + PHASE17_SCHEMA + PHASE18_SCHEMA;
 
 function isNeon(url) {
   return /\.neon\.tech/i.test(url) || /neon\.database/i.test(url);
@@ -373,16 +373,16 @@ function createCoreStore(run) {
     async create(data) {
       const id = newId("conv");
       const rows = await run(
-        `INSERT INTO conversations (id, workspace_id, title, last_message_preview)
-         VALUES ($1,$2,$3,$4) RETURNING *`,
-        [id, data.workspace_id, data.title, data.last_message_preview || null]
+        `INSERT INTO conversations (id, workspace_id, title, last_message_preview, project_id)
+         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+        [id, data.workspace_id, data.title, data.last_message_preview || null, data.project_id || null]
       );
       return rows[0];
     },
     // Phase 14.1: a summary write and a conversation-metadata write are stored
     // knowledge, so the transition is appended in the same transaction.
     async update(id, data, opts = {}) {
-      const { clause, values, next } = set(data, ["title", "summary", "is_archived", "last_message_preview"]);
+      const { clause, values, next } = set(data, ["title", "summary", "is_archived", "last_message_preview", "project_id"]);
       if (!clause) return this.get(id);
       return transacted(run, async (store) => {
         const self = store ? store.Conversation : this;
@@ -419,6 +419,65 @@ function createCoreStore(run) {
     async delete(id) {
       await run(`DELETE FROM conversations WHERE id = $1`, [id]);
       return { ok: true };
+    },
+    // Phase 18 — move a conversation into (or out of) a project. The transition
+    // is appended to the ledger by the same Conversation.update transaction.
+    async move(id, projectId) {
+      return this.update(id, { project_id: projectId || null });
+    }
+  };
+
+  const Project = {
+    async list(workspaceId, limit = 100) {
+      const safe = Math.max(1, Math.min(500, Number(limit) || 100));
+      return run(
+        `SELECT p.id, p.workspace_id, p.name, p.objective, p.created_date, p.updated_date,
+                (SELECT count(*)::int FROM conversations c
+                  WHERE c.project_id = p.id AND c.is_archived = FALSE) AS conversation_count,
+                (SELECT count(*)::int FROM sources s WHERE s.project_id = p.id) AS source_count,
+                (SELECT count(*)::int FROM agent_runs r
+                  WHERE r.conversation_id IN (SELECT id FROM conversations c2 WHERE c2.project_id = p.id)) AS run_count
+         FROM projects p WHERE p.workspace_id = $1
+         ORDER BY p.updated_date DESC LIMIT $2`,
+        [workspaceId, safe]
+      );
+    },
+    async get(id) {
+      const rows = await run(`SELECT * FROM projects WHERE id = $1`, [id]);
+      return rows[0] || null;
+    },
+    async create(data) {
+      const id = newId("prj");
+      const rows = await run(
+        `INSERT INTO projects (id, workspace_id, name, objective)
+         VALUES ($1,$2,$3,$4) RETURNING *`,
+        [id, data.workspace_id, data.name, data.objective || null]
+      );
+      return rows[0];
+    },
+    async update(id, data) {
+      const { clause, values, next } = set(data, ["name", "objective"]);
+      if (!clause) return this.get(id);
+      const rows = await run(
+        `UPDATE projects SET ${clause}, updated_date = now() WHERE id = $${next} RETURNING *`,
+        [...values, id]
+      );
+      return rows[0];
+    },
+    // A project delete is a DETACH, never a data delete: conversations and
+    // immutable sources keep every row and simply lose the grouping. Agent runs
+    // are linked through conversations, so they detach with them.
+    async delete(id) {
+      const conversationResult = await run(
+        `UPDATE conversations SET project_id = NULL WHERE project_id = $1`, [id]
+      );
+      const sourceResult = await run(`UPDATE sources SET project_id = NULL WHERE project_id = $1`, [id]);
+      const rows = await run(`DELETE FROM projects WHERE id = $1`, [id]);
+      return {
+        ok: rows.length > 0,
+        detachedConversations: conversationResult.rowCount || 0,
+        detachedSources: sourceResult.rowCount || 0
+      };
     }
   };
 
@@ -729,7 +788,7 @@ function createCoreStore(run) {
     }
   };
 
-  return { Workspace, Conversation, Message, Memory, TaskContext, AuditEvent };
+  return { Workspace, Conversation, Project, Message, Memory, TaskContext, AuditEvent };
 }
 
 // --- Composition root ------------------------------------------------------
@@ -757,6 +816,7 @@ export const db = createStore(query);
 
 export const Workspace = db.Workspace;
 export const Conversation = db.Conversation;
+export const Project = db.Project;
 export const Message = db.Message;
 export const Memory = db.Memory;
 export const TaskContext = db.TaskContext;

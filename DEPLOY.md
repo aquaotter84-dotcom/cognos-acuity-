@@ -23,9 +23,11 @@ the Phase 14/15 tables (`knowledge_events`, `beliefs`, `confidence_history`,
 `relationships`, `coherence_reports`, `telemetry_runs`, `telemetry_model_calls`,
 `strategies`, `strategy_evaluations`, `adaptive_decisions`,
 `improvement_ledger`), the additive memory-confidence fields, Phase 16's
-nullable latency-observability fields, and Phase 17's `sources`,
+nullable latency-observability fields, Phase 17's `sources`,
 `source_chunks`, `agent_runs`, `agent_steps`, `agent_events`, and
-`agent_approvals` tables.
+`agent_approvals` tables, and Phase 18's `projects`, `source_images`, and
+`image_analyses` tables (plus the `project_id` columns on conversations and
+sources).
 
 If you would rather apply the DDL explicitly before traffic arrives:
 

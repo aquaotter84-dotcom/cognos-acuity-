@@ -1,6 +1,7 @@
 // Schema for Phase 14 (Dynamic Systems), Phase 15 (Meta-Cognition), and
-// Phase 16's additive latency-observability columns, and Phase 17's governed
-// source-ingestion and bounded-agent records.
+// Phase 16's additive latency-observability columns, Phase 17's governed
+// source-ingestion and bounded-agent records, and Phase 18's durable research
+// projects, immutable image originals, and vision-analysis provenance.
 //
 // HARD CONSTRAINT: additive only. Nothing here alters the meaning of an existing
 // column, drops anything, or rewrites a row. ALTER TABLE statements only add
@@ -438,9 +439,75 @@ CREATE TABLE IF NOT EXISTS agent_approvals (
 CREATE INDEX IF NOT EXISTS agent_approvals_step_idx ON agent_approvals (step_id, decided_ms DESC);
 `;
 
+
+// ---------------------------------------------------------------------------
+// Phase 18 — Governed research projects: durable project groupings, immutable
+// image originals with vision-analysis provenance, and per-source project
+// scope. Additive only; every image byte is stored once and never rewritten.
+// ---------------------------------------------------------------------------
+export const PHASE18_SCHEMA = `
+-- 18.1 Durable projects. A project groups conversations, immutable evidence,
+-- agent runs, and research decisions around one investigation. It is a folder,
+-- not an account boundary: the app stays single-workspace and single-tenant.
+CREATE TABLE IF NOT EXISTS projects (
+  id           TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  name         TEXT NOT NULL,
+  objective    TEXT,
+  created_date TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS projects_workspace_idx ON projects (workspace_id, updated_date DESC);
+
+-- 18.1 Conversations and sources become optionally project-scoped. Existing
+-- rows stay NULL (ungrouped) and keep every previous meaning. Deleting a
+-- project detaches, never deletes, its conversations and sources.
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS project_id TEXT;
+CREATE INDEX IF NOT EXISTS conversations_project_idx ON conversations (project_id, updated_date DESC);
+
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS project_id TEXT;
+CREATE INDEX IF NOT EXISTS sources_project_idx ON sources (project_id, created_date DESC);
+
+-- 18.2 Immutable image originals. The bytes are stored once, keyed 1:1 to the
+-- hashed source row; nothing here is ever UPDATEd or DELETEd by an accessor.
+CREATE TABLE IF NOT EXISTS source_images (
+  id             TEXT PRIMARY KEY,
+  source_id      TEXT NOT NULL UNIQUE REFERENCES sources(id) ON DELETE RESTRICT,
+  format         TEXT NOT NULL,
+  width          INTEGER NOT NULL,
+  height         INTEGER NOT NULL,
+  byte_size      INTEGER NOT NULL,
+  content_sha256 TEXT NOT NULL,
+  bytes          BYTEA NOT NULL,
+  created_date   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS source_images_sha_idx ON source_images (content_sha256);
+
+-- 18.3 Vision-analysis provenance: one row per model reading of an immutable
+-- image original. A reading is a recorded interpretation, not the artifact:
+-- the artifact is the hashed bytea above, and the reading is labeled as such
+-- in evidence packs. Rows are append-only; a re-analysis is a new row.
+CREATE TABLE IF NOT EXISTS image_analyses (
+  id            TEXT PRIMARY KEY,
+  source_id     TEXT NOT NULL REFERENCES sources(id) ON DELETE RESTRICT,
+  model_used    TEXT NOT NULL,
+  status        TEXT NOT NULL,
+  visual_type   TEXT,
+  summary       TEXT,
+  regions       JSONB NOT NULL DEFAULT '[]'::jsonb,
+  latency_ms    INTEGER,
+  attempts      INTEGER NOT NULL DEFAULT 1,
+  usage         JSONB,
+  error_message TEXT,
+  created_date  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS image_analyses_source_idx ON image_analyses (source_id, created_date DESC);
+`;
+
 export const PHASE_SCHEMAS = [
   { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
   { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
   { id: "0003", phase: 16, name: "phase16_latency_observability", sql: PHASE16_SCHEMA },
-  { id: "0004", phase: 17, name: "phase17_sources_and_agents", sql: PHASE17_SCHEMA }
+  { id: "0004", phase: 17, name: "phase17_sources_and_agents", sql: PHASE17_SCHEMA },
+  { id: "0005", phase: 18, name: "phase18_research_projects_images", sql: PHASE18_SCHEMA }
 ];

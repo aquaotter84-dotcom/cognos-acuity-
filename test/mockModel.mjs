@@ -18,7 +18,9 @@ const ROLES = [
   ["memory relevance agent", "memoryRelevance"],
   ["Summarize the following conversation", "summary"],
   ["COGNOS Web Search tool", "webSearch"],
-  ["Coherence Monitor", "coherence"]
+  ["Coherence Monitor", "coherence"],
+  ["COGNOS Image Desk", "imageDesk"],
+  ["COGNOS Research Planner", "researchPlanner"]
 ];
 
 function roleOf(payload) {
@@ -38,6 +40,15 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
     critic: { score: 9, reasoning: "Solid, charter-compliant.", needs_revision: false, charter: { truth: true, evidence: true, agency: true, dignity: true, note: "ok" } },
     coherence: null,          // null -> derive a coherent verdict
     observer: { task_type: "question_answering", complexity: "moderate", needs_decomposition: false, intent: "harness intent", needs_web_search: false, search_query: "" },
+    imageDesk: {
+      visual_type: "screenshot",
+      summary: "A test screenshot region transcript.",
+      regions: [
+        { id: "r1", kind: "text", x1: 0.05, y1: 0.05, x2: 0.95, y2: 0.2, text: "Contract value: $480,000", uncertain: false },
+        { id: "r2", kind: "text", x1: 0.05, y1: 0.3, x2: 0.95, y2: 0.45, text: "Closing date: March 1", uncertain: false }
+      ]
+    },
+    researchPlan: { plan: [], note: "No further research proposed." },
     hang: false,              // never respond -> exercises the AbortController
     failStatus: null,         // e.g. 500 / 504 -> upstream HTTP failure
     failRoles: null,          // null = every role, else a Set of roles to fail
@@ -54,6 +65,7 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
       answer: "This is the council's answer. The charter was applied.",
       memories: [{ content: "The user prefers Python for data work.", memory_type: "semantic", importance: 7, evidence_level: "direct", volatility: "medium" }],
       coherence: null, observer: { ...state.observer }, critic: { ...state.critic },
+      imageDesk: { ...state.imageDesk }, researchPlan: { ...state.researchPlan },
       hang: false, failStatus: null, failRoles: null, failCount: null,
       failBody: null, failContentType: null
     }, patch);
@@ -123,6 +135,8 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
           if (state.coherence) return json(typeof state.coherence === "function" ? state.coherence(payload) : state.coherence);
           return json({ verdict: "coherent", claims: [], note: "No conflict with stored beliefs." });
         }
+        if (role === "imageDesk") return json(typeof state.imageDesk === "function" ? state.imageDesk(payload) : state.imageDesk);
+        if (role === "researchPlanner") return json(typeof state.researchPlan === "function" ? state.researchPlan(payload) : state.researchPlan);
         return json({});
       }
 

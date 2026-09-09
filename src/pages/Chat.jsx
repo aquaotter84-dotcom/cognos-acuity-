@@ -12,19 +12,21 @@
 // the governed final answer. Style selector and the web-search toggle remain.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Menu, Globe, Volume2, VolumeX } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Folder, Menu, Globe, Volume2, VolumeX } from 'lucide-react';
 import { api, sendMessage } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
 import { useVoice } from '@/lib/voiceContext';
 import ChatMessage from '@/components/chat/ChatMessage';
 import ChatInput from '@/components/chat/ChatInput';
 import WelcomeScreen from '@/components/chat/WelcomeScreen';
+import ResearchDecisionCard from '@/components/chat/ResearchDecisionCard';
 
 const STYLES = ['balanced', 'casual', 'technical', 'strategic'];
 
 export default function Chat() {
-  const { activeWorkspace, setActiveConversationId, refreshConversations, openSidebar } = useCognos();
+  const { activeWorkspace, setActiveConversationId, refreshConversations, openSidebar, projectById } = useCognos();
+  const navigate = useNavigate();
   const {
     supported: voiceSupported,
     settings: voiceSettings,
@@ -45,6 +47,11 @@ export default function Chat() {
   const [agentMode, setAgentMode] = useState('off');
   const [isProcessing, setIsProcessing] = useState(false);
   const [draft, setDraft] = useState(null);   // { text, live } — the in-flight assistant turn
+  const [conversationProject, setConversationProject] = useState(null); // project id when this chat lives inside a project
+  // Phase 18 — an awaiting_approval research run in this conversation. The run
+  // executes only when the user approves it here; the next message after the
+  // decision continues with the executed run's evidence attached.
+  const [researchRun, setResearchRun] = useState(null);
   const abortRef = useRef(null);
   const messagesEndRef = useRef(null);
 
@@ -68,6 +75,7 @@ export default function Chat() {
         if (cancelled) return;
         setMessages(messages);
         setConversationSummary(conversation?.summary || null);
+        setConversationProject(conversation?.project_id || null);
         // Council traces are persisted on the message row, so reopening a thread
         // restores the trace instead of losing it (the original kept them in
         // session state only).
@@ -83,15 +91,63 @@ export default function Chat() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, draft]);
 
+  // Phase 18 — research plans stop for the user: whenever an awaiting_approval
+  // research run exists for this conversation, surface it for decision. The
+  // run executes only after that decision; it never answers on its own.
+  useEffect(() => {
+    if (!conversationId) { setResearchRun(null); return; }
+    let cancelled = false;
+    api.agentRuns({ limit: 50 })
+      .then(async (runs) => {
+        if (cancelled) return;
+        const pending = (runs || []).find(r =>
+          r.mode === 'research' && r.conversation_id === conversationId && r.status === 'awaiting_approval');
+        if (!pending) { if (!cancelled) setResearchRun(null); return; }
+        const detail = await api.agentRun(pending.id);
+        if (!cancelled) setResearchRun(detail);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [conversationId, messages]);
+
+  const handleResearchDecided = useCallback(async (decision, reason) => {
+    if (!researchRun?.run || researchRun.busy) return;
+    setResearchRun(prev => prev ? { ...prev, busy: true } : prev);
+    try {
+      const outcome = await api.decideAgentRun(researchRun.run.id, { decision, reason: reason || undefined });
+      const { run, steps } = outcome;
+      setResearchRun({
+        run,
+        steps,
+        decided: { decision, at: Date.now(), sourceCount: (outcome.createdSources || []).length }
+      });
+    } catch (err) {
+      setResearchRun(prev => prev ? { ...prev, error: err.message || 'The decision could not be recorded' } : prev);
+    }
+  }, [researchRun]);
+
+  // A research conversation's next message continues with the decided run, so
+  // the executed steps' fetched pages attach to the answer as ordinary evidence.
+  const decidedResearchRunId = researchRun?.run && !researchRun.busy
+    && researchRun.decided && researchRun.run.status !== 'awaiting_approval'
+    ? researchRun.run.id : null;
+
   // --- THE SEND PATH -------------------------------------------------------
   const handleSend = useCallback(async (text, options = {}) => {
     if (!activeWorkspace || isProcessing) return;
     const turnSources = Array.isArray(options.sources) ? options.sources : [];
     const turnAgentMode = options.agentMode || 'off';
+    // Phase 18 — after the user decides a research plan, the next message in the
+    // conversation continues that executed run: approved pages were attached as
+    // evidence server-side, and the council answers from them like any source.
+    // A research-mode message starts a NEW proposal; the continuation of a
+    // decided run is a plain (or read-only) question, not another plan.
+    const turnResearchRunId = turnAgentMode !== 'research' ? decidedResearchRunId : null;
 
     stopSpeaking();
     setIsProcessing(true);
     setDraft({ text: '', live: { stages: [] } });
+    if (turnResearchRunId) setResearchRun(null);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -129,6 +185,7 @@ export default function Chat() {
           style,
           webSearch,
           agentMode: turnAgentMode,
+          researchRunId: turnResearchRunId,
           attachments: turnSources.map(source => ({ source_id: source.id }))
         },
         {
@@ -187,7 +244,7 @@ export default function Chat() {
       setIsProcessing(false);
       abortRef.current = null;
     }
-  }, [activeWorkspace, isProcessing, conversationId, style, webSearch, setSearchParams, setActiveConversationId, refreshConversations, speakAutomatically, stopSpeaking]);
+  }, [activeWorkspace, isProcessing, conversationId, style, webSearch, setSearchParams, setActiveConversationId, refreshConversations, speakAutomatically, stopSpeaking, decidedResearchRunId]);
 
   const handleStop = () => abortRef.current?.abort();
 
@@ -203,6 +260,16 @@ export default function Chat() {
         <div className="flex-1 min-w-0">
           <h2 className="text-sm font-medium truncate">{activeWorkspace?.name || 'COGNOS'}</h2>
           {conversationSummary && <p className="text-xs text-muted-foreground truncate">{conversationSummary}</p>}
+          {conversationProject && (
+            <button
+              onClick={() => navigate('/projects')}
+              className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-accent hover:underline"
+              title="Open Projects"
+            >
+              <Folder className="w-3 h-3" />
+              {projectById(conversationProject)?.name || 'Research project'} — view
+            </button>
+          )}
         </div>
         <button
           onClick={toggleVoiceMode}
@@ -249,6 +316,37 @@ export default function Chat() {
           </div>
         )}
       </div>
+
+      {researchRun && researchRun.run && researchRun.run.status === 'awaiting_approval' && !researchRun.decided && (
+        <div className="shrink-0 px-3 md:px-4 pb-1">
+          <ResearchDecisionCard
+            runId={researchRun.run.id}
+            steps={researchRun.steps || []}
+            busy={Boolean(researchRun.busy)}
+            error={researchRun.error || null}
+            onApprove={() => handleResearchDecided('approve')}
+            onDecline={(reason) => handleResearchDecided('decline', reason)}
+          />
+        </div>
+      )}
+
+      {researchRun && researchRun.decided && researchRun.run && (
+        <div className="shrink-0 px-3 md:px-4 pb-1">
+          <div className="max-w-3xl mx-auto rounded-xl border border-border bg-card px-3 py-2.5 text-xs">
+            <p className="text-muted-foreground">
+              {researchRun.decided.decision === 'approve'
+                ? `Plan approved — ${(researchRun.steps || []).length} step${(researchRun.steps || []).length === 1 ? '' : 's'} executed with consent recorded per step.`
+                : 'Plan declined — nothing was opened or executed.'}
+            </p>
+            {(researchRun.steps || []).filter(s => s.status === 'completed').length > 0 && (
+              <p className="text-muted-foreground mt-1">
+                Fetched pages are attached as immutable evidence for your next question — ask me to continue and I will answer from them.
+              </p>
+            )}
+            {researchRun.error && <p className="text-destructive mt-1">{researchRun.error}</p>}
+          </div>
+        </div>
+      )}
 
       <ChatInput
         onSend={handleSend}

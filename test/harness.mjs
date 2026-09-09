@@ -45,12 +45,12 @@ export async function bootHarness(env = {}) {
   }
 
   /** Drive THE send path and collect every SSE frame it emits. */
-  async function chat(userMessage, { conversationId = null, style = "balanced", webSearch = false, attachments = [], agentMode = "off" } = {}) {
+  async function chat(userMessage, { conversationId = null, style = "balanced", webSearch = false, attachments = [], agentMode = "off", researchRunId = null, projectId = null } = {}) {
     const t0 = Date.now();
     const res = await fetch(`${base}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userMessage, conversationId, style, webSearch, attachments, agentMode })
+      body: JSON.stringify({ userMessage, conversationId, style, webSearch, attachments, agentMode, researchRunId, projectId })
     });
     if (!res.ok || !res.body) {
       return { ok: false, status: res.status, events: [], ms: Date.now() - t0 };

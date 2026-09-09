@@ -165,6 +165,15 @@ export const OPERATIONAL_LAWS = Object.freeze([
     runtime_modifiable: false
   }),
   Object.freeze({
+    id: "pin.research_approval",
+    layer: "operational",
+    name: "Research plans execute only on approval",
+    statement: "Research mode is two-phase: the bounded planner may only propose read-only steps, and no proposed step opens a network resource until the user approves the recorded plan (per-step scope hashes in agent_approvals). Declined plans execute nothing. Approved execution stays read-only, budgeted, and attributable, and it produces evidence only — never an answer; any follow-up answer still passes through the council and the Governor.",
+    forbids: ["executing an unapproved research step", "research writing to external systems", "a research plan releasing an answer", "re-deciding a decided run"],
+    source: "Phase 18; server/agent/runner.js",
+    runtime_modifiable: false
+  }),
+  Object.freeze({
     id: "phase15.observe_only",
     layer: "phase_scope",
     name: "Adaptation is observed, not applied",
@@ -197,7 +206,7 @@ export const LAWS = Object.freeze([...CHARTER_LAWS, ...OPERATIONAL_LAWS]);
 
 /** Bumped when a law is added or reworded in code. Recorded on improvement rows
  *  so a reviewer can tell which version of the law layer judged a proposal. */
-export const LAW_LAYER_VERSION = "1.2.0";
+export const LAW_LAYER_VERSION = "1.3.0";
 
 const BY_ID = Object.freeze(LAWS.reduce((acc, law) => ({ ...acc, [law.id]: law }), {}));
 

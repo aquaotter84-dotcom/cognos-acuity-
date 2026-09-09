@@ -118,7 +118,7 @@ check("runtime feature switches are reflected in the compact prompt", () => {
 });
 
 check("the law layer pins truthful identity and policy refuses runtime rewrites", () => {
-  assert.equal(LAW_LAYER_VERSION, "1.2.0");
+  assert.equal(LAW_LAYER_VERSION, "1.3.0"); // Phase 18 added the immutable pin.research_approval
   assert.ok(lawById("pin.truthful_self_model"));
   const result = evaluateAdaptation({
     action: "modify_identity",

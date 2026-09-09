@@ -86,7 +86,8 @@ out(`\n\u2500\u2500 0. the server boots and the existing surface still answers`)
 check("GET /api/health is fast", health.status === 200 && health.ms < 2000, `${health.status} in ${health.ms}ms`);
 check(
   "health reports the governed subsystems",
-  health.json.ledger === true && health.json.telemetry === true && health.json.adaptiveMode === "observe" && health.json.sources === true && health.json.agent?.autonomousWrites === false,
+  health.json.ledger === true && health.json.telemetry === true && health.json.adaptiveMode === "observe" && health.json.sources === true && health.json.agent?.autonomousWrites === false
+    && health.json.images?.enabled === true && health.json.images?.visionEnabled === true && health.json.research?.approvalGate === true && health.json.projects === true,
   JSON.stringify({
     ledger: health.json.ledger, coherence: health.json.coherence, telemetry: health.json.telemetry,
     adaptiveMode: health.json.adaptiveMode, strategy: health.json.strategy,
@@ -104,7 +105,8 @@ const phaseTables = [
   "knowledge_events", "beliefs", "confidence_history", "relationships", "coherence_reports",
   "telemetry_runs", "telemetry_model_calls", "strategies", "strategy_evaluations",
   "adaptive_decisions", "improvement_ledger",
-  "sources", "source_chunks", "agent_runs", "agent_steps", "agent_events", "agent_approvals"
+  "sources", "source_chunks", "agent_runs", "agent_steps", "agent_events", "agent_approvals",
+  "projects", "source_images", "image_analyses"
 ];
 const presentTables = (await h.sql(
   "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY($1)",

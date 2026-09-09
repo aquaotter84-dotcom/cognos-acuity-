@@ -30,31 +30,23 @@ export function registerChatRoute(app, { wrap, db, logger }) {
     const workspace = workspaceStep.value;
     const agentMode = normalizeAgentMode(req.body?.agentMode || "off");
 
-    // Resolve source attachments server-side. Names, hashes, text and URLs from
-    // the browser are never trusted into a model prompt or persisted message.
-    const requestedSourceIds = [...new Set((Array.isArray(requestedAttachments) ? requestedAttachments : [])
-      .map(attachment => attachment?.source_id)
-      .filter(id => typeof id === "string" && /^src_[a-z0-9]+$/i.test(id)))]
-      .slice(0, 8);
-    const sourceStep = await timed(() => db.Source.listByIds(workspace.id, requestedSourceIds));
-    const resolvedSources = sourceStep.value;
-    const attachments = resolvedSources.map(source => ({
-      source_id: source.id,
-      name: source.name,
-      source_type: source.kind,
-      file_type: source.media_type,
-      content_sha256: source.content_sha256,
-      file_url: null
-    }));
-
     let conversationId = req.body?.conversationId || null;
     let createdConversation = null;
     let conversationMs = 0;
     if (!conversationId) {
+      // Phase 18: a new conversation may be created inside a durable project.
+      let projectId = req.body?.projectId || null;
+      if (projectId) {
+        const project = await db.Project.get(projectId);
+        if (!project || project.workspace_id !== workspace.id) {
+          return res.status(404).json({ error: "Project not found in this workspace" });
+        }
+      }
       const conversationStep = await timed(() => db.Conversation.create({
         workspace_id: workspace.id,
         title: userMessage.slice(0, 50) + (userMessage.length > 50 ? "..." : ""),
-        last_message_preview: userMessage
+        last_message_preview: userMessage,
+        project_id: projectId
       }));
       createdConversation = conversationStep.value;
       conversationMs = conversationStep.ms;
@@ -66,6 +58,53 @@ export function registerChatRoute(app, { wrap, db, logger }) {
         return res.status(404).json({ error: "Conversation not found in this workspace" });
       }
     }
+
+    // Phase 18 — an executed research run may attach its newly fetched sources
+    // to the follow-up turn that asks for the governed answer. The run must
+    // belong to this workspace and conversation and must have been approved and
+    // executed (completed or partial); nothing else is eligible. The record is
+    // read here so the council never reasons over a half-loaded provenance.
+    let researchRecord = null;
+    if (req.body?.researchRunId) {
+      const researchRun = await db.AgentRun.get(req.body.researchRunId);
+      if (!researchRun || researchRun.workspace_id !== workspace.id) {
+        return res.status(404).json({ error: "Research run not found in this workspace" });
+      }
+      if (researchRun.mode !== "research" || !["completed", "partial", "failed"].includes(researchRun.status)) {
+        return res.status(409).json({ error: "Only an approved, decided research run can continue a conversation" });
+      }
+      if (!conversationId || researchRun.conversation_id !== conversationId) {
+        return res.status(409).json({ error: "Continue the conversation that proposed the research plan; the run belongs to it" });
+      }
+      const steps = await db.AgentStep.list(researchRun.id);
+      if (!steps.length || steps.some(step => step.requires_approval && !["completed", "failed", "cancelled"].includes(step.status))) {
+        return res.status(409).json({ error: "The research run has unresolved steps" });
+      }
+      researchRecord = { run: researchRun, steps };
+    }
+
+    // Resolve source attachments server-side. Names, hashes, text and URLs from
+    // the browser are never trusted into a model prompt or persisted message.
+    const requestedSourceIds = [...new Set((Array.isArray(requestedAttachments) ? requestedAttachments : [])
+      .map(attachment => attachment?.source_id)
+      .filter(id => typeof id === "string" && /^src_[a-z0-9]+$/i.test(id)))]
+      .slice(0, 8);
+    const researchSourceIds = researchRecord
+      ? researchRecord.steps
+        .filter(step => step.tool_name === "open_link" && step.status === "completed" && step.output?.sourceId)
+        .map(step => step.output.sourceId)
+      : [];
+    const sourceStep = await timed(() => db.Source.listByIds(workspace.id,
+      [...new Set([...requestedSourceIds, ...researchSourceIds])].slice(0, 12)));
+    const resolvedSources = sourceStep.value;
+    const attachments = resolvedSources.map(source => ({
+      source_id: source.id,
+      name: source.name,
+      source_type: source.kind,
+      file_type: source.media_type,
+      content_sha256: source.content_sha256,
+      file_url: source.kind === "image" ? `/api/sources/${source.id}/image` : null
+    }));
 
     // Phase 15.1: the run is identified here, before the council starts, so both
     // the success path and the failure path can link the persisted message to the
@@ -118,8 +157,13 @@ export function registerChatRoute(app, { wrap, db, logger }) {
     send("start", { conversationId, conversation: createdConversation, userMessage: userMsg, runId });
 
     try {
+      // The persisted user message keeps file_url for the browser UI, but the
+      // model boundary never receives internal /api URLs: the council reasons
+      // over the server-side extracted evidence (image transcripts, chunks),
+      // not over pixel streams or private endpoints.
+      const councilAttachments = attachments.map(({ file_url, ...rest }) => rest);
       const result = await runCouncilTurn(
-        { conversationId, workspaceId: workspace.id, userMessage, style, attachments, webSearch, agentMode },
+        { conversationId, workspaceId: workspace.id, userMessage, style, attachments: councilAttachments, webSearch, agentMode, researchRunId: researchRecord?.run?.id || null, researchRecord },
         {
           runId,
           signal: turnAbort.signal,

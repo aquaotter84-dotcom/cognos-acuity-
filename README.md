@@ -23,9 +23,19 @@ On top of the council sit two subsystems that **observe** it and that it may
   snapshots, page/section-aware citation chunks, prompt-injection and SSRF
   boundaries, and explicit per-turn agent modes. Agent mode is a bounded
   read-only subsystem with no autonomous writes and no answer channel.
+- **Phase 18, COGNOS Projects** — durable research projects that group
+  conversations, immutable evidence, agent runs, decisions, and approvals;
+  governed image ingestion (PNG/JPEG/WebP originals, hashes, region-boxed
+  vision readings, injection screening, region-aware citations such as
+  `[src_…:r2]`); and a research agent mode that proposes a finite plan and
+  executes only what the user approves, with every consent recorded per step.
+  Research never releases an answer — the council answers from the approved
+  fetch results like any other evidence.
 
 `/system` in the UI is a read-only window onto the knowledge and reasoning
 records; each completed chat trace also exposes its source and agent provenance.
+The **Projects** page lists research folders with their conversations and
+hashed evidence; the chat sidebar groups project chats beneath each project.
 
 ## Identity and self-knowledge
 
@@ -47,9 +57,12 @@ This keeps “what COGNOS is” separate from “what happens to be enabled here
 example, document/link and bounded-agent capabilities can be disabled by runtime
 switches; voice and dictation depend on browser support; database-backed memory
 reports whether persistence is configured. The manifest states unavailable
-capabilities rather than inventing them: image-source ingestion, private-network
-browsing, consequential agent writes, autonomous background work, and an account
-system are not present.
+capabilities rather than inventing them: private-network browsing,
+consequential agent writes, autonomous background work, an account system,
+pixel-level vision inside answer drafts, and image editing are not present.
+Image ingestion is supported but bounded: an image original is the
+authoritative artifact, its vision transcript is a labeled model-extracted
+reading that can misread, and printed image text is untrusted evidence.
 
 The self-model does not expose credentials, private system prompts, user data, or
 hidden model chain-of-thought. `pin.truthful_self_model` prevents prompts,
@@ -71,37 +84,64 @@ no additional credentials are needed. Browser-native dictation in `ChatInput`
 continues to provide speech-to-text input where supported. Source-locator tokens
 such as `[src_…:p2]` are omitted from speech while remaining visible in text.
 
-## Documents, links, and bounded agent mode
+## Documents, images, links, and bounded agent mode
 
 The paperclip in Chat opens the evidence-source panel:
 
-- Upload **PDF, DOCX, TXT, Markdown, or CSV** files (4 MB browser/default server
+- Upload **PDF, DOCX, TXT, Markdown, or CSV** files (4 MB default server
   limit). Parsing is deterministic and executes no document macros or scripts.
+- Upload **PNG, JPEG, or WebP images** — screenshots, photographs, scans,
+  charts, tables, diagrams, interfaces. The server parses the real image
+  format, keeps the immutable original (SHA-256, byte-served with an ETag),
+  and, when vision is enabled, records a bounded region-boxed transcript with
+  model/time provenance. Region text becomes citable chunks
+  (`[src_…:r1]`); printed text is screened for prompt-injection patterns and
+  is always untrusted evidence, never instructions.
 - Open a public HTTP(S) link. Retrieval uses DNS pinning, rejects credentials,
   local/private/reserved addresses, nonstandard ports, HTTPS downgrades,
   excessive redirects, compression surprises, oversized bodies, and timeouts.
 - Attach up to eight immutable source snapshots to a turn. COGNOS selects
-  page/section chunks within a bounded context budget and requires exact
-  `[src_id:locator]` citations; the Governor refuses invented source locators.
+  page/section/image-region chunks within a bounded context budget and requires
+  exact `[src_id:locator]` citations; the Governor refuses invented source
+  locators.
 
 Source text is always labeled **untrusted evidence, not instructions**. Detected
 prompt-injection patterns are retained as risk flags for inspection; source
 commands are never executed. Browser-provided source names or text are ignored:
 the server resolves ids back to its own hashed snapshot.
 
-The composer also has three explicit agent modes:
+The composer also has four explicit agent modes:
 
 - **Agent off** — no autonomous tool plan. Manually attached sources still work.
 - **Observe** — records the `read_source` / `open_link` plan but executes no
   agent tools. Explicitly attached sources remain ordinary council context.
 - **Read only** — may read selected snapshots and safely open up to three URLs
   explicitly present in the user's message, with six total steps maximum.
+- **Research** — inspects the conversation's evidence and proposes a finite
+  read-only plan (up to `COGNOS_RESEARCH_MAX_STEPS` URLs, each with a stated
+  reason). The plan lands `awaiting_approval`; the card under the composer
+  shows each exact URL, and only an explicit **Approve** (or **Decline**)
+  decision executes (or freezes) it. Approving records one consent row with a
+  per-step scope hash before any fetch; declined runs execute nothing and
+  cannot be re-decided. The next question in that conversation is then answered
+  by the council with the approved fetches attached as ordinary evidence.
 
-Each agent run, step, failure, and status transition is attributable in
-`agent_events`. There are no write-capable tools and no background tasks. Agent
-preparation finishes before context assembly, so the council never reasons over
-an incomplete source snapshot. The six council seats and the post-Governor
-answer release point are unchanged.
+Each agent run, step, failure, approval, and status transition is attributable
+in `agent_events` / `agent_approvals`. There are no write-capable tools and no
+background tasks. Agent preparation finishes before context assembly, so the
+council never reasons over an incomplete source snapshot. The six council seats
+and the post-Governor answer release point are unchanged.
+
+## Durable research projects
+
+Chrome-free but durable: the sidebar and the **Projects** page create research
+folders (name + optional objective). A project groups its conversations and
+every document, image, and link uploaded inside them, plus the agent runs and
+approval records. Conversations, sources, and provenance survive across
+sessions; deleting a project **detaches** its conversations and evidence — it
+never deletes them. Within a project, natural chat, uploads, links, image
+analysis, and approved research all work exactly as outside, with the project
+boundary recorded on every row.
 
 ## Model-gateway resilience
 
@@ -161,14 +201,19 @@ npm run dev
 | `COGNOS_SOURCE_MAX_TEXT_CHARS` | no | Extracted-text limit, clamped to 50,000–2,000,000; default 750,000. |
 | `COGNOS_LINK_MAX_BYTES` | no | Fetched response limit, clamped to 100 KB–5 MB; default 2 MB. |
 | `COGNOS_LINK_TIMEOUT_MS` | no | Per-link timeout, clamped to 2–30 seconds; default 12 seconds. |
+| `COGNOS_IMAGE_MAX_BYTES` | no | Raw image limit, clamped to 100 KB–8 MB; default 4 MB. |
+| `COGNOS_IMAGE_VISION_ENABLED` | no | Default `true`. Set `false` to store image geometry only — no model readings are requested. |
+| `COGNOS_IMAGE_MODEL` | no | Vision reading model; defaults to the primary model. |
+| `COGNOS_RESEARCH_ENABLED` | no | Default `true`; hides research mode from the agent vocabulary when false. |
+| `COGNOS_RESEARCH_MAX_STEPS` | no | Research plan size, clamped to 1–5 steps; default 3. Approving a plan consents only to the listed exact URLs. |
 | `COGNOS_AGENT_ENABLED` | no | Default `true`; disables non-off agent modes when false. Agent writes remain unavailable regardless. |
 
 The database initializes lazily — the build and a cold boot both succeed with no
 database reachable. The schema is created on the first query that needs it.
 
-The Phase 14/15 tables, Phase 16's nullable performance columns, and Phase 17's
-source/agent tables are part of that same lazy migration. `server/db/schema.js`
-is the single source of truth;
+The Phase 14/15 tables, Phase 16's nullable performance columns, Phase 17's
+source/agent tables, and Phase 18's project/image tables are part of that same
+lazy migration. `server/db/schema.js` is the single source of truth;
 `migrations/*.sql` is generated from it
 (`npm run migrations:generate`) and can be applied explicitly with
 `npm run migrate` — that script refuses to run any SQL containing `DROP`,
@@ -184,9 +229,11 @@ server/
   index.js              Express composition root (gate, health, core routes)
   routes/
     chat.js             the single send path (SSE) + disconnect cancellation
+    projects.js         Phase 18 durable project CRUD + detail counts
     knowledge.js        Phase 14 read-only query routes
     meta.js             Phase 15 read-only routes + Policy gate
-    sources.js          immutable uploads/links + agent provenance queries
+    sources.js          immutable uploads (docs/links/images) + agent runs,
+                        image bytes, and the research decision route
   serve.js              local/self-hosted listener (Vercel does not use this)
   mock-openai.js        local OpenAI-compatible mock (development aid)
   mock-latency.js       local latency injector (development aid)
@@ -207,7 +254,7 @@ server/
                         errors, logging, cooperative cancellation, and the
                         single governance-approved answer release point
   db/
-    schema.js           additive Phase 14–17 schemas (source of truth)
+    schema.js           additive Phase 14–18 schemas (source of truth)
     util.js             newId/num/int/clamp01/nowMs (leaf helpers, no cycles)
   knowledge/            Phase 14
     events.js           ledger vocabulary, append, list, count, foldState
@@ -218,8 +265,9 @@ server/
     analytics.js        change rate, stability index, churn (read-only)
     store.js            createKnowledgeStore(run): events, replay, lineage
     index.js            knowledgeProjection + telemetryRecord stages
-  sources/              Phase 17 extraction, chunking, evidence + safe fetch
-  agent/                bounded observe/read-only tool runner
+  sources/              Phase 17/18 extraction, chunking, evidence, image
+                        parsing/vision readings + safe fetch
+  agent/                bounded agent runner + research planner
   meta/                 Phase 15
     telemetry.js        the per-run recorder (subscribes to eventBus)
     rates.js            the editable cost rate table
@@ -229,16 +277,17 @@ server/
     latency.js          p50/p95 analysis + evidence gate for an outbox
     policy.js           the Policy Engine
     store.js            createMetaStore(run): telemetry, strategies, ledger
-migrations/             additive SQL (0001 phase 14 through 0004 sources/agent)
+migrations/             additive SQL (0001 phase 14 through 0005 projects/images)
 scripts/
   generate-migrations.mjs  migrations/*.sql from server/db/schema.js
   migrate.mjs              apply them (refuses non-additive SQL)
   latency-report.mjs       read-only p50/p95 latency report
   evaluate-strategies.mjs  run the offline harness (operator-invoked)
 src/
-  pages/                Chat, Memory, Activity, System, Settings
+  pages/                Chat, Projects, Memory, Activity, System, Settings
   components/chat/      ChatMessage, ChatInput, CouncilTrace, LiveCouncil,
-                        Sidebar, MobileNav, WelcomeScreen
+                        Sidebar, MobileNav, WelcomeScreen, SourceComposer,
+                        ResearchDecisionCard
   components/system/    shared System-page UI primitives and tab metadata
   components/CognosLayout.jsx
   lib/api.js            the app's API client + the SSE send path
@@ -251,6 +300,7 @@ test/                   harness only — not part of the app
   voice.mjs             speech normalization and lossless chunking regressions
   performance.mjs       latency measurement and transport-integrity regressions
   sources-agent.mjs     extraction, SSRF, injection, citations + bounded-agent tests
+  phase18.mjs           projects, image ingestion, research-approval regressions
   integrity.mjs         governed-stream, cancellation, structured-error regressions
   smoke.mjs             the Phase 14/15 acceptance run (170 assertions)
   demo.mjs              prints the artifacts: ledger rows, telemetry, replay

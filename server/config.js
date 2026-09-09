@@ -87,16 +87,32 @@ export function getSystemConfig() {
       }
     },
 
-    // --- Phase 17: immutable sources + bounded agent subsystem ------------
+    // --- Phase 17/18: immutable sources + bounded agent subsystem ----------
     sources: {
       enabled: process.env.COGNOS_SOURCES_ENABLED !== "false",
       maxPerTurn: 8,
       maxUploadBytes: Math.max(100_000, Math.min(8_000_000, Number(process.env.COGNOS_SOURCE_MAX_BYTES || 4_000_000))),
-      maxLinkBytes: Math.max(100_000, Math.min(5_000_000, Number(process.env.COGNOS_LINK_MAX_BYTES || 2_000_000)))
+      maxLinkBytes: Math.max(100_000, Math.min(5_000_000, Number(process.env.COGNOS_LINK_MAX_BYTES || 2_000_000))),
+      // Phase 18 — image originals. The Image Desk (a bounded, labeled vision
+      // reading at ingestion) is on unless COGNOS_IMAGE_VISION_ENABLED=false;
+      // the model defaults to the primary model, overridable with
+      // COGNOS_IMAGE_MODEL.
+      imageFormats: Object.freeze(["png", "jpeg", "webp"]),
+      maxImageBytes: Math.max(100_000, Math.min(8_000_000, Number(process.env.COGNOS_IMAGE_MAX_BYTES || 4_000_000))),
+      vision: {
+        enabled: process.env.COGNOS_IMAGE_VISION_ENABLED !== "false",
+        model: process.env.COGNOS_IMAGE_MODEL || primary
+      }
+    },
+    research: {
+      // Phase 18 — approval-gated research mode: propose read-only steps, then
+      // execute only what the user approves (recorded in agent_approvals).
+      enabled: process.env.COGNOS_RESEARCH_ENABLED !== "false",
+      maxPlanSteps: Math.max(1, Math.min(5, Number(process.env.COGNOS_RESEARCH_MAX_STEPS || 3)))
     },
     agent: {
       enabled: process.env.COGNOS_AGENT_ENABLED !== "false",
-      modes: Object.freeze(["off", "observe", "read_only"]),
+      modes: Object.freeze(["off", "observe", "read_only", "research"]),
       autonomousWrites: false,
       maxSteps: 6,
       maxLinks: 3

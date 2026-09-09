@@ -89,12 +89,15 @@ Verified: `grep -rin "base44\|bluesminds\|VITE_"` over `server/`, `src/`, config
 These existed **only** because Base44 supplied them. There is no honest
 equivalent, so they were removed rather than faked:
 
-- **Screen share, camera capture, and uploaded-image vision** remain removed.
-  They depended on `integrations.Core.UploadFile`, a hosted blob store returning
-  public URLs the model could fetch. Phase 17 adds an honest paperclip for
-  server-extracted PDF/DOCX/text/Markdown/CSV evidence and public links without
-  pretending to restore that image/blob path (§14). The dormant multimodal
-  `withAttachments` helper remains, but no UI claims image upload support.
+- **Screen share and camera capture** remain removed. They depended on
+  `integrations.Core.UploadFile`, a hosted blob store returning public URLs the
+  model could fetch. Phase 17 added server-extracted PDF/DOCX/text/Markdown/CSV
+  evidence and public links. **Phase 18 restores uploaded-image evidence without
+  that blob store**: the browser sends a bounded base64 payload, the server
+  stores the immutable hashed original and serves its bytes itself
+  (`/api/sources/:id/image`, ETag = content SHA-256); the model never receives
+  a pixel stream or a private URL — it reasons over region-boxed transcripts
+  and always from server-owned rows (§14.6).
 - **Hosted LiveKit voice agent** (`livekit-agent/`, `AgentChat.jsx`,
   `useConversationMode`, the original `SpeakButton`). It needs a LiveKit server,
   tokens, and the service-role secret path, so the full-duplex agent remains
@@ -685,15 +688,21 @@ Failures are contained and visible. Cancellation marks the run cancelled and
 stops before another step. Agent preparation is awaited before context assembly,
 so there is no background or next-turn visibility race.
 
-`agent_approvals` exists as additive, append-only schema for a future reviewed
-approval design, but Phase 17 exposes no approval POST route and no write tool.
-A table is not treated as an approval barrier. The Policy Engine refuses both
-`enable_agent_write_tool` and `weaken_source_boundary`, citing the new immutable
-laws `pin.agent_bounded` and `pin.source_untrusted`. Phase 17 raised the law
-layer to 1.1.0; the later truthful-self-model pin raises the current version to
-1.2.0. Consequential autonomy remains intentionally unavailable until
-its executor, diff/preview, exact scope hash, next-turn barrier, idempotency, and
-recovery behavior are separately implemented and proven.
+Phase 18 adds a fourth mode, `research`, whose consent barrier is real: the run
+is created `awaiting_approval` with one step per proposed URL (exact URL +
+stated reason), and `POST /api/agent/runs/:id/decision` records an
+`agent_approvals` row — decision, reason, and a per-step SHA-256 scope hash over
+the run id, step, tool, and input — for every step *before* the first fetch.
+Declining records consent and executes nothing; decided runs cannot be
+re-decided. Executed research steps attach their fetched pages as ordinary
+immutable evidence for the next council turn, and the model-boundary text always
+labels them untrusted. The Policy Engine refuses both `enable_agent_write_tool`
+and `weaken_source_boundary`, citing the immutable laws `pin.agent_bounded`,
+`pin.source_untrusted`, and (Phase 18) `pin.research_approval`. Phase 17 raised
+the law layer to 1.1.0, the truthful-self-model pin to 1.2.0, and Phase 18 to
+1.3.0. Consequential autonomy — write-capable tools, outbound email/purchases/
+publication, background runs, or answers without the Governor — remains
+intentionally unavailable.
 
 ### 14.5 Voice and existing council integrity
 
@@ -711,6 +720,30 @@ refusals, and the one chat route. The voice, latency, integrity, and 170-asserti
 smoke suites remain separate regression gates.
 
 ---
+
+### 14.6 Governed image ingestion and durable research projects (Phase 18)
+
+Images are evidence with the same untrusted-data contract as documents. The
+browser sends bounded base64 (PNG/JPEG/WebP only); the server validates the
+signature and real dimensions, keeps the immutable original (source_images:
+bytes, SHA-256, media type, geometry; served at `/api/sources/:id/image` with an
+ETag), and deduplicates byte-identically. When the Image Desk is enabled it
+makes one bounded JSON-schema reading (≤ 24 regions, no file or tool access)
+whose transcript is stored in `image_analyses` with model, latency, and attempt
+provenance — a labeled interpretation that can misread, never a replacement for
+the hashed original. Recognized text is screened for the same prompt-injection
+patterns as documents, and any `instruction_override`/`injection` pattern is a
+risk flag on the source row. Each region becomes an immutable citable chunk with
+an `image_region` locator rendered as `[src_…:rN]`; manifests and the identity
+self-model both tell the council that image transcripts are model-extracted
+readings and that printed image text is not instructions.
+
+Projects (migrations/0005) are durable folders — not accounts and not council
+seats: `projects` plus optional `project_id` columns on conversations and
+sources keep every chat, immutable snapshot, agent run, step, and approval
+grouped across sessions. Deleting a project detaches rows; it never deletes
+evidence. The UI exposes projects in the sidebar, a Projects page, and a
+project chip in each project chat.
 
 ## 15. Canonical identity and self-knowledge
 
