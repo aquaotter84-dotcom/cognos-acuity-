@@ -6,7 +6,7 @@
 
 import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Plus, MessageSquare, Brain, Activity as ActivityIcon, Settings as SettingsIcon, Trash2, Search, Network, Cpu, Folder, FolderPlus, X } from 'lucide-react';
+import { Plus, MessageSquare, Brain, Activity as ActivityIcon, Settings as SettingsIcon, Trash2, Search, Network, Cpu, Folder, FolderPlus, Bot, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
 
@@ -220,6 +220,7 @@ export default function Sidebar({ onNavigate }) {
 
       <div className="p-2 border-t border-border space-y-0.5">
         {navLink('/projects', Folder, 'Projects', 'text-accent')}
+        {navLink('/autonomy', Bot, 'Autonomy', 'text-accent')}
         {navLink('/memory', Brain, 'Memory', 'text-accent')}
         {navLink('/activity', ActivityIcon, 'Activity')}
         {navLink('/system', Network, 'System')}

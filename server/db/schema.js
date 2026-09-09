@@ -504,10 +504,231 @@ CREATE TABLE IF NOT EXISTS image_analyses (
 CREATE INDEX IF NOT EXISTS image_analyses_source_idx ON image_analyses (source_id, created_date DESC);
 `;
 
+// ---------------------------------------------------------------------------
+// Phase 19 — Durable, governed autonomy: residents, goals, ticks, notes, the
+// outbox, and the append-only records that make all of it attributable.
+//
+// Design invariants carried by this schema (AUTONOMY.md):
+//   * Work is durable; authority is not. Nothing here can release an answer.
+//   * A notice is a template id plus stored fields — there is no column that
+//     could hold model-generated prose (pin.notice_deterministic).
+//   * Scopes and budgets are granted by rows, never edited (pin.goal_scope_immutable).
+//   * Every append-only log carries the ids that make an action attributable
+//     (pin.autonomy_attributable).
+// ---------------------------------------------------------------------------
+export const PHASE19_SCHEMA = `
+CREATE TABLE IF NOT EXISTS autonomy_agents (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL,
+  name                  TEXT NOT NULL,
+  slug                  TEXT NOT NULL,
+  purpose               TEXT,
+  brief                 TEXT NOT NULL DEFAULT '',
+  brief_version         INTEGER NOT NULL DEFAULT 1,
+  supersedes_id         TEXT,
+  skill_allowlist       JSONB NOT NULL DEFAULT '[]'::jsonb,
+  conversation_id       TEXT,
+  default_scope         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  default_budgets       JSONB NOT NULL DEFAULT '{}'::jsonb,
+  heartbeat_interval_ms BIGINT NOT NULL DEFAULT 900000,
+  enabled               BOOLEAN NOT NULL DEFAULT FALSE,
+  created_date          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Only the LIVE row for a slug is unique. A brief change inserts a new row
+-- chained by supersedes_id (never an edit), so a plain unique index here would
+-- make versioning impossible — and "what was this resident told when it did
+-- that?" has to stay answerable (pin.resident_brief_subordinate).
+CREATE UNIQUE INDEX IF NOT EXISTS autonomy_agents_slug_idx
+  ON autonomy_agents (workspace_id, slug) WHERE supersedes_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS autonomy_agents_version_idx
+  ON autonomy_agents (workspace_id, slug, brief_version);
+CREATE INDEX IF NOT EXISTS autonomy_agents_workspace_idx ON autonomy_agents (workspace_id, created_date DESC);
+
+CREATE TABLE IF NOT EXISTS autonomy_goals (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL,
+  agent_id              TEXT,
+  conversation_id       TEXT,
+  project_id            TEXT,
+  title                 TEXT NOT NULL,
+  objective             TEXT NOT NULL,
+  status                TEXT NOT NULL,
+  park_reason           TEXT,
+  scope                 JSONB NOT NULL DEFAULT '{}'::jsonb,
+  budget                JSONB NOT NULL DEFAULT '{}'::jsonb,
+  spent                 JSONB NOT NULL DEFAULT '{}'::jsonb,
+  checkpoint            JSONB NOT NULL DEFAULT '{}'::jsonb,
+  schedule              JSONB NOT NULL DEFAULT '{}'::jsonb,
+  next_run_at_ms        BIGINT,
+  lease_owner           TEXT,
+  lease_expires_at_ms   BIGINT,
+  started_ms            BIGINT,
+  ended_ms              BIGINT,
+  created_date          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS autonomy_goals_ws_status_idx ON autonomy_goals (workspace_id, status);
+CREATE INDEX IF NOT EXISTS autonomy_goals_due_idx ON autonomy_goals (status, next_run_at_ms);
+CREATE INDEX IF NOT EXISTS autonomy_goals_agent_idx ON autonomy_goals (agent_id, status);
+
+CREATE TABLE IF NOT EXISTS goal_events (
+  id                    TEXT PRIMARY KEY,
+  seq                   BIGSERIAL,
+  goal_id               TEXT NOT NULL,
+  agent_id              TEXT,
+  step_id               TEXT,
+  tick_id               TEXT,
+  event_type            TEXT NOT NULL,
+  from_status           TEXT,
+  to_status             TEXT,
+  detail                JSONB,
+  ts_ms                 BIGINT NOT NULL,
+  created_date          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS goal_events_seq_idx ON goal_events (seq);
+CREATE INDEX IF NOT EXISTS goal_events_goal_idx ON goal_events (goal_id, seq);
+
+CREATE TABLE IF NOT EXISTS goal_steps (
+  id                    TEXT PRIMARY KEY,
+  goal_id               TEXT NOT NULL REFERENCES autonomy_goals(id) ON DELETE RESTRICT,
+  agent_id              TEXT,
+  tick_id               TEXT,
+  ordinal               INTEGER NOT NULL,
+  skill_id              TEXT NOT NULL,
+  tier                  TEXT NOT NULL,
+  status                TEXT NOT NULL,
+  input                 JSONB NOT NULL DEFAULT '{}'::jsonb,
+  output                JSONB,
+  error_message         TEXT,
+  idempotency_key       TEXT NOT NULL,
+  started_ms            BIGINT,
+  ended_ms              BIGINT,
+  created_date          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS goal_steps_ordinal_idx ON goal_steps (goal_id, ordinal);
+CREATE UNIQUE INDEX IF NOT EXISTS goal_steps_idem_idx ON goal_steps (idempotency_key);
+
+CREATE TABLE IF NOT EXISTS goal_notes (
+  id                    TEXT PRIMARY KEY,
+  goal_id               TEXT NOT NULL REFERENCES autonomy_goals(id) ON DELETE RESTRICT,
+  agent_id              TEXT,
+  tick_id               TEXT,
+  ordinal               INTEGER NOT NULL,
+  kind                  TEXT NOT NULL,
+  body                  TEXT NOT NULL,
+  refs                  JSONB NOT NULL DEFAULT '[]'::jsonb,
+  confidence            NUMERIC,
+  supersedes_note_id    TEXT,
+  created_date          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS goal_notes_ordinal_idx ON goal_notes (goal_id, ordinal);
+CREATE INDEX IF NOT EXISTS goal_notes_goal_idx ON goal_notes (goal_id, created_date DESC);
+
+CREATE TABLE IF NOT EXISTS goal_authorizations (
+  id                    TEXT PRIMARY KEY,
+  goal_id               TEXT NOT NULL,
+  scope_sha256          TEXT NOT NULL,
+  budget_sha256         TEXT NOT NULL,
+  decision              TEXT NOT NULL,
+  reason                TEXT,
+  decided_ms            BIGINT NOT NULL,
+  expires_at_ms         BIGINT,
+  decision_source       TEXT,
+  created_date          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS goal_authorizations_goal_idx ON goal_authorizations (goal_id, decided_ms DESC);
+
+CREATE TABLE IF NOT EXISTS autonomy_outbox (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL,
+  agent_id              TEXT,
+  goal_id               TEXT,
+  tick_id               TEXT,
+  step_id               TEXT,
+  skill_id              TEXT NOT NULL,
+  effect_type           TEXT NOT NULL,
+  tier                  TEXT NOT NULL,
+  payload               JSONB NOT NULL DEFAULT '{}'::jsonb,
+  idempotency_key       TEXT NOT NULL,
+  status                TEXT NOT NULL,
+  verdict               JSONB,
+  scope_sha256          TEXT,
+  mode                  TEXT NOT NULL DEFAULT 'shadow',
+  released_ms           BIGINT,
+  receipt               JSONB,
+  error_message         TEXT,
+  created_date          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS autonomy_outbox_idem_idx ON autonomy_outbox (idempotency_key);
+CREATE INDEX IF NOT EXISTS autonomy_outbox_goal_idx ON autonomy_outbox (goal_id, created_date DESC);
+CREATE INDEX IF NOT EXISTS autonomy_outbox_status_idx ON autonomy_outbox (status, created_date DESC);
+
+CREATE TABLE IF NOT EXISTS outbox_events (
+  id                    TEXT PRIMARY KEY,
+  seq                   BIGSERIAL,
+  outbox_id             TEXT NOT NULL,
+  from_status           TEXT,
+  to_status             TEXT,
+  detail                JSONB,
+  ts_ms                 BIGINT NOT NULL,
+  created_date          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS outbox_events_seq_idx ON outbox_events (seq);
+CREATE INDEX IF NOT EXISTS outbox_events_outbox_idx ON outbox_events (outbox_id, seq);
+
+CREATE TABLE IF NOT EXISTS autonomy_notices (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL,
+  agent_id              TEXT,
+  goal_id               TEXT,
+  template_id           TEXT NOT NULL,
+  fields                JSONB NOT NULL DEFAULT '{}'::jsonb,
+  severity              TEXT NOT NULL DEFAULT 'info',
+  created_ms            BIGINT NOT NULL,
+  acked_ms              BIGINT,
+  created_date          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS autonomy_notices_ws_idx ON autonomy_notices (workspace_id, created_date DESC);
+
+CREATE TABLE IF NOT EXISTS autonomy_ticks (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT,
+  worker_id             TEXT NOT NULL,
+  started_ms            BIGINT NOT NULL,
+  ended_ms              BIGINT,
+  duration_ms           INTEGER,
+  goals_claimed         INTEGER NOT NULL DEFAULT 0,
+  steps_executed        INTEGER NOT NULL DEFAULT 0,
+  effects_staged        INTEGER NOT NULL DEFAULT 0,
+  effects_released      INTEGER NOT NULL DEFAULT 0,
+  effects_refused       INTEGER NOT NULL DEFAULT 0,
+  model_calls           INTEGER NOT NULL DEFAULT 0,
+  tokens_total          INTEGER NOT NULL DEFAULT 0,
+  cost_usd              NUMERIC,
+  detail                JSONB,
+  created_date          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS autonomy_ticks_created_idx ON autonomy_ticks (created_date DESC);
+
+-- A resident's own conversation, and the origin of every message
+-- (AUTONOMY.md §4.9.1). All nullable; no existing row changes meaning.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS agent_id        TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS goal_id         TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS note_id         TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS resident_kind   TEXT;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS origin          TEXT;
+CREATE INDEX IF NOT EXISTS messages_agent_idx ON messages (agent_id, created_date DESC);
+CREATE INDEX IF NOT EXISTS messages_goal_idx  ON messages (goal_id);
+`;
+
 export const PHASE_SCHEMAS = [
   { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
   { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
   { id: "0003", phase: 16, name: "phase16_latency_observability", sql: PHASE16_SCHEMA },
   { id: "0004", phase: 17, name: "phase17_sources_and_agents", sql: PHASE17_SCHEMA },
-  { id: "0005", phase: 18, name: "phase18_research_projects_images", sql: PHASE18_SCHEMA }
+  { id: "0005", phase: 18, name: "phase18_research_projects_images", sql: PHASE18_SCHEMA },
+  { id: "0006", phase: 19, name: "phase19_autonomy", sql: PHASE19_SCHEMA }
 ];

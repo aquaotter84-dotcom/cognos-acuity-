@@ -8,7 +8,7 @@
     "build": "vite build",
     "start": "node server/serve.js",
     "preview": "vite preview",
-    "test": "node test/voice.mjs && node test/performance.mjs && node test/sources-agent.mjs && node test/phase18.mjs && node test/identity.mjs && node test/integrity.mjs && node test/smoke.mjs",
+    "test": "node test/voice.mjs && node test/performance.mjs && node test/sources-agent.mjs && node test/phase18.mjs && node test/autonomy.mjs && node test/identity.mjs && node test/integrity.mjs && node test/smoke.mjs",
     "voice": "node test/voice.mjs",
     "performance": "node test/performance.mjs",
     "latency": "node scripts/latency-report.mjs",
@@ -20,7 +20,9 @@
     "baseline": "node test/baseline.mjs",
     "migrate": "node scripts/migrate.mjs",
     "migrations:generate": "node scripts/generate-migrations.mjs",
-    "evaluate": "node scripts/evaluate-strategies.mjs"
+    "evaluate": "node scripts/evaluate-strategies.mjs",
+    "autonomy": "node test/autonomy.mjs",
+    "seed:archivist": "node scripts/seed-archivist.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",

@@ -68,6 +68,8 @@ import { registerChatRoute } from "./routes/chat.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { registerMetaRoutes } from "./routes/meta.js";
 import { registerSourceRoutes } from "./routes/sources.js";
+import { registerAutonomyRoutes } from "./routes/autonomy.js";
+import { autonomyConfig } from "./autonomy/config.js";
 import { registerProjectRoutes } from "./routes/projects.js";
 
 const logger = createLogger("server");
@@ -146,6 +148,14 @@ app.get("/api/health", (req, res) => {
       enabled: config.agent.enabled,
       modes: config.agent.modes,
       autonomousWrites: config.agent.autonomousWrites
+    },
+    // Phase 19 — durable autonomy. Off unless an operator enables a rung.
+    autonomy: {
+      enabled: autonomyConfig().enabled,
+      defaultOff: true,
+      outboxMode: autonomyConfig().outboxMode,
+      builtTiers: autonomyConfig().builtTiers,
+      rung: autonomyConfig().rung
     },
     gate: Boolean(process.env.COGNOS_RUNTIME_SECRET),
     // Phase 14/15 subsystem state. Additive keys; nothing above changed.
@@ -253,6 +263,7 @@ app.get("/api/activity", wrap(async (req, res) => {
 registerKnowledgeRoutes(app, { wrap, db, logger });
 registerMetaRoutes(app, { wrap, db, logger, getSystemConfig });
 registerSourceRoutes(app, { wrap, db, logger });
+registerAutonomyRoutes(app, { wrap, db, logger });
 
 // --- Static frontend (self-hosted only) -------------------------------------
 // On Vercel the built SPA is served by the CDN via vercel.json rewrites, so this

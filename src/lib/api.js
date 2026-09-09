@@ -101,6 +101,38 @@ export const api = {
   /** Phase 18: user decides an awaiting_approval research plan (approve/decline). */
   decideAgentRun: (id, body) => req(`/api/agent/runs/${id}/decision`, { method: "POST", body }),
 
+  // --- Phase 19: durable autonomy (residents, goals, outbox) ---------------
+  // Every route here is either a query over stored rows or an authorization
+  // decision. None of them produces an answer: a goal's findings surface only
+  // when the user asks, through the council, through the Governor.
+  autonomyStatus: () => req("/api/autonomy/status"),
+
+  /** One row per resident — the current version of each brief. */
+  listResidents: () => req("/api/autonomy/agents"),
+  /** A resident plus every version of its brief, oldest first. */
+  getResident: (id) => req(`/api/autonomy/agents/${id}`),
+  createResident: (data) => req("/api/autonomy/agents", { method: "POST", body: data }),
+  /** Changing a brief creates a NEW version; the superseded row is kept. */
+  updateResident: (id, data) => req(`/api/autonomy/agents/${id}`, { method: "PATCH", body: data }),
+
+  listGoals: (params = {}) => req(`/api/autonomy/goals${qs(params)}`),
+  createGoal: (data) => req("/api/autonomy/goals", { method: "POST", body: data }),
+  /** goal, events, steps, notes, approvals, outbox — the whole audit trail. */
+  getGoal: (id) => req(`/api/autonomy/goals/${id}`),
+  /** THE BARRIER: authorize | decline | pause | resume | cancel. */
+  decideGoal: (id, body) => req(`/api/autonomy/goals/${id}/decision`, { method: "POST", body }),
+
+  listNotices: (params = {}) => req(`/api/autonomy/notices${qs(params)}`),
+  ackNotice: (id) => req(`/api/autonomy/notices/${id}/ack`, { method: "POST" }),
+
+  /** Staged effects plus the shadow corpus that earns the next rung. */
+  listOutbox: (params = {}) => req(`/api/autonomy/outbox${qs(params)}`),
+  decideEffect: (id, body) => req(`/api/autonomy/outbox/${id}/decision`, { method: "POST", body }),
+
+  listTicks: (params = {}) => req(`/api/autonomy/ticks${qs(params)}`),
+  /** Run one bounded slice now. No-op (frozen) when autonomy is disabled. */
+  runTick: (body = {}) => req("/api/autonomy/tick", { method: "POST", body }),
+
   // --- Phase 14: the knowledge layer (read-only) ---------------------------
   knowledgeEvents: (params = {}) => req(`/api/knowledge/events${qs(params)}`),
   knowledgeOverview: () => req("/api/knowledge/overview"),

@@ -13,6 +13,7 @@ const System = lazy(() => import('@/pages/System'));
 const Identity = lazy(() => import('@/pages/Identity'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const Projects = lazy(() => import('@/pages/Projects'));
+const Autonomy = lazy(() => import('@/pages/Autonomy'));
 
 function PageFallback() {
   return (
@@ -33,6 +34,7 @@ export default function App() {
               <Route path="/memory" element={<Memory />} />
               <Route path="/activity" element={<Activity />} />
               <Route path="/projects" element={<Projects />} />
+              <Route path="/autonomy" element={<Autonomy />} />
               <Route path="/system" element={<System />} />
               <Route path="/about" element={<Identity />} />
               <Route path="/settings" element={<Settings />} />

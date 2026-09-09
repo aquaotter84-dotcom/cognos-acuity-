@@ -48,7 +48,10 @@ export const GATED_ACTIONS = Object.freeze({
   revert_improvement: "Record the reversal of an earlier improvement row"
 });
 
-const SECRET_PATTERNS = [
+// Exported so the Action Governor (server/autonomy/actionGovernor.js) judges a
+// proposed effect against the SAME list. Two copies could drift apart, and a
+// payload that the Policy Engine would refuse must never be releasable.
+export const SECRET_PATTERNS = [
   /sk-[A-Za-z0-9]{20,}/,
   /Bearer\s+[A-Za-z0-9._-]{20,}/i,
   /api[_-]?key\s*[:=]\s*["']?[A-Za-z0-9]{20,}/i,

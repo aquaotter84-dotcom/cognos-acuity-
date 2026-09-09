@@ -18,8 +18,10 @@ try {
     const nonStatic = routes.filter(route => !route.includes('/^\\/(?!api'));
     // Phase 18 added: images ingest + byte fetch (2), project CRUD (5), and the
     // approval-gated research decision route (1).
-    assert.equal(nonStatic.length, 58);
-    if (!process.env.VERCEL) assert.equal(routes.length, 59);
+    // Phase 19 added 15: status (1), residents (4), goals (4), notices (2),
+    // outbox (2) and ticks (2).
+    assert.equal(nonStatic.length, 73);
+    if (!process.env.VERCEL) assert.equal(routes.length, 74);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",
@@ -32,7 +34,22 @@ try {
       "post:/api/projects",
       "post:/api/sources/images",
       "get:/api/sources/:id/image",
-      "post:/api/agent/runs/:id/decision"
+      "post:/api/agent/runs/:id/decision",
+      "get:/api/autonomy/status",
+      "get:/api/autonomy/agents",
+      "post:/api/autonomy/agents",
+      "get:/api/autonomy/agents/:id",
+      "patch:/api/autonomy/agents/:id",
+      "get:/api/autonomy/goals",
+      "post:/api/autonomy/goals",
+      "get:/api/autonomy/goals/:id",
+      "post:/api/autonomy/goals/:id/decision",
+      "get:/api/autonomy/notices",
+      "post:/api/autonomy/notices/:id/ack",
+      "get:/api/autonomy/outbox",
+      "post:/api/autonomy/outbox/:id/decision",
+      "get:/api/autonomy/ticks",
+      "post:/api/autonomy/tick"
     ]) assert.ok(routes.includes(route), `missing ${route}`);
   });
 

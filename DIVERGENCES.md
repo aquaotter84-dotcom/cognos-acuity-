@@ -830,3 +830,59 @@ bounds, rejects HTML leakage, and verifies durable attempt/recovery attribution
 through a complete governed turn. Retries do not create another answer path and
 all recovered candidate text still passes through the Critic and Governor before
 release.
+
+---
+
+## Phase 19 — Durable autonomy (residents, goals, tick) — BUILT, default off
+
+Autonomy in this codebase is split into **work** and **authority**, because
+mixing them is what makes other autonomous agents dangerous and what would
+break COGNOS's governance. A resident may do unbounded amounts of *work* —
+read, note, plan, search, summarise. It may never exercise *authority*: every
+effect it wants to produce is staged, judged by a model-free Action Governor,
+and released only through the outbox. The Governor does not deliberate, so
+there is no seventh seat; it checks fourteen named rules and refuses with the
+rule that fired.
+
+**Skills are code, not data.** A database table of skills would be a capability
+write — a law change in a different hat. The registry is a frozen object
+compiled from `server/skills/`, and only the per-resident `skill_allowlist` is
+data. Adding a skill is a reviewed code change that names its tier, argument
+schema, idempotency rule and kill switch.
+
+**A goal does nothing until it is authorized.** Authorization is a row carrying
+the SHA-256 of the exact scope and budget consented to. Widening either is a
+new decision, never an edit, so `pin.goal_scope_immutable` is enforceable and
+not merely stated.
+
+**Findings are evidence, not answers.** A goal's notes never reach the send
+path; a goal cannot propose a draft answer. Findings surface only when the user
+asks, through the council, through the Governor.
+
+Six defects were found by building the tests rather than by reading the code,
+and each was a guard that could not fire: a blank `COGNOS_AUTONOMY_ENABLED`
+enabled autonomy; budget keys never matched their spend keys, so no budget was
+ever exhausted; tick rows carried a null workspace, so the workspace ceiling
+could not be measured; a tick id inside the notice payload defeated effect
+deduplication; three call sites tested a now-object `config.notices` for
+`false`; and a refused step wrote no row, so an escalation attempt left no
+trace. All six are pinned by regressions.
+
+**Deployment.** The heartbeat starts only in `server/serve.js`; `server/index.js`
+never starts it, because Vercel imports that file as a serverless handler and a
+timer there would do nothing but leak. Graceful shutdown stops the heartbeat,
+gives an in-flight tick a bounded window to park and release its lease, then
+closes the HTTP server and the pool — so a redeploy is not a crash.
+
+Autonomy is **off by default** (`phase19.autonomy_default_off`). Unset means
+frozen: no goal wakes, no notice is written, no tick row is recorded. Rungs 3–6
+(Phases 20–23) are designed but unbuilt, and Rung 4 stays behind a shadow-mode
+corpus until that corpus justifies going live.
+
+**The Autonomy page.** The UI is an operator surface, not a chat surface. It
+reads stored rows and offers exactly two decisions — authorizing a goal, and
+approving/refusing/reverting a staged effect. A goal's findings appear under an
+explicit "Untrusted findings" heading, never as COGNOS speaking, and the only
+way to turn them into an answer is the "Ask COGNOS about this" turn that opens
+the resident's conversation. When autonomy is frozen the page says so first and
+disables creation, because frozen is the resting state, not a degraded one.
