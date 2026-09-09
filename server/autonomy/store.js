@@ -74,6 +74,43 @@ export function createAutonomyStore(run) {
       return rows[0] || null;
     },
 
+    /**
+     * The CURRENT version of each resident — one row per slug.
+     *
+     * list() returns every version ever written, which is right for an audit
+     * trail and wrong for a list of residents: after a brief change it shows
+     * the same resident twice, as if there were two of them. "Current" is not
+     * `supersedes_id IS NULL` — that is only ever true of the FIRST version.
+     * It means nothing supersedes this row.
+     */
+    async listCurrent(workspaceId, limit = 100) {
+      const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100));
+      return run(
+        `SELECT * FROM autonomy_agents a
+          WHERE a.workspace_id = $1
+            AND NOT EXISTS (
+              SELECT 1 FROM autonomy_agents s WHERE s.supersedes_id = a.id
+            )
+          ORDER BY a.created_date DESC
+          LIMIT $2`,
+        [workspaceId, safeLimit]
+      );
+    },
+
+    /** Every version of one resident's brief, oldest first. */
+    async history(id, limit = 100) {
+      const row = await run(`SELECT workspace_id, slug FROM autonomy_agents WHERE id = $1`, [id]);
+      if (!row[0]) return [];
+      const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100));
+      return run(
+        `SELECT * FROM autonomy_agents
+          WHERE workspace_id = $1 AND slug = $2
+          ORDER BY brief_version ASC
+          LIMIT $3`,
+        [row[0].workspace_id, row[0].slug, safeLimit]
+      );
+    },
+
     async list(workspaceId, limit = 100) {
       const safeLimit = Math.max(1, Math.min(200, Number(limit) || 100));
       return run(

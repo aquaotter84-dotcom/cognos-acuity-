@@ -18,10 +18,10 @@ try {
     const nonStatic = routes.filter(route => !route.includes('/^\\/(?!api'));
     // Phase 18 added: images ingest + byte fetch (2), project CRUD (5), and the
     // approval-gated research decision route (1).
-    // Phase 19 added 14: status (1), residents (3), goals (4), notices (2),
+    // Phase 19 added 15: status (1), residents (4), goals (4), notices (2),
     // outbox (2) and ticks (2).
-    assert.equal(nonStatic.length, 72);
-    if (!process.env.VERCEL) assert.equal(routes.length, 73);
+    assert.equal(nonStatic.length, 73);
+    if (!process.env.VERCEL) assert.equal(routes.length, 74);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",
@@ -38,6 +38,7 @@ try {
       "get:/api/autonomy/status",
       "get:/api/autonomy/agents",
       "post:/api/autonomy/agents",
+      "get:/api/autonomy/agents/:id",
       "patch:/api/autonomy/agents/:id",
       "get:/api/autonomy/goals",
       "post:/api/autonomy/goals",

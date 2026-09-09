@@ -879,7 +879,10 @@ frozen: no goal wakes, no notice is written, no tick row is recorded. Rungs 3–
 (Phases 20–23) are designed but unbuilt, and Rung 4 stays behind a shadow-mode
 corpus until that corpus justifies going live.
 
-**Divergence from the original design:** the Autonomy page in the UI is not
-built. The routes and API surface exist and are covered by tests; the page
-itself is deferred so that Phase 19 can be reviewed as a mechanism before any
-of it is made visible.
+**The Autonomy page.** The UI is an operator surface, not a chat surface. It
+reads stored rows and offers exactly two decisions — authorizing a goal, and
+approving/refusing/reverting a staged effect. A goal's findings appear under an
+explicit "Untrusted findings" heading, never as COGNOS speaking, and the only
+way to turn them into an answer is the "Ask COGNOS about this" turn that opens
+the resident's conversation. When autonomy is frozen the page says so first and
+disables creation, because frozen is the resting state, not a degraded one.

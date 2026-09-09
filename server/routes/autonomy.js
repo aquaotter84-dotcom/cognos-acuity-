@@ -65,9 +65,10 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
   }));
 
   // --- Residents ------------------------------------------------------------
+  /** One row per resident: the CURRENT version of each brief. */
   app.get("/api/autonomy/agents", wrap(async (req, res) => {
     const ws = await db.Workspace.ensureDefault();
-    const rows = await db.AutonomyAgent.list(ws.id, 100);
+    const rows = await db.AutonomyAgent.listCurrent(ws.id, 100);
     res.json(rows.map(a => ({
       id: a.id, name: a.name, slug: a.slug, purpose: a.purpose,
       brief: a.brief, brief_version: a.brief_version, supersedes_id: a.supersedes_id,
@@ -76,6 +77,15 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       heartbeat_interval_ms: Number(a.heartbeat_interval_ms),
       enabled: a.enabled === true, created_date: a.created_date
     })));
+  }));
+
+  app.get("/api/autonomy/agents/:id", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const agent = await db.AutonomyAgent.get(req.params.id);
+    if (!agent || agent.workspace_id !== ws.id) {
+      return res.status(404).json({ error: "Resident not found in this workspace" });
+    }
+    res.json({ agent, history: await db.AutonomyAgent.history(agent.id) });
   }));
 
   app.post("/api/autonomy/agents", wrap(async (req, res) => {

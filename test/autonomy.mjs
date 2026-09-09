@@ -467,6 +467,39 @@ try {
     assert.equal(resumed.status, 409, "a declined goal cannot be silently resumed");
   });
 
+  await test("a resident is listed once, however many versions its brief has", async () => {
+    const made = await h.raw("/api/autonomy/agents", {
+      method: "POST",
+      body: { name: "Versioned List", slug: "versioned-list", purpose: "p", brief: "v1", skill_allowlist: [] }
+    });
+    // Two more brief changes through the API, exactly as the page does it.
+    const second = await h.raw(`/api/autonomy/agents/${made.json.id}`, { method: "PATCH", body: { brief: "v2" } });
+    const third = await h.raw(`/api/autonomy/agents/${second.json.agent.id}`, { method: "PATCH", body: { brief: "v3" } });
+    assert.equal(third.json.agent.brief_version, 3);
+
+    // Three rows exist in the table, but they are one resident.
+    const rows = await h.sql(`SELECT COUNT(*)::int AS n FROM autonomy_agents WHERE slug=$1`, ["versioned-list"]);
+    assert.equal(rows[0].n, 3, "three version rows were written");
+
+    const listed = await h.raw("/api/autonomy/agents");
+    const matches = listed.json.filter(r => r.slug === "versioned-list");
+    assert.equal(matches.length, 1, `the list shows v-rows as separate residents: ${matches.length}`);
+    assert.equal(matches[0].brief, "v3", "and the row it shows is the current one");
+
+    // The trail is still reachable, so "what was it told when it did that?"
+    // is answerable from the API, not only from SQL.
+    const detail = await h.raw(`/api/autonomy/agents/${matches[0].id}`);
+    assert.equal(detail.status, 200);
+    assert.equal(detail.json.history.length, 3);
+    assert.deepEqual(detail.json.history.map(v => v.brief), ["v1", "v2", "v3"], "oldest first");
+
+    // A superseded row is still fetchable on its own.
+    const old = await h.sql(`SELECT id FROM autonomy_agents WHERE slug=$1 AND brief_version=1`, ["versioned-list"]);
+    const oldDetail = await h.raw(`/api/autonomy/agents/${old[0].id}`);
+    assert.equal(oldDetail.status, 200, "a superseded brief is still readable");
+    assert.equal(oldDetail.json.agent.brief, "v1");
+  });
+
   await test("a tick never overlaps another: the lease is a single compare-and-swap", async () => {
     const agent = (await h.raw("/api/autonomy/agents")).json[0];
     const made = await h.raw("/api/autonomy/goals", {

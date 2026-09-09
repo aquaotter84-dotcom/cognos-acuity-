@@ -40,8 +40,8 @@ by `server/serve.js`; and graceful shutdown that stops the heartbeat, lets an
 in-flight tick park, then closes the pool.
 
 **What is deliberately not built:** T3–T5, the webhook adapter, sub-agents, the
-promotion path, inbound messaging, and the Autonomy page in the UI. Those are
-Phases 20–23 and each one needs its own evidence before it goes live.
+promotion path, and inbound messaging. Those are Phases 20–23 and each one
+needs its own evidence before it goes live.
 
 **Autonomy is off by default.** `COGNOS_AUTONOMY_ENABLED` unset means the loop is
 frozen: no goal wakes, no notice is written, no tick row is recorded.
@@ -50,6 +50,11 @@ frozen: no goal wakes, no notice is written, no tick row is recorded.
 
 Building the tests found six real bugs that reading the code did not. Each one is
 the same shape: a safety mechanism that looked present but could not fire.
+
+Building the UI found one more: `GET /api/autonomy/agents` listed every brief
+version, so after a brief change the page showed the same resident twice, as if
+there were two of them. "Current" is not `supersedes_id IS NULL` — that is only
+ever true of the first version; it means nothing supersedes the row.
 
 | Defect | Why it was invisible |
 |---|---|
@@ -60,8 +65,8 @@ the same shape: a safety mechanism that looked present but could not fire.
 | `config.notices` became an object, but three call sites still tested it for `false` — so `NOTICES_DISABLED` could never fire | the shape change was in one file; the readers were in three |
 | A refused step returned before writing anything, so an escalation attempt left no row | the refusal was real; only the evidence of it was missing |
 
-Six failures, one lesson: **a guard that cannot fire is not a guard.** Every one
-of these is now pinned by a test that would fail if it regressed.
+Seven failures, one lesson: **a guard that cannot fire is not a guard.** Every
+one of these is now pinned by a test that would fail if it regressed.
 
 ---
 
@@ -1364,7 +1369,7 @@ One migration, one law bump, one test file, one identity bump, one
 
 | Phase | Delivers | Enables |
 |---|---|---|
-| **19** | **BUILT.** Residents, goals, tick + lease, notes, budgets, outbox for T0–T2, Action Governor, heartbeat + graceful shutdown, laws 1.4.0, `test/autonomy.mjs` (35). Routes and API are done; the **Autonomy page UI is not**. | **Rung 1–2**, default off |
+| **19** | **BUILT.** Residents, goals, tick + lease, notes, budgets, outbox for T0–T2, Action Governor, heartbeat + graceful shutdown, the Autonomy page, laws 1.4.0, `test/autonomy.mjs` (40) | **Rung 1–2**, default off |
 | **20** | Sub-agents, promotion path, Goal Card in chat, T3 evidence fetch, `[goal_…:nN]` locators + Governor extension | **Rung 3**, default off |
 | **21** | `webhook.post` (§4.7.1) + delivery adapter, destination allowlists, outbound-SSRF gate, `secret_ref` signing, Action Governor in **shadow**, receipts, reversal | shadow corpus; still not live |
 | **22** | Outbox → `live` based on the shadow evidence record; T5 with per-effect human approval | **Rung 4–5**, default off, separate security review |
