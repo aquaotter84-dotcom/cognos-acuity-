@@ -1077,6 +1077,73 @@ try {
       "and how much of it was used");
   });
 
+  await test("a resident can remember across wake-ups — its own notes reach the next prompt", async () => {
+    // THE invariant behind long-horizon work. A resident has no memory of its
+    // own: the tick loads its recent notes into the prompt, and that is the
+    // only reason a monitor can compare "now" against "last time". If this
+    // breaks, every resident is amnesiac and the heartbeat is pointless.
+    const agent = await makeResident("worker-k", ["belief.search", "note.append"]);
+    const goalId = await makeGoal(agent.id, "Remembers");
+    await onlyThisGoal(goalId);
+
+    const { default: db } = await import("../server/db.js");
+    await db.GoalNote.append({
+      goal_id: goalId, agent_id: agent.id,
+      kind: "evidence_ref",
+      body: "WATERMARK: 'closing date March 1' conf 0.60 support 1 contra 0"
+    });
+
+    h.model.state.autonomyStep = { thought: "look", skill: "belief.search", args: { query: "", limit: 20 }, done: false };
+    await h.raw("/api/autonomy/tick", { method: "POST" });
+
+    // Scope to THIS wake-up: h.model.requests accumulates the whole run, and
+    // earlier tests legitimately prompted with "(none yet)".
+    const autonomyRequests = h.model.requests
+      .map(r => JSON.stringify(r.body ?? r))
+      .filter(text => /bounded autonomous worker/.test(text));
+    assert.ok(autonomyRequests.length > 0, "the bounded-worker prompt was used");
+    const prompt = autonomyRequests[autonomyRequests.length - 1];
+    assert.match(prompt, /YOUR NOTES SO FAR/, "the prompt has a notes section");
+    assert.match(prompt, /WATERMARK/, "and the note written last time is in it");
+    assert.match(prompt, /evidence_ref/, "with its type, so the resident can tell kinds apart");
+    assert.equal(/\(none yet\)/.test(prompt), false, "the empty-notes placeholder is gone");
+  });
+
+  await test("belief.search exposes the fields that make drift observable", async () => {
+    // A monitor that can see what COGNOS believes but not whether it moved is
+    // not a monitor. Confidence, support/contradiction counts and the
+    // confirmation timestamps are what turn a belief set into a time series.
+    const { default: db } = await import("../server/db.js");
+    const ws = await db.Workspace.ensureDefault();
+    const { searchBeliefs } = await import("../server/skills/beliefSearch.js");
+
+    await db.query(
+      `INSERT INTO beliefs (id, workspace_id, statement, statement_key, status, hypothesis,
+         confidence, evidence_level, volatility, support_count, contradict_count,
+         first_seen_ms, last_confirmed_ms, created_date, updated_date)
+       VALUES ($1,$2,$3,$4,'active',false,$5,'inferred','medium',$6,$7,$8,$9,now(),now())`,
+      ["blf_drift_test", ws.id, "The closing date is March 1", "closing-date-march-1",
+       0.6, 2, 1, 1_700_000_000_000, 1_700_000_500_000]
+    );
+
+    const result = await searchBeliefs({ db, goal: { workspace_id: ws.id }, args: { query: "closing", limit: 5 } });
+    assert.equal(result.ok, true);
+    assert.equal(result.output.count, 1);
+    const belief = result.output.beliefs[0];
+    for (const field of ["id", "statement", "confidence", "evidence_level", "hypothesis",
+      "supportCount", "contradictCount", "firstSeenMs", "lastConfirmedMs"]) {
+      assert.ok(belief[field] !== undefined, `belief.search must expose ${field}`);
+    }
+    assert.equal(belief.confidence, 0.6);
+    assert.equal(belief.supportCount, 2);
+    assert.equal(belief.contradictCount, 1);
+    assert.equal(belief.lastConfirmedMs, 1_700_000_500_000);
+
+    // Still read-only: it takes no write path and returns no content beyond
+    // what a resident is allowed to see.
+    assert.equal(Object.keys(belief).includes("lineage"), false);
+  });
+
   await test("the model is told it is bounded, and cannot widen scope through its output", async () => {
     const agent = await makeResident("worker-g", ["note.append"]);
     const goalId = await makeGoal(agent.id, "Prompt check");

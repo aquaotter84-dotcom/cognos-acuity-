@@ -25,6 +25,46 @@ options, the option is gone and the chosen path is specified.
 
 ---
 
+## The first resident — decided
+
+**The Archivist.** It records how COGNOS's beliefs change over time.
+
+Of the candidates, it is the only one whose job is *meaningless as a one-shot*.
+If a resident's work can be done in a single pass, you do not want a resident —
+you want a question. Persistence is the only thing a resident buys you, so the
+first one should be the job that only makes sense across wake-ups.
+
+**Capabilities: two skills.** `belief.search` and `note.append`. It can look at
+the belief store and write down what it saw. It cannot read sources, cannot
+reach the network, cannot promote anything into memory, and cannot notify you.
+The narrow allowlist is the point — a resident is a job with exactly the
+permissions that job needs, not a general agent with a personality.
+
+**How it remembers.** A resident has no memory of its own. The tick loads its
+recent notes into the prompt (`YOUR NOTES SO FAR`), so the Archivist compares
+the current belief set against the watermark it wrote last time. That is the
+whole mechanism, and it is pinned by a test: if the notes stop reaching the
+prompt, every resident is amnesiac and the heartbeat is pointless.
+
+**Its brief says silence is correct.** A monitor that reports "still nothing"
+every hour is noise, not reporting. It appends a finding only when something
+moved, and a watermark after each look.
+
+Seed it with `npm run seed:archivist`. The goal is created
+**awaiting_authorization** on purpose — authorizing is the operator's decision,
+not a seed script's.
+
+Two things the Archivist immediately revealed:
+
+- `belief.search` returned no timestamps, so a monitor could see what COGNOS
+  believed but not whether anything had moved. It now returns confidence,
+  support and contradiction counts, and both timestamps.
+- A resident cannot read source *content*, only the manifest. Any resident that
+  needs to compare what documents actually say will need a chunk-reading skill
+  in Phase 20.
+
+---
+
 ## Status — Phase 19 is built
 
 This document is the design. As of this revision, Phase 19 of it is **implemented

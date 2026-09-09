@@ -21,7 +21,8 @@
     "migrate": "node scripts/migrate.mjs",
     "migrations:generate": "node scripts/generate-migrations.mjs",
     "evaluate": "node scripts/evaluate-strategies.mjs",
-    "autonomy": "node test/autonomy.mjs"
+    "autonomy": "node test/autonomy.mjs",
+    "seed:archivist": "node scripts/seed-archivist.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",
