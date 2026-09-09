@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Plus, MessageSquare, Brain, Activity as ActivityIcon, Settings as SettingsIcon, Trash2, Search, Network } from 'lucide-react';
+import { Plus, MessageSquare, Brain, Activity as ActivityIcon, Settings as SettingsIcon, Trash2, Search, Network, Cpu } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
 
@@ -106,6 +106,7 @@ export default function Sidebar({ onNavigate }) {
         {navLink('/memory', Brain, 'Memory', 'text-accent')}
         {navLink('/activity', ActivityIcon, 'Activity')}
         {navLink('/system', Network, 'System')}
+        {navLink('/about', Cpu, 'About COGNOS', 'text-primary')}
         {navLink('/settings', SettingsIcon, 'Settings', 'text-muted-foreground')}
       </div>
     </div>

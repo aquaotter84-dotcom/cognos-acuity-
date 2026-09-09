@@ -88,6 +88,17 @@ export function createRunRecorder({
   let knowledge = null;
   let ledgerEvents = 0;
   let result = null;
+  let performance = {};
+
+  function mergePerformance(base, patch) {
+    const out = { ...(base || {}) };
+    for (const [key, value] of Object.entries(patch || {})) {
+      out[key] = value && typeof value === "object" && !Array.isArray(value)
+        ? mergePerformance(out[key], value)
+        : value;
+    }
+    return out;
+  }
 
   function touchStage(stage, patch = {}) {
     if (!stage) return null;
@@ -169,7 +180,13 @@ export function createRunRecorder({
         cost_usd: priced.usd,
         error_class: status === "success" ? null : classifyFailure(obs),
         error_message: obs.errorMessage ? String(obs.errorMessage).slice(0, 500) : null,
+        request_id: obs.requestId ? String(obs.requestId).slice(0, 80) : null,
         attempt: int(obs.attempt, 1),
+        response_headers_ms: obs.responseHeadersMs == null ? null : int(obs.responseHeadersMs, null),
+        response_decode_ms: obs.responseDecodeMs == null ? null : int(obs.responseDecodeMs, null),
+        prompt_cached_tokens: obs.promptCachedTokens == null ? null : int(obs.promptCachedTokens, null),
+        requested_service_tier: obs.requestedServiceTier ? String(obs.requestedServiceTier).slice(0, 40) : null,
+        service_tier: obs.serviceTier ? String(obs.serviceTier).slice(0, 40) : null,
         observed_at: Date.now()
       };
       modelCalls.push(call);
@@ -193,9 +210,24 @@ export function createRunRecorder({
           error_class: call.error_class,
           message: call.error_message,
           latency_ms: call.latency_ms,
+          request_id: call.request_id,
+          attempt: call.attempt,
           recovered: false,
           at: call.observed_at
         });
+      } else if (int(obs.recoveredFromAttempts, 0) > 0) {
+        // A later physical attempt succeeded. Preserve every failed attempt,
+        // but mark the failures this same logical call recovered from so the
+        // run is not mistaken for either a clean call or an unresolved outage.
+        let remaining = int(obs.recoveredFromAttempts, 0);
+        for (let i = failures.length - 1; i >= 0 && remaining > 0; i--) {
+          const failure = failures[i];
+          if (failure.recovered || failure.request_id !== call.request_id) continue;
+          failure.recovered = true;
+          failure.recovered_at = call.observed_at;
+          failure.recovered_by_attempt = call.attempt;
+          remaining--;
+        }
       }
       touchStage(stage);
       return call;
@@ -243,6 +275,9 @@ export function createRunRecorder({
     setKnowledge(detail) { if (enabled) knowledge = detail; },
     setResult(r) { if (enabled) result = r; },
     setSelection(sel) { if (enabled && sel) selection = sel; },
+    setPerformance(detail) {
+      if (enabled && detail) performance = mergePerformance(performance, detail);
+    },
 
     /** The record, without touching the database. */
     snapshot() {
@@ -310,6 +345,7 @@ export function createRunRecorder({
         complexity: result?.complexity ?? null,
         response_chars: result?.responseChars ?? null,
         error_message: null,
+        performance,
         _calls: modelCalls
       };
     },
@@ -340,7 +376,8 @@ export function createRunRecorder({
         failureCount: s.failure_count,
         retries: s.retries,
         ledgerEvents: s.ledger_events,
-        adaptiveMode: s.adaptive?.mode ?? "observe"
+        adaptiveMode: s.adaptive?.mode ?? "observe",
+        performance: s.performance || null
       };
     },
 

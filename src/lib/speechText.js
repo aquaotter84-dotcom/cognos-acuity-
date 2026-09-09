@@ -2,6 +2,7 @@
 export function markdownToSpeechText(markdown) {
   return String(markdown || '')
     .replace(/```[\s\S]*?```/g, ' Code block omitted from speech. ')
+    .replace(/\[src_[a-z0-9]+(?::[^\]]+)?\]/gi, '')
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/https?:\/\/\S+/gi, ' link ')

@@ -38,7 +38,8 @@ export default function CouncilTrace({ council }) {
     classification, plan, subTasks, critic, revisions, governor, modelUsed, latencyMs,
     memoriesUsed, webSearch, stageTimings,
     // Phase 14 — the knowledge layer; Phase 15 — the run's telemetry record.
-    coherence, knowledge, telemetry, strategy, runId
+    coherence, knowledge, telemetry, strategy, runId,
+    agent, sources, sourceEvidence
   } = council || {};
   if (!classification && !plan && !critic && !webSearch && !stageTimings) return null;
   const hasKnowledgeSection = Boolean(coherence || knowledge || telemetry || strategy || runId);
@@ -48,7 +49,9 @@ export default function CouncilTrace({ council }) {
     classification?.task_type,
     classification?.complexity,
     plan === 'decomposed' ? 'decomposed' : 'direct',
-    webSearch ? 'web search' : null
+    webSearch ? 'web search' : null,
+    sources?.length ? `${sources.length} source${sources.length === 1 ? '' : 's'}` : null,
+    agent?.mode && agent.mode !== 'off' ? `agent ${agent.mode.replace('_', ' ')}` : null
   ].filter(Boolean).join(' • ');
 
   return (
@@ -102,6 +105,38 @@ export default function CouncilTrace({ council }) {
               })}
             </Section>
           )}
+          {(agent?.mode && agent.mode !== 'off') && (
+            <Section title="Bounded agent">
+              <Field label="mode" value={agent.mode.replace('_', ' ')} />
+              <Field label="status" value={agent.status} />
+              <Field label="writes" value={agent.autonomousWrites ? 'enabled' : 'none'} />
+              {(agent.steps || []).map(step => (
+                <div key={step.id || step.ordinal} className="flex gap-2 text-muted-foreground/80">
+                  <span className={step.status === 'completed' ? 'text-green-400' : step.status === 'failed' ? 'text-red-400' : 'text-muted-foreground'}>{step.status}</span>
+                  <span>{step.tool}</span>
+                  {step.error && <span className="truncate">— {step.error}</span>}
+                </div>
+              ))}
+              {agent.runId && <Field label="agent run" value={agent.runId} />}
+            </Section>
+          )}
+
+          {Array.isArray(sources) && sources.length > 0 && (
+            <Section title={`Sources (${sources.length})`}>
+              {sources.map(source => (
+                <div key={source.id} className="rounded-md border border-border/60 p-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-foreground/80 truncate">{source.name}</span>
+                    <span className="text-[9px] uppercase text-muted-foreground ml-auto">{source.kind}</span>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground/70 truncate">{source.id}{source.url ? ` · ${source.url}` : ''}</div>
+                  {source.riskFlags?.length > 0 && <div className="text-[10px] text-amber-500">untrusted-instruction flags: {source.riskFlags.join(', ')}</div>}
+                </div>
+              ))}
+              <Field label="evidence" value={`${sourceEvidence?.chunksIncluded || 0} cited chunk(s), ${sourceEvidence?.charactersIncluded || 0} characters`} />
+            </Section>
+          )}
+
           {classification && (
             <Section title="Observer">
               <Field label="Task" value={classification.task_type} />
@@ -186,7 +221,7 @@ export default function CouncilTrace({ council }) {
           {stageTimings && typeof stageTimings === 'object' && Object.keys(stageTimings).length > 0 && (
             <Section title="Timing">
               {(() => {
-                const order = ['contextAssembly', 'observer', 'webSearch', 'strategist', 'specialist', 'synthesizer', 'critic', 'governor', 'memoryExtraction', 'auditLog'];
+                const order = ['agentPrepare', 'contextAssembly', 'observer', 'webSearch', 'strategist', 'specialist', 'synthesizer', 'critic', 'governor', 'memoryExtraction', 'auditLog'];
                 const entries = Object.entries(stageTimings).sort((a, b) => {
                   const ia = order.indexOf(a[0]); const ib = order.indexOf(b[0]);
                   return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);

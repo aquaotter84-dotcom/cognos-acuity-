@@ -7,7 +7,8 @@
 // Voice dictation (Web Speech API) is browser-native and is kept.
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Square, Mic, MicOff } from 'lucide-react';
+import { Send, Square, Mic, MicOff, FileText, Link as LinkIcon, X } from 'lucide-react';
+import SourceComposer from '@/components/chat/SourceComposer';
 
 function useSpeechRecognition(onFinal) {
   const [listening, setListening] = useState(false);
@@ -40,7 +41,17 @@ function useSpeechRecognition(onFinal) {
   return { supported: Boolean(SR), listening, interim, start, stop };
 }
 
-export default function ChatInput({ onSend, disabled, isProcessing, onStop }) {
+export default function ChatInput({
+  onSend,
+  disabled,
+  isProcessing,
+  onStop,
+  conversationId,
+  sources = [],
+  onSourcesChange = () => {},
+  agentMode = 'off',
+  onAgentModeChange = () => {}
+}) {
   const [text, setText] = useState('');
   const textareaRef = useRef(null);
   const { supported: micSupported, listening, interim, start, stop } = useSpeechRecognition(
@@ -51,7 +62,7 @@ export default function ChatInput({ onSend, disabled, isProcessing, onStop }) {
   const handleSend = () => {
     const trimmed = text.trim();
     if (!trimmed || disabled) return;
-    onSend(trimmed);
+    onSend(trimmed, { sources, agentMode });
     setText('');
   };
 
@@ -75,8 +86,34 @@ export default function ChatInput({ onSend, disabled, isProcessing, onStop }) {
       className="border-t border-border bg-background/95 backdrop-blur p-3 md:p-4"
       style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.75rem)' }}
     >
-      <div className="max-w-3xl mx-auto bg-card border border-border rounded-2xl p-2 focus-within:border-primary/50 transition-colors">
+      <div className="relative max-w-3xl mx-auto bg-card border border-border rounded-2xl p-2 focus-within:border-primary/50 transition-colors">
+        {sources.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 px-1 pb-2">
+            {sources.map(source => (
+              <span key={source.id} className="inline-flex items-center gap-1 max-w-[220px] rounded-md bg-primary/10 text-primary px-2 py-1 text-[10px]">
+                {source.kind === 'link' ? <LinkIcon className="w-3 h-3 shrink-0" /> : <FileText className="w-3 h-3 shrink-0" />}
+                <span className="truncate">{source.name}</span>
+                <button
+                  type="button"
+                  onClick={() => onSourcesChange(sources.filter(item => item.id !== source.id))}
+                  className="hover:text-destructive"
+                  aria-label={`Remove ${source.name}`}
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="flex items-end gap-2">
+          <SourceComposer
+            conversationId={conversationId}
+            disabled={disabled}
+            sources={sources}
+            onSourcesChange={onSourcesChange}
+            agentMode={agentMode}
+            onAgentModeChange={onAgentModeChange}
+          />
           {micSupported && (
             <button
               onClick={() => (listening ? stop() : start())}

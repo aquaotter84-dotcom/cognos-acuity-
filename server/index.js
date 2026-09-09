@@ -7,6 +7,7 @@
 //
 // Routes:
 //   GET  /api/health                       liveness + config visibility (no secrets)
+//   GET  /api/identity                     canonical identity, architecture, capabilities, limits
 //   GET  /api/workspace                    the single default workspace (lazily created)
 //   PATCH/api/workspace                    edit name/instructions
 //   GET  /api/conversations                thread list for the sidebar
@@ -44,6 +45,13 @@
 //   GET  /api/meta/evaluations             offline harness results
 //   GET  /api/meta/rates                   the cost rate table
 //
+// Phase 17 (Governed Sources + bounded agent provenance):
+//   GET/POST /api/sources/*              immutable document/link evidence
+//   GET      /api/agent/tools             bounded capability declaration
+//   GET      /api/agent/runs*             attributable run/step/event records
+// Agent execution itself remains inside POST /api/chat; there is no second
+// answer route and no autonomous write endpoint.
+//
 // Access gate: only active when COGNOS_RUNTIME_SECRET is set. No gate otherwise.
 
 import express from "express";
@@ -51,6 +59,7 @@ import cookieParser from "cookie-parser";
 import db from "./db.js";
 import { isConfigured } from "./db.js";
 import { getSystemConfig } from "./config.js";
+import { describeIdentity, IDENTITY_VERSION } from "./identity.js";
 import { createLogger } from "./shared/logging.js";
 import { LAWS, LAW_LAYER_VERSION } from "./council/laws.js";
 import { CANONICAL_STRATEGY_ID } from "./meta/strategies.js";
@@ -58,6 +67,7 @@ import { resolveAdaptiveMode } from "./meta/adaptive.js";
 import { registerChatRoute } from "./routes/chat.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { registerMetaRoutes } from "./routes/meta.js";
+import { registerSourceRoutes } from "./routes/sources.js";
 
 const logger = createLogger("server");
 export const app = express();
@@ -65,6 +75,9 @@ export const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 app.disable("x-powered-by");
+// COGNOS query parameters are flat scalars. The simple parser avoids nested
+// object construction entirely and keeps query parsing outside `qs`.
+app.set("query parser", "simple");
 
 // --- Optional access gate ---------------------------------------------------
 // Activates ONLY when COGNOS_RUNTIME_SECRET is set. It is a cookie check, not an
@@ -107,9 +120,18 @@ app.get("/api/health", (req, res) => {
     ok: true,
     model: config.models.primary,
     fastModel: config.models.memory,
+    modelRequestPolicy: config.models.requestPolicy,
     databaseConfigured: isConfigured(),
     searchProvider: config.search.enabled ? config.search.provider : "disabled",
     modelKeyConfigured: Boolean(process.env.BLUESMINDS_API_KEY || process.env.OPENAI_API_KEY),
+    llmServiceTier: process.env.COGNOS_LLM_SERVICE_TIER || "provider-default",
+    promptCacheKeyConfigured: Boolean(process.env.COGNOS_PROMPT_CACHE_KEY),
+    sources: config.sources.enabled,
+    agent: {
+      enabled: config.agent.enabled,
+      modes: config.agent.modes,
+      autonomousWrites: config.agent.autonomousWrites
+    },
     gate: Boolean(process.env.COGNOS_RUNTIME_SECRET),
     // Phase 14/15 subsystem state. Additive keys; nothing above changed.
     ledger: config.knowledge.ledgerEnabled,
@@ -119,8 +141,15 @@ app.get("/api/health", (req, res) => {
     adaptiveModeForced: adaptive.forced,
     strategy: CANONICAL_STRATEGY_ID,
     laws: LAWS.length,
-    lawLayerVersion: LAW_LAYER_VERSION
+    lawLayerVersion: LAW_LAYER_VERSION,
+    identityVersion: IDENTITY_VERSION
   });
+});
+
+// Canonical self-description. This is structured transparency data, not a
+// conversational response and not a second answer path.
+app.get("/api/identity", (req, res) => {
+  res.json(describeIdentity(getSystemConfig(), { databaseConfigured: isConfigured() }));
 });
 
 // --- Workspace ---------------------------------------------------------------
@@ -200,6 +229,7 @@ app.get("/api/activity", wrap(async (req, res) => {
 // auditable without mixing domain query implementations into the chat route.
 registerKnowledgeRoutes(app, { wrap, db, logger });
 registerMetaRoutes(app, { wrap, db, logger, getSystemConfig });
+registerSourceRoutes(app, { wrap, db, logger });
 
 // --- Static frontend (self-hosted only) -------------------------------------
 // On Vercel the built SPA is served by the CDN via vercel.json rewrites, so this

@@ -27,14 +27,14 @@ export const synthesizerAgent = defineAgent({
       // score — the revision prompt says so, and the refusal text is quoted
       // as findings instead of a 1-10 score.
       const isGovernorRevision = critique.source === "governor";
-      const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, isGovernorRevision ? GOV_REVISE_BASE : REVISE_BASE, content.style, content.councilRecord);
+      const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, isGovernorRevision ? GOV_REVISE_BASE : REVISE_BASE, content.style, content.councilRecord, content.sourceContext);
       const evalLine = isGovernorRevision
         ? `Governor refusal — deterministic audit findings:\n${critique.reasoning}`
         : `Critic evaluation (score ${critique.score}/10): ${critique.reasoning}`;
       const chatMessages = [
         { role: "system", content: systemPrompt },
         ...history.map(msg => ({ role: msg.role, content: msg.content })),
-        { role: "user", content: `Original request:\n${userMessage}\n\nPrevious response:\n${responseText}\n\n${evalLine}\n\nWrite the revised response:` }
+        { role: "user", content: `Original request:\n${userMessage}\n\nPrevious response:\n${responseText}\n\n${evalLine}${content.sourceContext ? `\n\n${content.sourceContext}` : ""}\n\nWrite the revised response:` }
       ];
       const revisedText = await callLLM(ctx, { model: ctx.config.models.primary, messages: chatMessages });
       return { ...content, responseText: revisedText, modelUsed: ctx.config.models.primary };
@@ -50,11 +50,11 @@ export const synthesizerAgent = defineAgent({
       .map((o, i) => `### Sub-task ${i + 1}: ${o.description || o.agent}\n${o.output || "(no output)"}`)
       .join("\n\n");
 
-    const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, SYNTH_BASE, content.style, content.councilRecord);
+    const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, SYNTH_BASE, content.style, content.councilRecord, content.sourceContext);
     const chatMessages = [
       { role: "system", content: systemPrompt },
       ...history.map(msg => ({ role: msg.role, content: msg.content })),
-      { role: "user", content: `Original request:\n${userMessage}\n\nSpecialist outputs:\n${specialistBrief}` }
+      { role: "user", content: `Original request:\n${userMessage}\n\nSpecialist outputs:\n${specialistBrief}${content.sourceContext ? `\n\n${content.sourceContext}` : ""}` }
     ];
     const responseText = await callLLM(ctx, { model: ctx.config.models.primary, messages: chatMessages });
     return {

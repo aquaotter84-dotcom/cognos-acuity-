@@ -6,7 +6,7 @@
  * server/db/schema.js (PHASE_SCHEMAS).
  *
  * The running server applies the same statements lazily at boot (server/db.js
- * concatenates PHASE14_SCHEMA + PHASE15_SCHEMA onto the base SCHEMA), so these
+ * concatenates every additive PHASE schema onto the base SCHEMA), so these
  * files exist for operators who want the DDL in reviewable, versioned form —
  * not as a second schema definition. Regenerate after any schema change:
  *

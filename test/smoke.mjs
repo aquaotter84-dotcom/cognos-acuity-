@@ -85,11 +85,12 @@ const health = await h.raw("/api/health");
 out(`\n\u2500\u2500 0. the server boots and the existing surface still answers`);
 check("GET /api/health is fast", health.status === 200 && health.ms < 2000, `${health.status} in ${health.ms}ms`);
 check(
-  "health reports the Phase 14/15 subsystems",
-  health.json.ledger === true && health.json.telemetry === true && health.json.adaptiveMode === "observe",
+  "health reports the governed subsystems",
+  health.json.ledger === true && health.json.telemetry === true && health.json.adaptiveMode === "observe" && health.json.sources === true && health.json.agent?.autonomousWrites === false,
   JSON.stringify({
     ledger: health.json.ledger, coherence: health.json.coherence, telemetry: health.json.telemetry,
     adaptiveMode: health.json.adaptiveMode, strategy: health.json.strategy,
+    sources: health.json.sources, agent: health.json.agent,
     laws: health.json.laws, lawLayerVersion: health.json.lawLayerVersion
   })
 );
@@ -102,13 +103,14 @@ check("no auth gate was introduced", health.json.gate === false, `gate=${health.
 const phaseTables = [
   "knowledge_events", "beliefs", "confidence_history", "relationships", "coherence_reports",
   "telemetry_runs", "telemetry_model_calls", "strategies", "strategy_evaluations",
-  "adaptive_decisions", "improvement_ledger"
+  "adaptive_decisions", "improvement_ledger",
+  "sources", "source_chunks", "agent_runs", "agent_steps", "agent_events", "agent_approvals"
 ];
 const presentTables = (await h.sql(
   "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY($1)",
   [phaseTables]
 )).map(r => r.table_name);
-check("every Phase 14/15 table exists (additive migration applied)", presentTables.length === phaseTables.length, `${presentTables.length}/${phaseTables.length}`);
+check("every Phase 14/15/17 table exists (additive migration applied)", presentTables.length === phaseTables.length, `${presentTables.length}/${phaseTables.length}`);
 const memCols = (await h.sql("SELECT column_name FROM information_schema.columns WHERE table_name='memories' ORDER BY column_name")).map(r => r.column_name);
 check("memories kept their columns and gained confidence", memCols.includes("confidence") && memCols.includes("content") && memCols.includes("evidence_level"), `${memCols.length} columns`);
 

@@ -179,6 +179,25 @@ function auditMinimumCauseFloors(text) {
   return findings;
 }
 
+function auditSourceCitations(text, record) {
+  const findings = [];
+  const sourceIds = new Set((record?.sources || []).map(source => String(source?.id || "")).filter(Boolean));
+  const labels = new Set((record?.sourceCitationLabels || []).map(String));
+  const pattern = /\[(src_[a-z0-9]+)(?::([^\]]+))?\]/gi;
+  let match;
+  let guard = 0;
+  while ((match = pattern.exec(String(text || ""))) !== null && guard++ < 80) {
+    const sourceId = match[1];
+    const label = match[2] ? `${sourceId}:${match[2]}` : sourceId;
+    if (!sourceIds.has(sourceId)) {
+      findings.push(`cites source ${sourceId} but that source was not loaded for this turn`);
+    } else if (!match[2] || !labels.has(label)) {
+      findings.push(`cites locator [${label}] but that exact locator was not supplied to this turn`);
+    }
+  }
+  return findings;
+}
+
 function auditAuthorityCitations(text, record) {
   const findings = [];
   const memories = Array.isArray(record?.memories) ? record.memories : [];
@@ -244,9 +263,11 @@ export const governorAgent = defineAgent({
       // quoted fact about the draft, never an opinion about it.
       const floorFindings = auditMinimumCauseFloors(text);
       const citationFindings = auditAuthorityCitations(text, record);
+      const sourceCitationFindings = auditSourceCitations(text, record);
       if (floorFindings.length) flags.push("minimum_cause_without_floor");
       if (citationFindings.length) flags.push("authority_citation_unverifiable");
-      findings.push(...floorFindings, ...citationFindings);
+      if (sourceCitationFindings.length) flags.push("source_citation_unverifiable");
+      findings.push(...floorFindings, ...citationFindings, ...sourceCitationFindings);
     }
     // The coherence measurement rides along; it does not vote.
     return {

@@ -13,7 +13,7 @@
 // New subsystems are all switchable — that is what phase15.complexity_justification
 // requires ("a subsystem that cannot be turned off" is refused).
 
-import { resolveModel } from "./llm.js";
+import { resolveModel, getModelRequestPolicy } from "./llm.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -29,7 +29,8 @@ export function getSystemConfig() {
     },
     models: {
       primary,
-      memory: fast
+      memory: fast,
+      requestPolicy: getModelRequestPolicy()
     },
     council: {
       observerModel: fast,
@@ -84,6 +85,21 @@ export function getSystemConfig() {
         maxPairsPerRun: 6,
         maxLinksPerRetirement: 8
       }
+    },
+
+    // --- Phase 17: immutable sources + bounded agent subsystem ------------
+    sources: {
+      enabled: process.env.COGNOS_SOURCES_ENABLED !== "false",
+      maxPerTurn: 8,
+      maxUploadBytes: Math.max(100_000, Math.min(8_000_000, Number(process.env.COGNOS_SOURCE_MAX_BYTES || 4_000_000))),
+      maxLinkBytes: Math.max(100_000, Math.min(5_000_000, Number(process.env.COGNOS_LINK_MAX_BYTES || 2_000_000)))
+    },
+    agent: {
+      enabled: process.env.COGNOS_AGENT_ENABLED !== "false",
+      modes: Object.freeze(["off", "observe", "read_only"]),
+      autonomousWrites: false,
+      maxSteps: 6,
+      maxLinks: 3
     },
 
     // --- Phase 15: Meta-Cognition ------------------------------------------

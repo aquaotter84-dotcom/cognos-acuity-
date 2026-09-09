@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * scripts/migrate.mjs — apply the Phase 14 / Phase 15 migrations.
+ * scripts/migrate.mjs — apply the additive Phase 14–17 migrations.
  *
  *     node scripts/migrate.mjs            apply every migration in PHASE_SCHEMAS
  *     node scripts/migrate.mjs --dry-run  print what would run, touch nothing
@@ -60,7 +60,7 @@ async function main() {
     process.exit(2);
   }
 
-  console.log(`Phase 14/15 migrations — ${PHASE_SCHEMAS.length} block(s), mode: ${dryRun ? "dry-run" : checkOnly ? "check" : "apply"}\n`);
+  console.log(`Phase 14–17 migrations — ${PHASE_SCHEMAS.length} block(s), mode: ${dryRun ? "dry-run" : checkOnly ? "check" : "apply"}\n`);
 
   for (const migration of PHASE_SCHEMAS) {
     assertAdditive(migration);
@@ -100,7 +100,8 @@ async function main() {
     const expected = [
       "knowledge_events", "beliefs", "confidence_history", "relationships", "coherence_reports",
       "telemetry_runs", "telemetry_model_calls", "strategies", "strategy_evaluations",
-      "adaptive_decisions", "improvement_ledger"
+      "adaptive_decisions", "improvement_ledger",
+      "sources", "source_chunks", "agent_runs", "agent_steps", "agent_events", "agent_approvals"
     ];
     const { rows } = await pool.query(
       "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ANY($1) ORDER BY table_name",
@@ -113,13 +114,23 @@ async function main() {
       console.error(`missing: ${missing.join(", ")}`);
       process.exitCode = 1;
     } else {
-      console.log("all Phase 14 and Phase 15 tables exist. Existing tables were not modified beyond ADD COLUMN IF NOT EXISTS.");
+      console.log("all Phase 14/15/17 tables exist; Phase 16 is verified by its additive columns below.");
     }
 
     const col = await pool.query(
       "SELECT column_name FROM information_schema.columns WHERE table_name = 'memories' AND column_name = 'confidence'"
     );
     console.log(col.rows.length ? "memories.confidence: present" : "memories.confidence: MISSING");
+
+    const perfCols = await pool.query(
+      `SELECT table_name, column_name FROM information_schema.columns
+        WHERE (table_name = 'telemetry_runs' AND column_name = 'performance')
+           OR (table_name = 'telemetry_model_calls' AND column_name = ANY($1))`,
+      [["request_id", "response_headers_ms", "response_decode_ms", "prompt_cached_tokens", "requested_service_tier", "service_tier"]]
+    );
+    console.log(perfCols.rows.length === 7
+      ? "latency/resilience observability columns: 7/7 present"
+      : `latency/resilience observability columns: ${perfCols.rows.length}/7 present`);
   } finally {
     await pool.end().catch(() => {});
   }

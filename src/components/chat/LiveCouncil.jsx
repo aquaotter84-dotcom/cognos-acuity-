@@ -8,6 +8,7 @@
 import { Brain, Check, Loader2, Search, ShieldCheck, AlertTriangle } from 'lucide-react';
 
 const STAGE_LABELS = {
+  agentPrepare: 'Agent — preparing bounded reads',
   contextAssembly: 'Assembling context',
   observer: 'Observer — perceiving',
   webSearch: 'Web search — pulling facts',
@@ -22,7 +23,7 @@ const STAGE_LABELS = {
 
 export default function LiveCouncil({ live }) {
   if (!live) return null;
-  const { stages = [], classification, webSearch, plan, critic, governor } = live;
+  const { stages = [], classification, agent, webSearch, plan, critic, governor } = live;
   if (!stages.length) return null;
 
   return (
@@ -46,6 +47,11 @@ export default function LiveCouncil({ live }) {
           </div>
         ))}
 
+        {agent && agent.mode !== 'off' && (
+          <p className="text-muted-foreground/70 pt-1">
+            agent: {agent.mode.replace('_', ' ')} · {agent.status} · {(agent.steps || []).filter(step => step.status === 'completed').length}/{(agent.steps || []).length} reads
+          </p>
+        )}
         {classification && (
           <p className="text-muted-foreground/70 pt-1">
             {classification.task_type} · {classification.complexity}

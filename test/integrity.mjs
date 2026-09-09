@@ -16,13 +16,16 @@ try {
       .filter(layer => layer.route)
       .map(layer => `${Object.keys(layer.route.methods).filter(method => layer.route.methods[method]).join(",")}:${String(layer.route.path)}`);
     const nonStatic = routes.filter(route => !route.includes('/^\\/(?!api'));
-    assert.equal(nonStatic.length, 42);
-    if (!process.env.VERCEL) assert.equal(routes.length, 43);
+    assert.equal(nonStatic.length, 50);
+    if (!process.env.VERCEL) assert.equal(routes.length, 51);
     for (const route of [
       "post:/api/chat",
+      "get:/api/identity",
       "get:/api/knowledge/events",
       "get:/api/meta/telemetry",
-      "post:/api/meta/adaptations"
+      "post:/api/meta/adaptations",
+      "post:/api/sources/documents",
+      "get:/api/agent/tools"
     ]) assert.ok(routes.includes(route), `missing ${route}`);
   });
 
@@ -39,6 +42,22 @@ try {
     const firstToken = turn.events.findIndex(e => e.event === "token");
     const lastGovernor = turn.events.reduce((at, e, i) => e.event === "governor" ? i : at, -1);
     assert.ok(firstToken > lastGovernor, `first token frame ${firstToken} preceded Governor frame ${lastGovernor}`);
+    h.model.reset();
+  });
+
+  check("persistent provider 504s stay bounded and never expose proxy HTML", async () => {
+    const proxyHtml = "<html><head><title>504 Gateway Time-out</title></head><body><h1>504 Gateway Time-out</h1><p>openresty</p></body></html>";
+    h.model.reset({ failStatus: 504, failBody: proxyHtml, failContentType: "text/html" });
+    h.model.state.requests.length = 0;
+    const turn = await h.chat("Answer even though the model gateway is unavailable.");
+    assert.equal(turn.done, null);
+    assert.match(turn.error?.error || "", /model provider gateway timed out.*after 2 attempts/i);
+    assert.doesNotMatch(JSON.stringify(turn.error || {}), /<html|<head|<body|openresty/i);
+    assert.doesNotMatch(turn.error?.message?.content || "", /<html|<head|<body|openresty/i);
+    const calls = await h.sql("SELECT error_message FROM telemetry_model_calls ORDER BY created_date DESC LIMIT 20");
+    assert.ok(calls.some(call => /gateway timed out/i.test(call.error_message || "")));
+    assert.ok(calls.every(call => !/<html|<head|<body|openresty/i.test(call.error_message || "")));
+    assert.ok(h.model.state.requests.length <= 6, `bounded fallback stages made ${h.model.state.requests.length} requests`);
     h.model.reset();
   });
 
