@@ -68,6 +68,7 @@ import { registerChatRoute } from "./routes/chat.js";
 import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { registerMetaRoutes } from "./routes/meta.js";
 import { registerSourceRoutes } from "./routes/sources.js";
+import { registerProjectRoutes } from "./routes/projects.js";
 
 const logger = createLogger("server");
 export const app = express();
@@ -127,6 +128,20 @@ app.get("/api/health", (req, res) => {
     llmServiceTier: process.env.COGNOS_LLM_SERVICE_TIER || "provider-default",
     promptCacheKeyConfigured: Boolean(process.env.COGNOS_PROMPT_CACHE_KEY),
     sources: config.sources.enabled,
+    // Phase 18 — image originals, vision readings, research mode, projects.
+    images: {
+      enabled: config.sources.enabled,
+      visionEnabled: config.sources.enabled && config.sources.vision.enabled !== false,
+      formats: config.sources.imageFormats,
+      maxImageBytes: config.sources.maxImageBytes
+    },
+    research: {
+      enabled: config.research.enabled !== false,
+      maxPlanSteps: config.research.maxPlanSteps,
+      approvalGate: true,
+      executionTools: ["open_link"]
+    },
+    projects: true,
     agent: {
       enabled: config.agent.enabled,
       modes: config.agent.modes,
@@ -171,7 +186,14 @@ app.get("/api/conversations", wrap(async (req, res) => {
 app.post("/api/conversations", wrap(async (req, res) => {
   const ws = await db.Workspace.ensureDefault();
   const title = (req.body?.title || "New conversation").slice(0, 120);
-  res.json(await db.Conversation.create({ workspace_id: ws.id, title }));
+  let projectId = req.body?.projectId || null;
+  if (projectId) {
+    const project = await db.Project.get(projectId);
+    if (!project || project.workspace_id !== ws.id) {
+      return res.status(404).json({ error: "Project not found in this workspace" });
+    }
+  }
+  res.json(await db.Conversation.create({ workspace_id: ws.id, title, project_id: projectId }));
 }));
 
 app.patch("/api/conversations/:id", wrap(async (req, res) => {
@@ -191,6 +213,7 @@ app.get("/api/conversations/:id/messages", wrap(async (req, res) => {
 
 // The one send path is registered as a focused route module.
 registerChatRoute(app, { wrap, db, logger });
+registerProjectRoutes(app, { wrap, db, logger });
 
 // --- Memory ------------------------------------------------------------------
 app.get("/api/memories", wrap(async (req, res) => {

@@ -12,13 +12,13 @@ export function createSourceAgentStore(run) {
       const id = data.id || newId("src");
       const rows = await run(
         `INSERT INTO sources
-          (id, workspace_id, conversation_id, kind, name, canonical_url, final_url,
+          (id, workspace_id, conversation_id, project_id, kind, name, canonical_url, final_url,
            media_type, byte_size, content_sha256, extracted_text, extraction,
            risk_flags, fetched_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
          RETURNING *`,
-        [id, data.workspace_id, data.conversation_id || null, data.kind,
-         data.name, data.canonical_url || null, data.final_url || null,
+        [id, data.workspace_id, data.conversation_id || null, data.project_id || null,
+         data.kind, data.name, data.canonical_url || null, data.final_url || null,
          data.media_type, data.byte_size, data.content_sha256, data.extracted_text,
          json(data.extraction, {}), json(data.risk_flags, []), data.fetched_at || null]
       );
@@ -53,19 +53,48 @@ export function createSourceAgentStore(run) {
         : await run(`SELECT * FROM sources WHERE id=$1`, [id]);
       return rows[0] || null;
     },
-    async list(workspaceId, { conversationId = null, limit = 100 } = {}) {
+    async list(workspaceId, { conversationId = null, projectId = null, limit = 100 } = {}) {
       const safeLimit = Math.max(1, Math.min(200, Number(limit) || 100));
-      return conversationId
-        ? run(`SELECT id, workspace_id, conversation_id, kind, name, canonical_url, final_url,
-                      media_type, byte_size, content_sha256, extraction, risk_flags,
-                      fetched_at, created_date
-               FROM sources WHERE workspace_id=$1 AND conversation_id=$2
-               ORDER BY created_date DESC LIMIT $3`, [workspaceId, conversationId, safeLimit])
-        : run(`SELECT id, workspace_id, conversation_id, kind, name, canonical_url, final_url,
-                      media_type, byte_size, content_sha256, extraction, risk_flags,
-                      fetched_at, created_date
-               FROM sources WHERE workspace_id=$1
-               ORDER BY created_date DESC LIMIT $2`, [workspaceId, safeLimit]);
+      const where = ["workspace_id=$1"];
+      const params = [workspaceId];
+      if (conversationId) { where.push(`conversation_id=$${params.length + 1}`); params.push(conversationId); }
+      if (projectId) { where.push(`project_id=$${params.length + 1}`); params.push(projectId); }
+      params.push(safeLimit);
+      return run(
+        `SELECT id, workspace_id, conversation_id, project_id, kind, name, canonical_url, final_url,
+                media_type, byte_size, content_sha256, extraction, risk_flags,
+                fetched_at, created_date
+         FROM sources WHERE ${where.join(" AND ")}
+         ORDER BY created_date DESC LIMIT $${params.length}`, params
+      );
+    },
+    // Phase 18 — the evidence pool of a conversation and, when the conversation
+    // is project-scoped, every other conversation in the same project.
+    async listEvidenceScope(workspaceId, conversationId, limit = 50) {
+      const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+      const rows = conversationId
+        ? await run(`SELECT project_id FROM conversations WHERE id=$1 AND workspace_id=$2`, [conversationId, workspaceId])
+        : [];
+      const projectId = rows[0]?.project_id || null;
+      const where = ["workspace_id=$1"];
+      const params = [workspaceId];
+      if (projectId) {
+        where.push(`project_id=$${params.length + 1}`);
+        params.push(projectId);
+      } else if (conversationId) {
+        where.push(`(conversation_id=$${params.length + 1} OR conversation_id IS NULL)`);
+        params.push(conversationId);
+      } else {
+        where.push("conversation_id IS NULL");
+      }
+      params.push(safeLimit);
+      return run(
+        `SELECT id, workspace_id, conversation_id, project_id, kind, name, canonical_url, final_url,
+                media_type, byte_size, content_sha256, extraction, risk_flags,
+                fetched_at, created_date
+         FROM sources WHERE ${where.join(" AND ")}
+         ORDER BY created_date DESC LIMIT $${params.length}`, params
+      );
     },
     async listByIds(workspaceId, ids) {
       const unique = [...new Set((ids || []).map(String).filter(Boolean))].slice(0, 12);
@@ -231,5 +260,61 @@ export function createSourceAgentStore(run) {
     }
   };
 
-  return { Source, SourceChunk, AgentRun, AgentStep, AgentEvent, AgentApproval };
+  const SourceImage = {
+    async create(data) {
+      const rows = await run(
+        `INSERT INTO source_images (id, source_id, format, width, height, byte_size, content_sha256, bytes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, source_id, format, width, height, byte_size, content_sha256, created_date`,
+        [newId("img"), data.source_id, data.format, data.width, data.height,
+         data.byte_size, data.content_sha256, data.bytes]
+      );
+      return rows[0];
+    },
+    async getBySource(sourceId) {
+      const rows = await run(
+        `SELECT id, source_id, format, width, height, byte_size, content_sha256, created_date
+         FROM source_images WHERE source_id=$1`, [sourceId]
+      );
+      return rows[0] || null;
+    },
+    async listForSources(sourceIds) {
+      const unique = [...new Set((sourceIds || []).map(String).filter(Boolean))].slice(0, 12);
+      if (!unique.length) return [];
+      return run(
+        `SELECT id, source_id, format, width, height, byte_size, content_sha256, created_date
+         FROM source_images WHERE source_id = ANY($1::text[])`, [unique]
+      );
+    }
+  };
+
+  const ImageAnalysis = {
+    async append(data) {
+      const rows = await run(
+        `INSERT INTO image_analyses
+          (id, source_id, model_used, status, visual_type, summary, regions,
+           latency_ms, attempts, usage, error_message)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+        [newId("imgan"), data.source_id, data.model_used, data.status,
+         data.visual_type || null, data.summary || null, json(data.regions, []),
+         data.latency_ms || null, data.attempts || 1,
+         data.usage == null ? null : json(data.usage, {}), data.error_message || null]
+      );
+      return rows[0];
+    },
+    async recentBySource(sourceId, limit = 10) {
+      return run(
+        `SELECT id, source_id, model_used, status, visual_type, summary, regions,
+                latency_ms, attempts, usage, error_message, created_date
+         FROM image_analyses WHERE source_id=$1
+         ORDER BY created_date DESC LIMIT $2`,
+        [sourceId, Math.max(1, Math.min(50, Number(limit) || 10))]
+      );
+    },
+    async anyBySource(sourceId) {
+      const rows = await run(`SELECT 1 FROM image_analyses WHERE source_id=$1 LIMIT 1`, [sourceId]);
+      return rows.length > 0;
+    }
+  };
+
+  return { Source, SourceChunk, SourceImage, ImageAnalysis, AgentRun, AgentStep, AgentEvent, AgentApproval };
 }

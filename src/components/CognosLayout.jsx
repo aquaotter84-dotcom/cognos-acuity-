@@ -14,6 +14,7 @@ import MobileNav from '@/components/chat/MobileNav';
 export default function CognosLayout() {
   const [activeWorkspace, setActiveWorkspace] = useState(null);
   const [conversations, setConversations] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState(null);
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -47,7 +48,20 @@ export default function CognosLayout() {
     }
   }, [activeWorkspace]);
 
-  useEffect(() => { refreshConversations(); }, [refreshConversations]);
+  // Phase 18 — durable research projects ride alongside the conversation list.
+  const refreshProjects = useCallback(async () => {
+    if (!activeWorkspace) return;
+    try {
+      setProjects(await api.listProjects());
+    } catch (e) {
+      console.error('Failed to load projects:', e);
+    }
+  }, [activeWorkspace]);
+
+  useEffect(() => { refreshProjects(); }, [refreshProjects]);
+
+  const projectById = useCallback((projectId) => projects.find(p => p.id === projectId) || null,
+    [projects]);
 
   if (isLoading) {
     return (
@@ -74,6 +88,7 @@ export default function CognosLayout() {
     <CognosContext.Provider value={{
       activeWorkspace, setActiveWorkspace,
       conversations, refreshConversations,
+      projects, refreshProjects, projectById,
       activeConversationId, setActiveConversationId,
       openSidebar: () => setSidebarOpen(true),
       closeSidebar: () => setSidebarOpen(false)

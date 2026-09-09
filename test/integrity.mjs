@@ -16,8 +16,10 @@ try {
       .filter(layer => layer.route)
       .map(layer => `${Object.keys(layer.route.methods).filter(method => layer.route.methods[method]).join(",")}:${String(layer.route.path)}`);
     const nonStatic = routes.filter(route => !route.includes('/^\\/(?!api'));
-    assert.equal(nonStatic.length, 50);
-    if (!process.env.VERCEL) assert.equal(routes.length, 51);
+    // Phase 18 added: images ingest + byte fetch (2), project CRUD (5), and the
+    // approval-gated research decision route (1).
+    assert.equal(nonStatic.length, 58);
+    if (!process.env.VERCEL) assert.equal(routes.length, 59);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",
@@ -25,7 +27,12 @@ try {
       "get:/api/meta/telemetry",
       "post:/api/meta/adaptations",
       "post:/api/sources/documents",
-      "get:/api/agent/tools"
+      "get:/api/agent/tools",
+      "get:/api/projects",
+      "post:/api/projects",
+      "post:/api/sources/images",
+      "get:/api/sources/:id/image",
+      "post:/api/agent/runs/:id/decision"
     ]) assert.ok(routes.includes(route), `missing ${route}`);
   });
 

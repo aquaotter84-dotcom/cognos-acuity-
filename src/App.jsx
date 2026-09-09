@@ -12,6 +12,7 @@ const Activity = lazy(() => import('@/pages/Activity'));
 const System = lazy(() => import('@/pages/System'));
 const Identity = lazy(() => import('@/pages/Identity'));
 const Settings = lazy(() => import('@/pages/Settings'));
+const Projects = lazy(() => import('@/pages/Projects'));
 
 function PageFallback() {
   return (
@@ -31,6 +32,7 @@ export default function App() {
               <Route path="/" element={<Chat />} />
               <Route path="/memory" element={<Memory />} />
               <Route path="/activity" element={<Activity />} />
+              <Route path="/projects" element={<Projects />} />
               <Route path="/system" element={<System />} />
               <Route path="/about" element={<Identity />} />
               <Route path="/settings" element={<Settings />} />

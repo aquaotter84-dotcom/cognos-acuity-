@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bot, FileText, Link as LinkIcon, Loader2, Paperclip, ShieldAlert, X } from 'lucide-react';
+import { Bot, FileText, Image as ImageIcon, Link as LinkIcon, Loader2, Paperclip, ShieldAlert, X } from 'lucide-react';
 import { api } from '@/lib/api';
 
-const MAX_FILE_BYTES = 4_000_000;
+const MAX_FILE_BYTES = 6_000_000; // base64 JSON must stay under the 10 MB body limit
 const ACCEPT = '.pdf,.docx,.txt,.md,.markdown,.csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv';
+const IMAGE_ACCEPT = 'image/png,image/jpeg,image/webp';
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 
 function bytesToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
@@ -23,7 +25,9 @@ function SourceRow({ source, selected, onToggle }) {
       className={`w-full text-left rounded-lg border px-2.5 py-2 transition-colors ${selected ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/60'}`}
     >
       <div className="flex items-start gap-2">
-        {source.kind === 'link' ? <LinkIcon className="w-3.5 h-3.5 mt-0.5 text-primary shrink-0" /> : <FileText className="w-3.5 h-3.5 mt-0.5 text-primary shrink-0" />}
+        {source.kind === 'link' ? <LinkIcon className="w-3.5 h-3.5 mt-0.5 text-primary shrink-0" /> : (
+          source.kind === 'image' ? <ImageIcon className="w-3.5 h-3.5 mt-0.5 text-primary shrink-0" /> : <FileText className="w-3.5 h-3.5 mt-0.5 text-primary shrink-0" />
+        )}
         <div className="min-w-0 flex-1">
           <p className="text-xs font-medium truncate">{source.name}</p>
           <p className="text-[10px] text-muted-foreground truncate">{source.kind} · {source.media_type}</p>
@@ -33,6 +37,14 @@ function SourceRow({ source, selected, onToggle }) {
             </p>
           )}
         </div>
+        {source.kind === 'image' && source.id && (
+          <img
+            src={api.imageUrl(source.id)}
+            alt=""
+            loading="lazy"
+            className="w-8 h-8 rounded object-cover border border-border shrink-0"
+          />
+        )}
       </div>
     </button>
   );
@@ -40,6 +52,7 @@ function SourceRow({ source, selected, onToggle }) {
 
 export default function SourceComposer({
   conversationId,
+  projectId,
   disabled,
   sources,
   onSourcesChange,
@@ -52,6 +65,7 @@ export default function SourceComposer({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const fileRef = useRef(null);
+  const imageRef = useRef(null);
 
   const refresh = async () => {
     try { setRecent(await api.listSources({ limit: 30 })); }
@@ -67,7 +81,12 @@ export default function SourceComposer({
     else if (sources.length < 8) onSourcesChange([...sources, source]);
   };
 
-  const upload = async (event) => {
+  const pushSource = (source) => {
+    if (!sources.some(item => item.id === source.id)) onSourcesChange([...sources, source].slice(0, 8));
+    setOpen(false);
+  };
+
+  const upload = async (event, kind) => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
@@ -75,19 +94,26 @@ export default function SourceComposer({
       setError(`File exceeds the ${Math.round(MAX_FILE_BYTES / 1_000_000)} MB limit`);
       return;
     }
+    const mediaType = file.type && (kind === 'image' ? IMAGE_TYPES.includes(file.type) : true) ? file.type : (kind === 'image' ? 'image/png' : 'application/octet-stream');
+    if (kind === 'image' && !IMAGE_TYPES.includes(mediaType)) {
+      setError('Images must be PNG, JPEG, or WebP');
+      return;
+    }
     setBusy(true);
     setError('');
     try {
-      const source = await api.uploadDocument({
+      const body = {
         conversationId,
         name: file.name,
-        mediaType: file.type || 'application/octet-stream',
+        mediaType,
         base64: bytesToBase64(await file.arrayBuffer())
-      });
-      if (!sources.some(item => item.id === source.id)) onSourcesChange([...sources, source].slice(0, 8));
+      };
+      if (projectId) body.projectId = projectId;
+      const source = kind === 'image' ? await api.uploadImage(body) : await api.uploadDocument(body);
+      pushSource(source);
       await refresh();
     } catch (e) {
-      setError(e.message || 'Document extraction failed');
+      setError(e.message || (kind === 'image' ? 'Image analysis failed' : 'Document extraction failed'));
     } finally {
       setBusy(false);
     }
@@ -100,7 +126,7 @@ export default function SourceComposer({
     setError('');
     try {
       const source = await api.openLink({ conversationId, url: url.trim() });
-      if (!sources.some(item => item.id === source.id)) onSourcesChange([...sources, source].slice(0, 8));
+      pushSource(source);
       setUrl('');
       await refresh();
     } catch (e) {
@@ -118,7 +144,7 @@ export default function SourceComposer({
         disabled={disabled}
         aria-expanded={open}
         className={`p-2 rounded-xl transition-colors disabled:opacity-30 ${open || sources.length ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground'}`}
-        title="Add documents or links"
+        title="Add documents, images, or links"
       >
         <Paperclip className="w-4 h-4" />
       </button>
@@ -135,6 +161,7 @@ export default function SourceComposer({
           <option value="off">Agent off</option>
           <option value="observe">Observe</option>
           <option value="read_only">Read only</option>
+          <option value="research">Research</option>
         </select>
       </div>
 
@@ -150,18 +177,30 @@ export default function SourceComposer({
             </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 mb-3">
+          <div className="grid grid-cols-3 gap-2 mb-3">
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
               disabled={busy}
-              className="rounded-lg border border-border px-3 py-2 text-xs hover:bg-muted disabled:opacity-50 flex items-center justify-center gap-2"
+              className="rounded-lg border border-border px-2 py-2 text-xs hover:bg-muted disabled:opacity-50 flex items-center justify-center gap-1.5"
+              title="PDF, DOCX, TXT, MD, CSV"
             >
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
-              Upload document
+              Document
             </button>
-            <input ref={fileRef} type="file" accept={ACCEPT} onChange={upload} className="hidden" />
-            <span className="text-[10px] text-muted-foreground self-center">PDF, DOCX, TXT, MD, CSV</span>
+            <input ref={fileRef} type="file" accept={ACCEPT} onChange={e => upload(e, 'document')} className="hidden" />
+            <button
+              type="button"
+              onClick={() => imageRef.current?.click()}
+              disabled={busy}
+              className="rounded-lg border border-border px-2 py-2 text-xs hover:bg-muted disabled:opacity-50 flex items-center justify-center gap-1.5"
+              title="PNG, JPEG, WebP — screenshots, photos, scans, charts"
+            >
+              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImageIcon className="w-3.5 h-3.5" />}
+              Image
+            </button>
+            <input ref={imageRef} type="file" accept={IMAGE_ACCEPT} onChange={e => upload(e, 'image')} className="hidden" />
+            <span className="text-[10px] text-muted-foreground self-center leading-tight">PDF DOCX TXT MD CSV · PNG JPEG WebP</span>
           </div>
 
           <form onSubmit={openUrl} className="flex gap-2 mb-3">
@@ -188,6 +227,7 @@ export default function SourceComposer({
           <div className="mt-3 pt-3 border-t border-border text-[10px] text-muted-foreground space-y-1">
             <p><strong>Observe:</strong> records the read plan but opens no URLs automatically.</p>
             <p><strong>Read only:</strong> may safely open explicit URLs in your message. It cannot write memory or release an answer.</p>
+            <p><strong>Research:</strong> inspects the project's evidence, proposes a finite plan, and opens approved links only after you approve each step. It never answers on its own.</p>
           </div>
         </div>
       )}

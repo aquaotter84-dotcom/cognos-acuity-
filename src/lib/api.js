@@ -67,9 +67,17 @@ export const api = {
   updateWorkspace: (data) => req("/api/workspace", { method: "PATCH", body: data }),
 
   listConversations: () => req("/api/conversations"),
+  createConversation: (title, projectId) => req("/api/conversations", { method: "POST", body: { title, projectId } }),
   renameConversation: (id, title) => req(`/api/conversations/${id}`, { method: "PATCH", body: { title } }),
   deleteConversation: (id) => req(`/api/conversations/${id}`, { method: "DELETE" }),
   getConversation: (id) => req(`/api/conversations/${id}/messages`),
+
+  // --- Phase 18: durable research projects --------------------------------
+  listProjects: () => req("/api/projects"),
+  createProject: (name, objective) => req("/api/projects", { method: "POST", body: { name, objective } }),
+  getProject: (id) => req(`/api/projects/${id}`),
+  updateProject: (id, data) => req(`/api/projects/${id}`, { method: "PATCH", body: data }),
+  deleteProject: (id) => req(`/api/projects/${id}`, { method: "DELETE" }),
 
   listMemories: () => req("/api/memories"),
   createMemory: (data) => req("/api/memories", { method: "POST", body: data }),
@@ -78,14 +86,20 @@ export const api = {
 
   listActivity: () => req("/api/activity"),
 
-  // --- Phase 17: immutable document/link sources + bounded agent records ---
+  // --- Phase 17: immutable document/link/image sources + bounded agent records ---
   listSources: (params = {}) => req(`/api/sources${qs(params)}`),
   source: (id) => req(`/api/sources/${id}`),
   uploadDocument: (data) => req("/api/sources/documents", { method: "POST", body: data }),
   openLink: (data) => req("/api/sources/links", { method: "POST", body: data }),
+  /** Phase 18: PNG/JPEG/WebP originals; server-side vision readings when enabled. */
+  uploadImage: (data) => req("/api/sources/images", { method: "POST", body: data }),
+  /** Same-origin URL of the immutable original bytes (no secret in the URL). */
+  imageUrl: (sourceId) => `/api/sources/${sourceId}/image`,
   agentTools: () => req("/api/agent/tools"),
   agentRuns: (params = {}) => req(`/api/agent/runs${qs(params)}`),
   agentRun: (id) => req(`/api/agent/runs/${id}`),
+  /** Phase 18: user decides an awaiting_approval research plan (approve/decline). */
+  decideAgentRun: (id, body) => req(`/api/agent/runs/${id}/decision`, { method: "POST", body }),
 
   // --- Phase 14: the knowledge layer (read-only) ---------------------------
   knowledgeEvents: (params = {}) => req(`/api/knowledge/events${qs(params)}`),

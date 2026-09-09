@@ -4,10 +4,13 @@
 
 import { extractDocument, extractHtml, cleanText, detectPromptInjection, sha256 } from "./extract.js";
 import { normalizePublicUrl, safeFetch } from "./safeFetch.js";
+import { parseImage } from "./imageParse.js";
+import { analyzeImageBytes, visionEnabled } from "./vision.js";
 import { throwIfAborted } from "../shared/cancellation.js";
 
 const MAX_DOCUMENT_BYTES = Math.max(100_000, Math.min(8_000_000, Number(process.env.COGNOS_SOURCE_MAX_BYTES || 4_000_000)));
 const MAX_LINK_BYTES = Math.max(100_000, Math.min(5_000_000, Number(process.env.COGNOS_LINK_MAX_BYTES || 2_000_000)));
+const MAX_IMAGE_BYTES = Math.max(100_000, Math.min(8_000_000, Number(process.env.COGNOS_IMAGE_MAX_BYTES || 4_000_000)));
 const CHUNK_CHARS = 2_600;
 const CHUNK_OVERLAP = 180;
 const MAX_EVIDENCE_CHARS = 70_000;
@@ -70,6 +73,7 @@ function publicSource(source, { duplicate = false } = {}) {
   return {
     id: source.id,
     kind: source.kind,
+    project_id: source.project_id || null,
     name: source.name,
     canonical_url: source.canonical_url,
     final_url: source.final_url,
@@ -142,6 +146,7 @@ function decodeBase64(value) {
 export async function ingestDocument(db, {
   workspaceId,
   conversationId = null,
+  projectId = null,
   name,
   mediaType,
   base64
@@ -155,6 +160,7 @@ export async function ingestDocument(db, {
   return persistSource(db, {
     workspace_id: workspaceId,
     conversation_id: conversationId,
+    project_id: projectId,
     kind: "document",
     name: sourceName(name, "Uploaded document"),
     media_type: extracted.mediaType,
@@ -168,6 +174,7 @@ export async function ingestDocument(db, {
 export async function ingestLink(db, {
   workspaceId,
   conversationId = null,
+  projectId = null,
   url,
   signal = null
 }) {
@@ -199,6 +206,7 @@ export async function ingestLink(db, {
   return persistSource(db, {
     workspace_id: workspaceId,
     conversation_id: conversationId,
+    project_id: projectId,
     kind: "link",
     name,
     canonical_url: canonicalUrl,
@@ -215,6 +223,246 @@ export async function ingestLink(db, {
     risk_flags: riskFlags,
     fetched_at: new Date().toISOString()
   }, extracted.sections);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 18 — immutable image originals + labeled vision readings.
+// ---------------------------------------------------------------------------
+
+const safeMessage = (value) => String(value || "")
+  .replace(/[\u0000-\u001F\u007F]/g, " ")
+  .replace(/\s+/g, " ").trim().slice(0, 240);
+
+/** Deterministic metadata recorded on the immutable source row itself. */
+function imageExtraction(parsed, { reading = null } = {}) {
+  return {
+    extractor: "image_parse",
+    format: parsed.format,
+    width: parsed.width,
+    height: parsed.height,
+    characters: 0,
+    vision: reading || { status: "disabled" }
+  };
+}
+
+/** One citable chunk per readable region; boxes ride in the locator. */
+function imageChunks(sourceId, regions) {
+  const chunks = [];
+  let offset = 0;
+  for (const region of regions) {
+    const content = cleanText(region.text);
+    if (!content) continue;
+    chunks.push({
+      ordinal: chunks.length + 1,
+      locator: { image_region: region.number, box: region.box },
+      content,
+      content_sha256: sha256(content),
+      char_start: offset,
+      char_end: offset + content.length
+    });
+    offset += content.length + 2;
+  }
+  return chunks;
+}
+
+/**
+ * Ingest one PNG/JPEG/WebP original and — when the Image Desk is enabled —
+ * one labeled vision reading of it. The bytes are hashed and stored once; the
+ * reading is provenance (image_analyses + citable region chunks), never a
+ * rewrite of the immutable row. When vision is disabled or fails, the image
+ * still ingests: it simply carries no machine-readable transcript.
+ */
+export async function ingestImage(db, {
+  workspaceId,
+  conversationId = null,
+  projectId = null,
+  name,
+  mediaType,
+  base64,
+  signal = null,
+  logger = null
+}) {
+  const buffer = decodeBase64(base64);
+  if (buffer.length > MAX_IMAGE_BYTES) {
+    throw Object.assign(new Error(`Image exceeds the ${MAX_IMAGE_BYTES.toLocaleString()} byte upload limit`), { status: 413 });
+  }
+  if (buffer.length < 8) {
+    throw Object.assign(new Error("Image body is empty or too small to be a real PNG/JPEG/WebP"), { status: 422 });
+  }
+  const parsed = parseImage(buffer, { mediaType });
+  const digest = sha256(buffer);
+  const existing = await db.Source.findByHash(workspaceId, digest, "image", null);
+
+  // The vision pass is a bounded, labeled model reading. It runs at most once
+  // per immutable image (a re-upload of identical bytes heals a failed or
+  // missing pass by appending a new analysis — the bytes are the dedupe key).
+  const alreadyAnalyzed = existing ? await db.ImageAnalysis.anyBySource(existing.id) : false;
+  const shouldRead = visionEnabled() && !alreadyAnalyzed;
+  const reading = { ran: false };
+  if (shouldRead) {
+    try {
+      const result = await analyzeImageBytes({
+        bytes: buffer,
+        mediaType: parsed.mediaType,
+        name,
+        width: parsed.width,
+        height: parsed.height,
+        signal,
+        logger
+      });
+      reading.ran = true;
+      reading.ok = true;
+      reading.result = result;
+    } catch (error) {
+      reading.ran = true;
+      reading.ok = false;
+      reading.error = safeMessage(error?.message || error);
+    }
+  }
+
+  const visionReading = reading.ok
+    ? {
+        status: "completed",
+        model: reading.result.model,
+        visual_type: reading.result.visualType,
+        regions: reading.result.regions.length,
+        summary: reading.result.summary.slice(0, 400),
+        latency_ms: reading.result.latencyMs,
+        reading: "model_extracted",
+        caution: "vision transcript: model-extracted reading of the immutable image — it can misread; treat as untrusted evidence"
+      }
+    : (shouldRead ? { status: "failed", reading: "model_extracted", error: reading.error || "unknown" } : { status: "disabled", reading: null });
+
+  if (existing) {
+    // Append-only healing path for a duplicate upload: identical bytes, so any
+    // new reading is a re-reading of the SAME immutable original.
+    if (reading.ran) {
+      await db.withTransaction(async store => {
+        if (reading.ok) {
+          const chunks = imageChunks(existing.id, reading.result.regions);
+          if (chunks.length) await store.SourceChunk.bulkCreate(existing.id, chunks);
+          await store.ImageAnalysis.append({
+            source_id: existing.id,
+            model_used: reading.result.model,
+            status: "completed",
+            visual_type: reading.result.visualType,
+            summary: reading.result.summary.slice(0, 600),
+            regions: reading.result.regions.map(region => ({ ...region, text: region.text.slice(0, 400) })),
+            latency_ms: reading.result.latencyMs,
+            attempts: 1
+          });
+        } else {
+          await store.ImageAnalysis.append({
+            source_id: existing.id,
+            model_used: "unknown",
+            status: "failed",
+            error_message: reading.error
+          });
+        }
+        if (store.KnowledgeEvent && process.env.COGNOS_LEDGER_ENABLED !== "false") {
+          await store.KnowledgeEvent.append({
+            workspaceId,
+            entityType: "source",
+            entityId: existing.id,
+            transition: reading.ok ? "image_reading_recorded" : "image_reading_failed",
+            toState: reading.ok
+              ? { kind: "image", reading: "model_extracted", visual_type: reading.result.visualType, regions: reading.result.regions.length }
+              : { kind: "image", reading: "model_extracted", status: "failed" },
+            delta: { duplicate: true },
+            sourceKind: "source_ingestion",
+            reversible: false,
+            payload: { immutable_image: true, model: reading.ok ? reading.result.model : null }
+          });
+        }
+      });
+    }
+    const source = await db.Source.get(existing.id, workspaceId);
+    return { ...publicSource(source), duplicate: true, vision: visionReading };
+  }
+
+  // Fresh immutable image row. The vision reading, when present, is recorded
+  // in the SAME transaction as the snapshot: bytes, hash, reading provenance,
+  // and citable region chunks commit together or not at all.
+  let result;
+  try {
+    result = await db.withTransaction(async store => {
+      const source = await store.Source.create({
+        workspace_id: workspaceId,
+        conversation_id: conversationId,
+        project_id: projectId,
+        kind: "image",
+        name: sourceName(name, "Uploaded image"),
+        media_type: parsed.mediaType,
+        byte_size: buffer.length,
+        content_sha256: digest,
+        extracted_text: "",
+        extraction: imageExtraction(parsed, { reading: visionReading }),
+        risk_flags: reading.ok ? reading.result.riskFlags : []
+      });
+      await store.SourceImage.create({
+        source_id: source.id,
+        format: parsed.format,
+        width: parsed.width,
+        height: parsed.height,
+        byte_size: buffer.length,
+        content_sha256: digest,
+        bytes: buffer
+      });
+      if (reading.ok) {
+        const chunks = imageChunks(source.id, reading.result.regions);
+        if (chunks.length) await store.SourceChunk.bulkCreate(source.id, chunks);
+        await store.ImageAnalysis.append({
+          source_id: source.id,
+          model_used: reading.result.model,
+          status: "completed",
+          visual_type: reading.result.visualType,
+          summary: reading.result.summary.slice(0, 600),
+          regions: reading.result.regions.map(region => ({ ...region, text: region.text.slice(0, 400) })),
+          latency_ms: reading.result.latencyMs,
+          attempts: 1
+        });
+      } else if (reading.ran) {
+        await store.ImageAnalysis.append({
+          source_id: source.id,
+          model_used: "unknown",
+          status: "failed",
+          error_message: reading.error
+        });
+      }
+      if (store.KnowledgeEvent && process.env.COGNOS_LEDGER_ENABLED !== "false") {
+        await store.KnowledgeEvent.append({
+          workspaceId,
+          entityType: "source",
+          entityId: source.id,
+          transition: "source_snapshot_created",
+          toState: {
+            kind: "image",
+            name: source.name,
+            media_type: source.media_type,
+            content_sha256: source.content_sha256,
+            format: parsed.format,
+            width: parsed.width,
+            height: parsed.height,
+            vision: visionReading.status
+          },
+          delta: { bytes: source.byte_size, pixels: parsed.width * parsed.height },
+          sourceKind: "source_ingestion",
+          reversible: false,
+          payload: { immutable_snapshot: true, original_bytes_hashed: true, vision_reading: visionReading.status }
+        });
+      }
+      return publicSource(source);
+    });
+  } catch (error) {
+    // A concurrent identical upload may have won the unique index after our
+    // preflight check; return the immutable winner rather than a false failure.
+    if (error?.code === "23505") {
+      const winner = await db.Source.findByHash(workspaceId, digest, "image", null);
+      if (winner) return { ...publicSource(winner), duplicate: true, vision: visionReading };
+    }
+    throw error;
+  }
+  return { ...result, duplicate: false, vision: visionReading };
 }
 
 const STOP = new Set("a an and are as at be by for from has have how i in is it of on or that the this to was what when where which who why will with you your".split(" "));
@@ -235,6 +483,7 @@ export function locatorLabel(locator = {}) {
   if (locator.page != null) labels.push(`p${locator.page}`);
   else if (locator.section != null) labels.push(`section${locator.section}`);
   if (locator.line != null) labels.push(`line${locator.line}`);
+  if (locator.image_region != null) labels.push(`r${locator.image_region}`);
   if (locator.part > 1) labels.push(`part${locator.part}`);
   return labels.join(":") || "chunk";
 }
@@ -263,9 +512,25 @@ export async function buildEvidencePack(db, { workspaceId, sourceIds, query, sig
   candidates.sort((a, b) => b.score - a.score || a.chunk.source_id.localeCompare(b.chunk.source_id) || a.chunk.ordinal - b.chunk.ordinal);
   const selected = [...openingChunks, ...candidates.map(row => row.chunk)];
 
-  const manifest = sources.map(source =>
-    `- [${source.id}] ${source.name} (${source.kind}, ${source.media_type})${source.final_url ? ` — ${source.final_url}` : ""}${(source.risk_flags || []).length ? ` — untrusted-instruction flags: ${(source.risk_flags || []).join(", ")}` : ""}`
-  ).join("\n");
+  // Phase 18 — image sources carry their immutable geometry in extraction and
+  // their reading status there too, so a council that sees an image manifest
+  // also sees whether the transcript is a labeled model reading or absent.
+  const manifest = sources.map(source => {
+    let detail = "";
+    if (source.kind === "image" && source.extraction) {
+      const x = source.extraction;
+      const geometry = x.width && x.height ? `${x.width}×${x.height} ${x.format || ""}`.trim() : "";
+      const vision = x.vision || {};
+      if (vision.status === "completed") {
+        detail = ` — ${geometry ? `${geometry}, ` : ""}model-read transcript (${vision.model || "vision model"}, ${vision.regions ?? 0} region(s)); a labeled machine reading of the immutable image — it can misread; verify against the original`;
+      } else if (vision.status === "failed") {
+        detail = ` — ${geometry ? `${geometry}, ` : ""}no transcript: the vision reading failed at ingestion (${vision.error || "unknown"})`;
+      } else {
+        detail = ` — ${geometry ? `${geometry}, ` : ""}no machine-readable transcript (vision disabled at ingestion)`;
+      }
+    }
+    return `- [${source.id}] ${source.name} (${source.kind}, ${source.media_type})${detail}${source.final_url ? ` — ${source.final_url}` : ""}${(source.risk_flags || []).length ? ` — untrusted-instruction flags: ${(source.risk_flags || []).join(", ")}` : ""}`;
+  }).join("\n");
   const blocks = [];
   let chars = manifest.length;
   for (const chunk of selected) {

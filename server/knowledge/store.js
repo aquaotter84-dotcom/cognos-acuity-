@@ -225,7 +225,7 @@ export const MEMORY_TRACKED_FIELDS = Object.freeze([
   "content", "memory_type", "importance", "evidence_level", "volatility", "is_enabled", "confidence"
 ]);
 export const CONVERSATION_TRACKED_FIELDS = Object.freeze([
-  "title", "summary", "is_archived", "last_message_preview"
+  "title", "summary", "is_archived", "last_message_preview", "project_id"
 ]);
 export const TASK_CONTEXT_TRACKED_FIELDS = Object.freeze([
   "goal", "task_type", "status", "final_response"
