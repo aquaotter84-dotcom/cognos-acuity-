@@ -12,7 +12,9 @@
 //                       Writes nothing.
 //   knowledgeProjection RECORDS, after the Governor's verdict, in one
 //                       transaction: coherence transitions, the veto event,
-//                       relationship dynamics, the bounded decay sweep.
+//                       relationship dynamics, the bounded decay sweep, and
+//                       the Phase 23 atlas projection (a vetoed draft projects
+//                       nothing — the veto has teeth in the graph too).
 //   telemetryRecord     PREPARES the run's final telemetry counts. The
 //                       orchestration wrapper writes once the run is known not
 //                       to have been cancelled.
@@ -39,6 +41,7 @@ export const knowledgeProjectionAgent = defineAgent({
     const content = message.content;
     const cfg = ctx.config.knowledge || {};
     const { workspaceId, conversationId, runId, coherence, vetoed, governor, finalText, draftText, draftOrigin } = content;
+    const graphCfg = cfg.graph || {};
 
     if (cfg.ledgerEnabled === false) {
       return { ...content, knowledge: { enabled: false, ledgerEvents: 0, reason: "COGNOS_LEDGER_ENABLED=false" } };
@@ -129,6 +132,39 @@ export const knowledgeProjectionAgent = defineAgent({
         events += (sweep.events || []).length;
         out.decay = { swept: sweep.swept || 0, decayed: sweep.decayed || 0 };
 
+        // --- Phase 23: project the governed exchange into the atlas. A vetoed
+        // draft projects nothing: the refusal line is what shipped, and it is
+        // not treated as a fact about the user. Deterministic and model-free.
+        if (!vetoed && graphCfg.enabled !== false && graphCfg.projectEnabled !== false) {
+          try {
+            const conversation = conversationId ? await store.Conversation.get(conversationId).catch(() => null) : null;
+            const projected = await store.Graph.projectExchange({
+              workspaceId,
+              conversationId,
+              runId,
+              messageId: source.messageId,
+              userMessage: content.userMessage || "",
+              responseText: finalText || "",
+              memories: content.memories || [],
+              sources: content.sources || [],
+              projectId: conversation?.project_id || null,
+              actor: "council"
+            });
+            events += (projected.events || []).length;
+            out.graph = {
+              nodes: (projected.nodes || []).length,
+              edges: (projected.edges || []).length,
+              events: (projected.events || []).length
+            };
+          } catch (graphError) {
+            // Best-effort inside a best-effort stage: a failed atlas write is
+            // logged on the detail, never thrown past the transaction.
+            out.graph = { error: String(graphError?.message || graphError).slice(0, 200) };
+          }
+        } else if (vetoed) {
+          out.graph = { skipped: "governor_veto" };
+        }
+
         return { ledgerEvents: events, ...out };
       });
 
@@ -139,6 +175,7 @@ export const knowledgeProjectionAgent = defineAgent({
         veto: detail.veto || null,
         relationship: detail.relationship || null,
         decay: detail.decay || null,
+        graph: detail.graph || null,
         coherenceReportId: detail.coherenceReportId || null
       });
       return { ...content, knowledge: { enabled: true, ...detail } };

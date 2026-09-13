@@ -22,7 +22,7 @@ export const specialistAgent = defineAgent({
   name: "specialist",
   type: "stage",
   async handle(message, ctx) {
-    const { history, memories, workspace, userMessage, classification, taskContext, sourceContext, conversationSummary, contextWindow, councilRecord } = message.content;
+    const { history, memories, workspace, userMessage, classification, taskContext, sourceContext, graphContext, conversationSummary, contextWindow, councilRecord } = message.content;
     const memoryContext = { conversationSummary, contextWindow };
 
     // --- Decomposed path: execute sub-tasks in parallel ---
@@ -44,12 +44,13 @@ export const specialistAgent = defineAgent({
                   message.content.style,
                   councilRecord,
                   sourceContext,
-                  memoryContext
+                  memoryContext,
+                  graphContext
                 )
               },
               {
                 role: "user",
-                content: `${st.input || st.description || userMessage}${sourceContext ? `\n\n${sourceContext}` : ""}`
+                content: `${st.input || st.description || userMessage}${sourceContext ? `\n\n${sourceContext}` : ""}${graphContext ? `\n\n${graphContext}` : ""}`
               }
             ]
           });
@@ -73,11 +74,12 @@ export const specialistAgent = defineAgent({
     // the council reasons over pulled facts. Attachments (file_urls) forwarded for
     // multimodal analysis.
     const { attachments, searchResults } = message.content;
-    const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, undefined, message.content.style, message.content.councilRecord, sourceContext, memoryContext);
+    const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, undefined, message.content.style, message.content.councilRecord, sourceContext, memoryContext, graphContext);
     const userContent = [
       userMessage,
       searchResults ? `[Web search results — current information pulled by the council web search tool; cite as needed]:\n${searchResults}` : null,
-      sourceContext || null
+      sourceContext || null,
+      graphContext || null
     ].filter(Boolean).join("\n\n");
     const chatMessages = [
       { role: "system", content: systemPrompt },

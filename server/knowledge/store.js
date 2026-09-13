@@ -13,6 +13,7 @@ import {
 } from "./events.js";
 import * as beliefs from "./beliefs.js";
 import * as relationships from "./relationships.js";
+import * as graph from "./graph.js";
 
 export function createKnowledgeStore(run) {
   return {
@@ -143,6 +144,47 @@ export function createKnowledgeStore(run) {
       state: relationships.relationshipState
     },
 
+    // --- Phase 23 trust-annotated knowledge graph ("Atlas") ------------------
+    Graph: {
+      listNodes: (workspaceId, opts) => graph.listNodes(run, workspaceId, opts),
+      getNode: (id) => graph.getNode(run, id),
+      findByKey: (workspaceId, type, label) => graph.findNodeByKey(run, workspaceId, type, label),
+      createNode: (args) => graph.createNode(run, args),
+      pinNode: (args) => graph.pinNode(run, args),
+      retireNode: (args) => graph.retireNode(run, args),
+      forkNode: (args) => graph.forkNode(run, args),
+      reviseNode: (args) => graph.reviseNode(run, args),
+      setTrust: (args) => graph.setTrust(run, args),
+      listEdges: (workspaceId, opts) => graph.listEdges(run, workspaceId, opts),
+      getEdge: (id) => graph.getEdge(run, id),
+      findEdge: (args) => graph.findEdge(run, args),
+      createEdge: (args) => graph.createEdge(run, args),
+      retireEdge: (args) => graph.retireEdge(run, args),
+      edgesForNode: (nodeId, opts) => graph.edgesForNode(run, nodeId, opts),
+      findRelated: (nodeId, opts) => graph.findRelated(run, nodeId, opts),
+      queryRelevant: (workspaceId, text, opts) => graph.queryRelevant(run, workspaceId, text, opts),
+      listConflicts: (workspaceId, opts) => graph.listConflicts(run, workspaceId, opts),
+      verifyWorkspace: (workspaceId, opts) => graph.verifyWorkspace(run, workspaceId, opts),
+      createSnapshot: (args) => graph.createSnapshot(run, args),
+      listSnapshots: (workspaceId, opts) => graph.listSnapshots(run, workspaceId, opts),
+      getSnapshot: (id) => graph.getSnapshot(run, id),
+      diffSnapshots: (idA, idB) => graph.diffSnapshots(run, idA, idB),
+      coverageAudit: (workspaceId) => graph.coverageAudit(run, workspaceId),
+      overview: (workspaceId) => graph.overview(run, workspaceId),
+      projectExchange: (args) => graph.projectExchange(run, args),
+      nodeState: graph.graphNodeState,
+      edgeState: graph.graphEdgeState,
+      nodeKey: graph.nodeKey,
+      trustSatisfiesTruth: graph.trustSatisfiesTruth,
+      verifyNodeSeal: graph.verifyNodeSeal,
+      verifyEdgeSeal: graph.verifyEdgeSeal,
+      merkleRoot: graph.merkleRoot,
+      formatContext: graph.formatGraphContext,
+      NODE_TYPES: graph.NODE_TYPES,
+      EDGE_KINDS: graph.EDGE_KINDS,
+      TRUST_LEVELS: graph.TRUST_LEVELS
+    },
+
     // --- 14.5 coherence reports -------------------------------------------
     CoherenceReport: {
       async create(report) {
@@ -203,6 +245,14 @@ export function createKnowledgeStore(run) {
         const rows = await run(`SELECT * FROM relationships WHERE id = $1`, [entityId]);
         return rows[0] ? relationships.relationshipState(rows[0]) : null;
       }
+      case "graph_node": {
+        const rows = await run(`SELECT * FROM graph_nodes WHERE id = $1`, [entityId]);
+        return rows[0] ? graph.graphNodeState(rows[0]) : null;
+      }
+      case "graph_edge": {
+        const rows = await run(`SELECT * FROM graph_edges WHERE id = $1`, [entityId]);
+        return rows[0] ? graph.graphEdgeState(rows[0]) : null;
+      }
       case "memory": {
         const rows = await run(`SELECT * FROM memories WHERE id = $1`, [entityId]);
         return rows[0] ? pick(rows[0], MEMORY_TRACKED_FIELDS) : null;
@@ -238,7 +288,9 @@ export const TRACKED_FIELDS = Object.freeze({
   relationship: relationships.RELATIONSHIP_TRACKED_FIELDS,
   memory: MEMORY_TRACKED_FIELDS,
   conversation: CONVERSATION_TRACKED_FIELDS,
-  task_context: TASK_CONTEXT_TRACKED_FIELDS
+  task_context: TASK_CONTEXT_TRACKED_FIELDS,
+  graph_node: graph.GRAPH_NODE_TRACKED_FIELDS,
+  graph_edge: graph.GRAPH_EDGE_TRACKED_FIELDS
 });
 
 function pick(row, fields) {

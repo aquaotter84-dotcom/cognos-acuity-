@@ -22,8 +22,12 @@ try {
     // outbox (2) and ticks (2).
     // Phase 20 added 2: the promotion queue and its decision point.
     // Phase 21 added 2: the rung/evidence read and the evidence-recording write.
-    assert.equal(nonStatic.length, 77);
-    if (!process.env.VERCEL) assert.equal(routes.length, 78);
+    // Phase 23 added 23: the atlas overview (1), nodes (9: list/create/detail/
+    // pin/retire/fork/revise/trust), edges (4: list/create/detail/retire),
+    // related/query/conflicts (3), snapshots (4: list/create/diff/detail),
+    // verify/coverage (2), and graph replay (1).
+    assert.equal(nonStatic.length, 100);
+    if (!process.env.VERCEL) assert.equal(routes.length, 101);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",
@@ -55,7 +59,30 @@ try {
       "get:/api/autonomy/promotions",
       "post:/api/autonomy/promotions/:id/decide",
       "get:/api/autonomy/rungs",
-      "post:/api/autonomy/rungs/:rung/evidence"
+      "post:/api/autonomy/rungs/:rung/evidence",
+      "get:/api/graph/overview",
+      "get:/api/graph/nodes",
+      "post:/api/graph/nodes",
+      "get:/api/graph/nodes/:id",
+      "post:/api/graph/nodes/:id/pin",
+      "post:/api/graph/nodes/:id/retire",
+      "post:/api/graph/nodes/:id/fork",
+      "post:/api/graph/nodes/:id/revise",
+      "post:/api/graph/nodes/:id/trust",
+      "get:/api/graph/edges",
+      "post:/api/graph/edges",
+      "get:/api/graph/edges/:id",
+      "post:/api/graph/edges/:id/retire",
+      "get:/api/graph/related/:nodeId",
+      "get:/api/graph/query",
+      "get:/api/graph/conflicts",
+      "get:/api/graph/snapshots",
+      "post:/api/graph/snapshots",
+      "get:/api/graph/snapshots/diff",
+      "get:/api/graph/snapshots/:id",
+      "get:/api/graph/verify",
+      "get:/api/graph/coverage",
+      "get:/api/graph/state/:entityType/:entityId"
     ]) assert.ok(routes.includes(route), `missing ${route}`);
   });
 

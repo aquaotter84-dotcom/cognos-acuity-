@@ -14,6 +14,7 @@ import { Menu, Network, RefreshCw, ShieldCheck } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
 import { Card, Empty, ErrorNote, Json, Pill, SYSTEM_TABS, fmtMoney, fmtMs, fmtNum, fmtTime } from '@/components/system/SystemUi';
+import GraphTab from '@/components/system/GraphTab';
 
 export default function System() {
   const { openSidebar } = useCognos();
@@ -133,13 +134,14 @@ export default function System() {
         <button onClick={openSidebar} className="md:hidden p-2 -ml-2 rounded-lg hover:bg-muted"><Menu className="w-5 h-5" /></button>
         <Network className="w-4 h-4 text-primary" />
         <h2 className="text-sm font-medium">System</h2>
-        <span className="text-[10px] text-muted-foreground/70 hidden sm:inline">Phase 14 event ledger · Phase 15 meta-cognition</span>
+        <span className="text-[10px] text-muted-foreground/70 hidden sm:inline">Phase 14 event ledger · Phase 15 meta-cognition · Phase 23 atlas</span>
         <div className="ml-auto flex items-center gap-2">
           {health && (
             <span className="hidden md:flex items-center gap-1.5 text-[10px] text-muted-foreground/70">
               <Pill tone={health.ledger ? 'ok' : 'muted'}>ledger {health.ledger ? 'on' : 'off'}</Pill>
               <Pill tone={health.coherence ? 'ok' : 'muted'}>coherence {health.coherence ? 'on' : 'off'}</Pill>
               <Pill tone={health.telemetry ? 'ok' : 'muted'}>telemetry {health.telemetry ? 'on' : 'off'}</Pill>
+              <Pill tone={health.graph?.enabled !== false ? 'ok' : 'muted'}>atlas {health.graph?.enabled !== false ? 'on' : 'off'}</Pill>
               <Pill tone="info">adaptive {health.adaptiveMode}</Pill>
             </span>
           )}
@@ -519,6 +521,8 @@ export default function System() {
               )}
             </>
           )}
+
+          {tab === 'graph' && <GraphTab />}
 
           {tab === 'laws' && (
             <>

@@ -51,6 +51,15 @@
 // never approve something the Governor would refuse, and can never refuse
 // something it would have approved (pin.veto_integrity: the veto semantics do
 // not change — coherence never votes).
+//
+// PHASE 23 ADDITION (enforcement): the Governor is the normative safety net
+// for the trust-annotated atlas. Every [graph_*] citation must name a node
+// actually loaded for this turn, and only verified/trusted rows may carry a
+// truth claim. A citation to an unloaded, retired, untrusted, or flagged node
+// is a finding under graph_citation_unverifiable — an epistemic flag, so the
+// draft goes back to the Synthesizer once and, if it still fails, the fixed
+// epistemic refusal ships. The atlas stays visible; unverified truth stays
+// unshipped.
 
 import { defineAgent } from "../shared/runtime.js";
 import { parseNoteLocators } from "../autonomy/goalEvidence.js";
@@ -217,6 +226,41 @@ function auditSourceCitations(text, record) {
   return findings;
 }
 
+/**
+ * Phase 23 — graph citations vs. the loaded atlas slice + its trust.
+ * Every [graph_*] in the answer must name a node loaded for this turn, and
+ * the node must be truth-bearing (verified/trusted, live). Compared exactly:
+ * graph ids are server-minted, so a near-miss is an invention, not a typo.
+ * Exported for the Phase 23 test harness.
+ */
+export function auditGraphCitations(text, record) {
+  const findings = [];
+  const supplied = new Map();
+  for (const node of (record?.graphNodes || [])) {
+    if (node?.id) supplied.set(String(node.id), node);
+  }
+  const pattern = /\[(graph_[a-z0-9]+)\]/gi;
+  let match;
+  let guard = 0;
+  while ((match = pattern.exec(String(text || ""))) !== null && guard++ < 80) {
+    const cited = match[1];
+    const hit = [...supplied.entries()].find(([id]) => id.toLowerCase() === String(cited).toLowerCase());
+    if (!hit) {
+      findings.push(`cites graph node [${cited}] but that node was not loaded for this turn`);
+      continue;
+    }
+    const [, node] = hit;
+    const trust = String(node?.trust || "untrusted").toLowerCase();
+    const status = String(node?.status || "active").toLowerCase();
+    if (status === "retired") {
+      findings.push(`cites graph node [${cited}] but that node is retired — cite its successor, not its history`);
+    } else if (trust !== "verified" && trust !== "trusted") {
+      findings.push(`cites graph node [${cited}] but that node is ${trust}: untrusted atlas rows are visible context, never truth-bearing until a user approves them`);
+    }
+  }
+  return findings;
+}
+
 function auditAuthorityCitations(text, record) {
   const findings = [];
   const memories = Array.isArray(record?.memories) ? record.memories : [];
@@ -284,11 +328,13 @@ export const governorAgent = defineAgent({
       const citationFindings = auditAuthorityCitations(text, record);
       const sourceCitationFindings = auditSourceCitations(text, record);
       const goalNoteCitationFindings = auditGoalNoteCitations(text, record);
+      const graphCitationFindings = auditGraphCitations(text, record);
       if (floorFindings.length) flags.push("minimum_cause_without_floor");
       if (citationFindings.length) flags.push("authority_citation_unverifiable");
       if (sourceCitationFindings.length) flags.push("source_citation_unverifiable");
       if (goalNoteCitationFindings.length) flags.push("goal_note_citation_unverifiable");
-      findings.push(...floorFindings, ...citationFindings, ...sourceCitationFindings, ...goalNoteCitationFindings);
+      if (graphCitationFindings.length) flags.push("graph_citation_unverifiable");
+      findings.push(...floorFindings, ...citationFindings, ...sourceCitationFindings, ...goalNoteCitationFindings, ...graphCitationFindings);
     }
     // The coherence measurement rides along; it does not vote.
     return {
