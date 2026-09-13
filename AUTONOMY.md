@@ -154,7 +154,7 @@ is a pin the UI cannot override (and the UI says so rather than silently failing
 page, where a flip takes effect on the next heartbeat without a restart and is
 appended to `workspace_audit`. Neither variable being set is no longer a dead
 end — the page hands over copyable setup steps. §4.11.1 has the design and the
-four rules that make the designer safe; `test/autonomy-ux.mjs` (16 checks across
+four rules that make the designer safe; `test/autonomy-ux.mjs` (17 checks across
 three harnesses: delegated, not delegated, pinned) pins all of it.
 
 **Autonomy is off by default.** `COGNOS_AUTONOMY_ENABLED` unset means the loop is
@@ -1112,7 +1112,11 @@ governance this document has spent four phases building:
    open (`executableProbe`) — otherwise designing while frozen, which is the
    whole point, would strip every skill and tell you your resident can do
    nothing. Every rung, notice channel and unbuilt tier is still honoured; only
-   the on/off is suspended, and only for description.
+   the on/off is suspended, and only for description. The catalogue handed to the
+   model reports the same verdict `isSkillEnabled` reaches — a rung this
+   deployment *enabled* is offered, not annotated as unavailable. A prompt that
+   overstates what is off is as much a lie as one that understates it, and it
+   costs the operator a design they were entitled to.
 3. **Budgets only clamp down** against `DEFAULT_GOAL_BUDGET`, and each reduction
    is reported. Scope is not settable from a draft at all: a model proposing its
    own scope would be proposing its own authority.
@@ -1606,7 +1610,7 @@ itself the credential.
 
 ### 8b. Phase 25 tests — `test/autonomy-ux.mjs`
 
-Sixteen checks, three harnesses in one process. The harness boundaries are the
+Seventeen checks, three harnesses in one process. The harness boundaries are the
 interesting part: `server/autonomy/settings.js` caches the stored switch at
 module scope and `process.env` survives `bootHarness`, so each boundary resets
 **both**. Forgetting either leaks a switch from one harness into the next, and
@@ -1643,6 +1647,14 @@ Then the harnesses:
 8. An overreaching draft is narrowed out loud: `webhook.post`, `web.search`,
    `notice.emit` and an invented `money.send` are each dropped **and named**, the
    ceilings do not move up, and no row exists afterwards.
+8a. **A rung this deployment enabled is offered, not denied.** With
+   `COGNOS_AUTONOMY_SEARCH` off, `web.search` is dropped and named; with it on,
+   the same draft loses nothing and the catalogue the model received says
+   `search rung is on` — while `webhook.post` still says `NOT executable`. This
+   one caught a prompt lying rather than a clamp failing: the catalogue used to
+   annotate every rung-gated skill as unavailable regardless of whether the rung
+   was on, so the model was told a capability the deployment had was out of
+   reach and would refuse to propose a legitimate design.
 9. A broken model answer is a 502 with `malformed_draft`, prose-without-a-draft
    is the same case, an empty conversation is a 400, and the draft survives all three.
 10. Creating while off is a 409 that names the switch; a nameless draft is a 400;

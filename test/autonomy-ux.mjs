@@ -360,6 +360,61 @@ try {
     A.model.reset();
   });
 
+  await test("a rung this deployment enabled is offered to the model, not denied", async () => {
+    // web.search is gated behind COGNOS_AUTONOMY_SEARCH. With the rung OFF the
+    // catalogue has to say so. With the rung ON it must not claim a capability
+    // this deployment has is out of reach — that is not a clamp failing, it is a
+    // prompt lying, and the model then refuses to propose a legitimate design.
+    A.model.state.residentDraft = {
+      reply: "Drafted, with a search step each morning.",
+      questions: [],
+      resident: {
+        name: "Hearing Searcher", slug: "hearing-searcher",
+        purpose: "Find hearings", brief: "Search once a day and note what is new.",
+        skills: ["web.search", "web.fetch", "note.append"],
+        heartbeat_minutes: 1440
+      }
+    };
+
+    const rungOff = await A.raw("/api/autonomy/designer", {
+      method: "POST",
+      body: { messages: [{ role: "user", content: "Search the county site for hearings." }] }
+    });
+    assert.equal(rungOff.status, 200);
+    assert.deepEqual(rungOff.json.droppedSkills.map(x => x.id), ["web.search"],
+      "off, the search skill is dropped and named");
+    assert.match(rungOff.json.droppedSkills[0].note, /search rung/);
+    assert.ok(!rungOff.json.draft.skills.includes("web.search"));
+
+    process.env.COGNOS_AUTONOMY_SEARCH = "true";
+    try {
+      const rungOn = await A.raw("/api/autonomy/designer", {
+        method: "POST",
+        body: { messages: [{ role: "user", content: "Search the county site for hearings." }] }
+      });
+      assert.equal(rungOn.status, 200);
+      assert.deepEqual(rungOn.json.droppedSkills, [], "on, the same draft loses nothing");
+      assert.deepEqual(rungOn.json.draft.skills, ["web.search", "web.fetch", "note.append"]);
+
+      const prompt = A.model.requests.filter(r => r.role === "residentDesigner").pop().content;
+      const searchLine = prompt.split("\n").find(line => line.startsWith("- web.search"));
+      assert.ok(searchLine, "web.search is still in the catalogue");
+      assert.match(searchLine, /search rung is on/, "and the catalogue says the rung is available");
+      assert.ok(!/NOT executable/.test(searchLine), "it is not marked unexecutable");
+
+      // Honesty runs both ways: a tier that is genuinely off still says so.
+      const webhookLine = prompt.split("\n").find(line => line.startsWith("- webhook.post"));
+      assert.match(webhookLine, /NOT executable/, "webhook.post is still reported as unavailable");
+      assert.match(webhookLine, /externalWrites rung, which is off here/);
+
+      assert.equal((await A.sql(`SELECT COUNT(*)::int AS n FROM autonomy_agents`))[0].n, 0,
+        "an enabled rung makes a skill proposable, not a row");
+    } finally {
+      delete process.env.COGNOS_AUTONOMY_SEARCH;   // later harnesses must not inherit it
+      A.model.reset();
+    }
+  });
+
   await test("a broken model answer is a friendly failure, and the previous draft survives", async () => {
     A.model.state.malformed = { roles: ["residentDesigner"], content: "", finishReason: "length" };
     const turn = await A.raw("/api/autonomy/designer", {
