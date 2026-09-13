@@ -54,6 +54,31 @@ records; each completed chat trace also exposes its source and agent provenance.
 The **Projects** page lists research folders with their conversations and
 hashed evidence; the chat sidebar groups project chats beneath each project.
 
+## Accounts & multi-tenant workspaces (Phase 24)
+
+Sign in **by email or with Google**, get a private, isolated workspace over the
+trust-annotated atlas, group workspaces with public/private buckets, sealed
+provenance on every row, JWT auth with logout revocation, and an append-only
+audit trail. Strictly additive — the single-tenant app above works unchanged.
+
+- `server/accounts/` — scrypt passwords, dependency-free HS256 JWT with
+  `sub`/`ws`/`jti` claims and a Postgres revocation blocklist, Google OAuth +
+  GIS id_token verification against Google's JWKS (RS256-only, nonce, verified-
+  email linking), and the trusted-fact registry: user facts are asserted only
+  from trusted Atlas rows (`[graph_mu02br2ofvew5mqm]` seeds the default
+  display name "Patches"), never from NOT-truth-bearing context.
+- `server/workspaces/` — the isolation gate (namespace `ws-<workspace_id>`,
+  `group-public-<gid>`, `group-private-<gid>`), the group role matrix
+  (owner writes both buckets; members read public; flagged members read/write
+  private), the spec seal `hash(content || timestamp || creator_id ||
+  workspace_id)` (mismatch = 422 + audited incident), and soft-delete retire.
+- Routes: `/api/accounts/*`, `/api/workspaces/*`, `/api/groups/*` — see
+  [docs/WORKSPACES.md](./docs/WORKSPACES.md) and
+  [docs/openapi.yaml](./docs/openapi.yaml). UI at `/signin`.
+- Tests: `npm run phase24` (40 checks incl. a full Google flow against a local
+  mock OIDC provider). Rotate the audit trail with
+  `node scripts/audit-rotate.mjs`.
+
 ## Identity and self-knowledge
 
 The product and assistant are **COGNOS** (pronounced “KOG-noss”), not Cognito.

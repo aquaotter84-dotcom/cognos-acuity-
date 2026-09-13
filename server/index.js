@@ -91,6 +91,10 @@ import { registerAutonomyRoutes } from "./routes/autonomy.js";
 import { autonomyConfig } from "./autonomy/config.js";
 import { registerProjectRoutes } from "./routes/projects.js";
 import { registerGraphRoutes } from "./routes/graph.js";
+import { registerAccountRoutes } from "./routes/accounts.js";
+import { registerWorkspaceRoutes } from "./routes/workspaces.js";
+import { googleConfigured } from "./accounts/google.js";
+import { resolveTokenTtlMs } from "./accounts/jwt.js";
 
 const logger = createLogger("server");
 export const app = express();
@@ -122,6 +126,9 @@ app.use((req, res, next) => {
   const secret = process.env.COGNOS_RUNTIME_SECRET;
   if (!secret) return next();                       // no gate configured
   if (req.path === "/gate" || req.path === "/api/health") return next();
+  // Phase 24: the account surface IS authentication — it carries its own
+  // JWT/Bearer controls, so the cookie gate must not sit in front of it.
+  if (req.path.startsWith("/api/accounts/") || req.path.startsWith("/api/workspaces/") || req.path.startsWith("/api/groups/")) return next();
   if (req.cookies?.[GATE_COOKIE] === secret) return next();
   if (req.path.startsWith("/api/")) return res.status(401).json({ error: "Unauthorized" });
   res.status(401).type("html").send("<h1>COGNOS</h1><p>Access key required.</p>");
@@ -131,7 +138,8 @@ function wrap(handler) {
   return (req, res) => Promise.resolve(handler(req, res)).catch(err => {
     logger.error("route error", { path: req.path, error: String(err) });
     if (res.headersSent) return res.end();
-    res.status(err.status || 500).json({ error: err.message || "Internal error" });
+    // Phase 24: domain errors carry a stable machine code alongside the message.
+    res.status(err.status || 500).json({ error: err.message || "Internal error", ...(err.code ? { code: err.code } : {}) });
   });
 }
 
@@ -198,6 +206,16 @@ app.get("/api/health", (req, res) => {
     adaptiveMode: adaptive.mode,
     adaptiveModeForced: adaptive.forced,
     strategy: CANONICAL_STRATEGY_ID,
+    // Phase 24 — accounts & multi-tenant workspaces. Booleans only; no secret
+    // material, no client ids beyond the public OAuth one.
+    accounts: {
+      jwtSecretConfigured: Boolean(process.env.COGNOS_JWT_SECRET || process.env.COGNOS_RUNTIME_SECRET),
+      tokenTtlMs: (() => { try { return resolveTokenTtlMs(); } catch { return null; } })(),
+      google: {
+        configured: googleConfigured(),
+        clientId: process.env.GOOGLE_CLIENT_ID || null
+      }
+    },
     laws: LAWS.length,
     lawLayerVersion: LAW_LAYER_VERSION,
     identityVersion: IDENTITY_VERSION
@@ -297,6 +315,12 @@ app.get("/api/activity", wrap(async (req, res) => {
 
 // Phase 14/15 routes live in focused modules so the HTTP composition root stays
 // auditable without mixing domain query implementations into the chat route.
+// Phase 24 — accounts (email + Google sign-in) and isolated workspaces. The
+// account service and its auth middleware are created ONCE here; the workspace
+// routes receive the same manager instance so the isolation gate is singular.
+const { service: accountService, requireAuth } = registerAccountRoutes(app, { wrap, db, logger });
+registerWorkspaceRoutes(app, { wrap, db, logger, requireAuth, manager: accountService.manager });
+
 registerKnowledgeRoutes(app, { wrap, db, logger });
 registerMetaRoutes(app, { wrap, db, logger, getSystemConfig });
 registerSourceRoutes(app, { wrap, db, logger });

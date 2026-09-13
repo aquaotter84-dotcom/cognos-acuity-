@@ -1,0 +1,978 @@
+openapi: 3.1.0
+info:
+  title: COGNOS Accounts & Multi-Tenant Workspaces (Phase 24)
+  version: "24.0"
+  summary: Email + Google sign-in, isolated append-only workspaces over the trust-annotated Atlas.
+  description: |
+    Multi-tenant workspace layer over the Phase 23 trust-annotated knowledge
+    graph ("Atlas").
+
+    ## Provenance rule
+    User facts are asserted ONLY from trusted Atlas rows:
+
+      * `[graph_mu02bqyvnd1cmlmv]` — user.name.full "Jeremy Bryan Perritt" (trusted, truth-bearing)
+      * `[graph_mu02bqun6vptjczp]` — user.role, developer of the assistant (trusted)
+      * `[graph_mu02br2ofvew5mqm]` — user.preferred.name "Patches" (trusted; seeds the default display_name)
+      * `[graph_mu02br6ged2v5219]` — user.values: autonomy, deep work, maker mindset, subtractive innovation, opposes bureaucracy & merit-ocracy (trusted)
+      * `[graph_mu02bra9qiw2n5kp]` — user.name.variant "Jeremy Brian Perritt" (trusted)
+      * `[graph_mu01yzi4hosh3erz]` — user.name.middle spelled "Bryan" (trusted)
+      * `[graph_mtzt7k3ei9ozy2ci]` — conservative duplicate of the name (trusted)
+      * `[graph_mtzt7jzlg5oklort]` — assistant no longer tied to the Base 44 integration layer (trusted)
+
+    Rows marked NOT truth-bearing are contextual only and never generate
+    assertions.
+
+    ## Auth
+    Bearer JWT (HS256): claims `sub` (user_id), `ws` (workspace_id — the only
+    workspace the bearer may touch), `jti` (revocable via logout blocklist).
+    Sign in with email+password (scrypt) or Google (id_token verified against
+    Google's JWKS; account linking requires a verified email).
+
+    ## Sealed provenance
+    Every workspace node carries `provenance.ws_seal` =
+    hash(content || timestamp || creator_id || workspace_id) plus the atlas
+    seal `content_sha256` (covers the provenance block, including `run_id` and
+    `source_graph_id`). A mutation whose claimed seal fails any segment is a
+    422 with a logged incident.
+
+    ## Append-only
+    No overwrite, no delete: creates append (dedupe returns the live head);
+    removal is a `retire` transition that keeps the row and its lineage.
+
+    ## Namespaces
+    `ws-<workspace_id>` for private workspaces; `group-public-<group_id>` and
+    `group-private-<group_id>` for group buckets. The namespace is both the
+    node-key prefix and the atlas scoping value; every read and write passes
+    the isolation gate bound to the JWT's `ws` claim and the group role matrix.
+servers:
+  - url: /
+tags:
+  - name: accounts
+  - name: auth-google
+  - name: workspaces
+  - name: groups
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Ns:
+      name: ns
+      in: path
+      required: true
+      description: |
+        Namespace token: `ws-<workspace_id>` (private), `group-public-<group_id>`
+        or `group-private-<group_id>`. Enforced against the JWT `ws` claim and
+        group membership; anything else is a 400 or 403.
+      schema:
+        type: string
+        pattern: '^(ws-|group-public-|group-private-)[0-9a-fA-F-]{36}$'
+      example: ws-0b9e6c2e-8f6a-4c1d-9d3a-2f4b5c6d7e8f
+    GroupId:
+      name: groupId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    NodeId:
+      name: nodeId
+      in: path
+      required: true
+      schema:
+        type: string
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    Unauthorized:
+      description: Missing, invalid, or revoked token (401).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Cross-workspace or role-matrix denial (403) — audited as isolation.denied.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+
+    Account:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+          description: |
+            Defaults to the trusted preferred-name fact from Atlas row
+            [graph_mu02br2ofvew5mqm] ("Patches") unless provided.
+        auth_provider:
+          type: string
+          enum: [email, google, email+google]
+        avatar_url:
+          type: [string, "null"]
+        workspace_id:
+          type: string
+          format: uuid
+        workspace_namespace:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_login_at:
+          type: [string, "null"]
+          format: date-time
+
+    TokenPair:
+      type: object
+      required: [access_token, token_type, account]
+      properties:
+        access_token:
+          type: string
+          description: HS256 JWT; claims sub, ws, jti, iss, aud, iat, exp.
+        token_type:
+          type: string
+          enum: [Bearer]
+        account:
+          $ref: '#/components/schemas/Account'
+        workspace:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+            namespace:
+              type: string
+              example: ws-0b9e6c2e-8f6a-4c1d-9d3a-2f4b5c6d7e8f
+        google:
+          type: object
+          description: Present only when this call created or linked the account.
+          properties:
+            created:
+              type: boolean
+            linked:
+              type: boolean
+
+    TrustedFact:
+      type: object
+      properties:
+        graph_id:
+          type: string
+          example: '[graph_mu02br2ofvew5mqm]'
+        subject:
+          type: string
+          example: user.preferred.name
+        value:
+          type: [string, array]
+          items:
+            type: string
+        trust:
+          type: string
+          enum: [trusted]
+        note:
+          type: string
+
+    NodeProvenance:
+      type: object
+      properties:
+        creator_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+        namespace:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+          description: Sealed into ws_seal.
+        ws_seal:
+          type: string
+          description: hash(content || timestamp || creator_id || workspace_id) — the Phase 24 spec seal.
+        run_id:
+          type: [string, "null"]
+        source_graph_id:
+          type: [string, "null"]
+          description: |
+            Citation of the Atlas row this node derives from, when any —
+            e.g. "[graph_mu01yzi4hosh3erz]" for middle-name verification.
+        hash:
+          type: string
+          description: Atlas seal over the row + this provenance block (minus the seal itself).
+
+    Node:
+      type: object
+      properties:
+        id:
+          type: string
+        workspace_id:
+          type: string
+          description: For group buckets this IS the bucket token, e.g. group-public-<uuid>.
+        node_key:
+          type: string
+          description: Namespaced key — prefixed with the workspace namespace per the isolation design.
+          example: ws-0b9e6c2e-8f6a-4c1d-9d3a-2f4b5c6d7e8f:concept:deep-work-charter
+        type:
+          type: string
+          enum: [concept, person, source, event, intent]
+        label:
+          type: string
+        content:
+          type: string
+        status:
+          type: string
+          enum: [active, pinned, retired]
+        trust:
+          type: string
+          enum: [untrusted, trusted, flagged]
+        content_sha256:
+          type: string
+        provenance:
+          $ref: '#/components/schemas/NodeProvenance'
+        created:
+          type: boolean
+
+    Edge:
+      type: object
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [is-about, in-source, refines, contradicts, supports, revision, fork]
+        src_node_id:
+          type: string
+        dst_node_id:
+          type: string
+        trust:
+          type: string
+        weight:
+          type: number
+        provenance:
+          $ref: '#/components/schemas/NodeProvenance'
+
+    AuditRow:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        ts_ms:
+          type: integer
+        user_id:
+          type: string
+        workspace_id:
+          type: string
+        action:
+          type: string
+          example: node.created
+        resource_id:
+          type: [string, "null"]
+        detail:
+          type: object
+
+    Bucket:
+      type: object
+      properties:
+        namespace:
+          type: string
+          example: group-public-3f1d6c2e-8f6a-4c1d-9d3a-2f4b5c6d7e8f
+        read:
+          type: boolean
+        write:
+          type: boolean
+
+    Group:
+      type: object
+      properties:
+        group_id:
+          type: string
+          format: uuid
+        group_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        your_role:
+          type: string
+          enum: [owner, member]
+        buckets:
+          type: object
+          properties:
+            public:
+              $ref: '#/components/schemas/Bucket'
+            private:
+              $ref: '#/components/schemas/Bucket'
+        owner:
+          type: object
+          properties:
+            id:
+              type: string
+            email:
+              type: [string, "null"]
+              format: email
+        members:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              email:
+                type: [string, "null"]
+                format: email
+              can_write_private:
+                type: boolean
+
+paths:
+
+  /api/accounts/register:
+    post:
+      tags: [accounts]
+      summary: Register an account; creates the default private workspace in the same transaction.
+      description: |
+        display_name defaults from trusted Atlas row [graph_mu02br2ofvew5mqm]
+        ("Patches") when not provided.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+                  maxLength: 200
+                display_name:
+                  type: string
+                  maxLength: 80
+      responses:
+        '201':
+          description: Created — returns the JWT, account, and workspace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '400':
+          description: Invalid email or weak password.
+        '409':
+          description: Email already registered.
+        '429':
+          description: Registration throttle.
+
+  /api/accounts/login:
+    post:
+      tags: [accounts]
+      summary: Email + password sign-in.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          description: Invalid credentials — identical for unknown emails (timing-equalized).
+
+  /api/accounts/logout:
+    post:
+      tags: [accounts]
+      summary: Revoke the bearer token (jti to the blocklist until the token's own expiry).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/accounts/me:
+    get:
+      tags: [accounts]
+      summary: Profile + authoritative facts, each citing its trusted Atlas row id.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: |
+            The display-name policy names its source row ([graph_mu02br2ofvew5mqm]).
+            trusted_atlas_facts lists the full annotated registry, including
+            [graph_mu02bqyvnd1cmlmv] (name.full), [graph_mu02bqun6vptjczp] (role),
+            [graph_mu02br6ged2v5219] (values), [graph_mu02bra9qiw2n5kp]
+            (name.variant), [graph_mu01yzi4hosh3erz] (name.middle),
+            [graph_mtzt7k3ei9ozy2ci] (conservative duplicate) and
+            [graph_mtzt7jzlg5oklort] (Base 44 decoupling).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account:
+                    $ref: '#/components/schemas/Account'
+                  workspace:
+                    type: object
+                  authoritative_facts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrustedFact'
+                  trusted_atlas_facts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrustedFact'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/accounts/auth/google/status:
+    get:
+      tags: [auth-google]
+      summary: Whether Google sign-in is configured (exposes only the public client id).
+      responses:
+        '200':
+          description: Configured flag, client_id, verification mode.
+
+  /api/accounts/auth/google/start:
+    get:
+      tags: [auth-google]
+      summary: Begin the OAuth authorization-code flow (302 to Google; format=json returns the URL).
+      description: Persists a single-use state+nonce pair (10-minute TTL) before redirecting.
+      parameters:
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [json]
+        - name: login_hint
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: JSON mode — authorize_url, state, expires_in.
+        '302':
+          description: Browser mode — redirect to the Google consent screen.
+        '501':
+          description: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not configured.
+
+  /api/accounts/auth/google/callback:
+    get:
+      tags: [auth-google]
+      summary: OAuth callback — exchanges the code, verifies the id_token, finds or creates the account.
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: error
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: |
+            JSON tokens; or, when COGNOS_OAUTH_REDIRECT_TO is set, a 302 handing
+            the token to the frontend via the URL fragment.
+        '401':
+          description: Unknown, expired, or replayed state — or an id_token that failed verification.
+
+  /api/accounts/auth/google/verify:
+    post:
+      tags: [auth-google]
+      summary: Google Identity Services / One Tap credential exchange.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential]
+              properties:
+                credential:
+                  type: string
+                  description: Google id_token.
+                nonce:
+                  type: [string, "null"]
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          description: Token rejected — or email unverified (code google_email_unverified).
+
+  /api/workspaces:
+    get:
+      tags: [workspaces]
+      summary: Everything the bearer can see — private namespace plus group buckets with the role matrix applied.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/workspaces/{ns}/nodes:
+    parameters:
+      - $ref: '#/components/parameters/Ns'
+    get:
+      tags: [workspaces]
+      summary: List nodes in the namespace (cross-workspace access is a 403, audited).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: trust
+          in: query
+          schema:
+            type: string
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: truthOnly
+          in: query
+          schema:
+            type: string
+            enum: ['0', '1']
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+      responses:
+        '200':
+          description: OK.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [workspaces]
+      summary: Create a node — append-only, sealed provenance, namespaced key.
+      description: |
+        `verified` trust is refused here (400): it is minted only by an explicit
+        user pin on the atlas curation routes. If `provenance.hash` is supplied,
+        it must equal hash(content || timestamp || creator_id || workspace_id) —
+        a mismatch is a 422 plus a provenance.mismatch audit incident.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [label]
+              properties:
+                type:
+                  type: string
+                  enum: [concept, person, source, event, intent]
+                  default: concept
+                label:
+                  type: string
+                  maxLength: 240
+                content:
+                  type: string
+                trust:
+                  type: string
+                  enum: [untrusted, trusted, flagged]
+                  default: untrusted
+                confidence:
+                  type: number
+                  minimum: 0
+                  maximum: 1
+                source_graph_id:
+                  type: string
+                  description: Citation of the trusted Atlas row this derives from, e.g. '[graph_mu01yzi4hosh3erz]'.
+                run_id:
+                  type: string
+                provenance:
+                  type: object
+                  properties:
+                    timestamp:
+                      type: string
+                      format: date-time
+                    hash:
+                      type: string
+                      description: Client-claimed ws_seal — verified by the server, never trusted.
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '200':
+          description: Deduplicated — the existing live head was returned.
+        '400':
+          description: Missing label, verified trust refused, or bad namespace shape.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: Claimed provenance seal failed a segment; incident logged.
+
+  /api/workspaces/{ns}/nodes/{nodeId}:
+    parameters:
+      - $ref: '#/components/parameters/Ns'
+      - $ref: '#/components/parameters/NodeId'
+    get:
+      tags: [workspaces]
+      summary: Read one node (403 if it belongs to a different namespace).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: No such node in the atlas.
+
+  /api/workspaces/{ns}/nodes/{nodeId}/retire:
+    parameters:
+      - $ref: '#/components/parameters/Ns'
+      - $ref: '#/components/parameters/NodeId'
+    post:
+      tags: [workspaces]
+      summary: Soft delete — a transition, never a delete.
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Retired — row and lineage preserved.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/workspaces/{ns}/edges:
+    parameters:
+      - $ref: '#/components/parameters/Ns'
+    get:
+      tags: [workspaces]
+      summary: List edges in the namespace.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: kind
+          in: query
+          schema:
+            type: string
+        - name: nodeId
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 200
+      responses:
+        '200':
+          description: OK.
+    post:
+      tags: [workspaces]
+      summary: Add an edge; both endpoints must already live in this namespace.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [src_node_id, dst_node_id]
+              properties:
+                src_node_id:
+                  type: string
+                dst_node_id:
+                  type: string
+                kind:
+                  type: string
+                  default: is-about
+                weight:
+                  type: number
+                  default: 0.5
+                trust:
+                  type: string
+                  default: untrusted
+                source_graph_id:
+                  type: [string, "null"]
+                run_id:
+                  type: [string, "null"]
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Edge'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/workspaces/{ns}/query:
+    parameters:
+      - $ref: '#/components/parameters/Ns'
+    get:
+      tags: [workspaces]
+      summary: Relevance query bounded to the namespace (the atlas query engine).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 8
+        - name: truthOnly
+          in: query
+          schema:
+            type: string
+            enum: ['0', '1']
+      responses:
+        '200':
+          description: OK.
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/workspaces/{ns}/verify:
+    parameters:
+      - $ref: '#/components/parameters/Ns'
+    get:
+      tags: [workspaces]
+      summary: Provenance audit — checks both seals per node; failures are audited.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 500
+      responses:
+        '200':
+          description: ok, checked, mismatches, rows.
+
+  /api/workspaces/{ns}/audit:
+    parameters:
+      - $ref: '#/components/parameters/Ns'
+    get:
+      tags: [workspaces]
+      summary: The append-only audit trail (owners see a group bucket's whole trail; members their own rows).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: since
+          in: query
+          description: Epoch milliseconds.
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            maximum: 500
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  namespace:
+                    type: string
+                  count:
+                    type: integer
+                  rows:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditRow'
+
+  /api/groups:
+    get:
+      tags: [groups]
+      summary: Groups the bearer belongs to (with bucket permissions).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK.
+    post:
+      tags: [groups]
+      summary: Create a group; the creator is the owner; both buckets materialize immediately.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  maxLength: 120
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+
+  /api/groups/{groupId}:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [groups]
+      summary: Group detail (members only; others get 403).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/groups/{groupId}/members:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    post:
+      tags: [groups]
+      summary: Owner adds a member by email or user_id; optional can_write_private flag.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                user_id:
+                  type: string
+                can_write_private:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Updated group.
+        '403':
+          description: Owner only.
+
+  /api/groups/{groupId}/members/{userId}/flag:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+      - $ref: '#/components/parameters/UserId'
+    post:
+      tags: [groups]
+      summary: Owner flips the member's private-bucket read/write flag.
+      security:
+        - bearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                can_write_private:
+                  type: boolean
+                  default: true
+      responses:
+        '200':
+          description: Updated group.
+
+  /api/groups/{groupId}/members/{userId}:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+      - $ref: '#/components/parameters/UserId'
+    delete:
+      tags: [groups]
+      summary: Owner removes a member (also clears the private-writer flag).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Updated group.
+
+security: []

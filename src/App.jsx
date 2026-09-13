@@ -14,6 +14,9 @@ const Identity = lazy(() => import('@/pages/Identity'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const Projects = lazy(() => import('@/pages/Projects'));
 const Autonomy = lazy(() => import('@/pages/Autonomy'));
+// Phase 24 — the accounts front door (email + Google). The legacy routes stay
+// single-tenant and ungated; /signin talks to /api/accounts + /api/workspaces.
+const SignIn = lazy(() => import('@/pages/SignIn'));
 
 function PageFallback() {
   return (
@@ -39,6 +42,8 @@ export default function App() {
               <Route path="/about" element={<Identity />} />
               <Route path="/settings" element={<Settings />} />
             </Route>
+            {/* Phase 24 — outside CognosLayout on purpose: a clean auth screen. */}
+            <Route path="/signin" element={<SignIn />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>

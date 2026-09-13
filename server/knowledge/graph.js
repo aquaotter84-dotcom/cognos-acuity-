@@ -417,6 +417,84 @@ export async function createNode(run, {
 }
 
 /**
+ * Phase 24 — create a node inside a workspace namespace (multi-tenant layer).
+ *
+ * Identical machinery to createNode() — same insert, same seal, same ledger
+ * event — with two differences the isolation model requires:
+ *   1. the node_key carries the namespace prefix
+ *      (`ws-<workspace_id>:concept:label` or
+ *      `group-public-<group_id>:concept:label`), per the Phase 24 brief's
+ *      "every node/edge key is prefixed" rule;
+ *   2. the caller-supplied extra provenance (creator_id, namespace token,
+ *      spec seal, source graph id) is folded into the provenance block BEFORE
+ *      the seal is computed, so the atlas seal still covers and verifies it.
+ * Verified trust is never minted here: trust in {untrusted, trusted, flagged}
+ * only; `verified` remains a user pin act on the curation routes.
+ */
+export async function createNamespacedNode(run, {
+  workspaceId, keyNamespace, type = "concept", label, content = null,
+  trust = "untrusted", confidence = 0.5, status = "active",
+  projectId = null, conversationId = null,
+  sourceMemoryId = null, sourceMessageId = null, sourceRunId = null, sourceIds = [],
+  actor = "api", note = null, provenanceExtras = null, tsMs = null
+}) {
+  const clean = cleanLabel(label);
+  const body = cleanText(content ?? clean, 4000);
+  const prefix = String(keyNamespace || "").replace(/:$/, "");
+  if (!prefix) {
+    const err = new Error("createNamespacedNode requires keyNamespace");
+    err.status = 500;
+    throw err;
+  }
+  const namespacedKey = `${prefix}:${nodeKey(type, clean)}`;
+  const live = await run(
+    `SELECT * FROM graph_nodes WHERE workspace_id = $1 AND node_key = $2 AND successor_id IS NULL ORDER BY version DESC LIMIT 1`,
+    [workspaceId, namespacedKey]
+  );
+  if (live[0]) return { node: live[0], events: [], existing: true };
+
+  const id = newId("graph");
+  const version = 1;
+  const prov = {
+    ...buildProvenance({
+      actor, version, runId: sourceRunId, messageId: sourceMessageId,
+      conversationId, memoryId: sourceMemoryId, sourceIds, note, tsMs
+    }),
+    ...(provenanceExtras || {})
+  };
+  const draft = {
+    type: normalizeNodeType(type), label: clean, content: body,
+    trust: ["untrusted", "trusted", "flagged"].includes(normalizeTrust(trust)) ? normalizeTrust(trust) : "untrusted",
+    confidence: clamp01(num(confidence, 0.5)),
+    version, predecessor_id: null
+  };
+  const hash = computeNodeHash(draft, prov);
+  const sealed = { ...prov, hash };
+  const created = await insertNode(run, {
+    id, workspace_id: workspaceId, project_id: projectId, conversation_id: conversationId,
+    type: draft.type, label: clean, node_key: namespacedKey, content: body,
+    content_sha256: hash, status: NODE_STATUSES.includes(status) ? status : "active",
+    trust: draft.trust, confidence: draft.confidence, version,
+    predecessor_id: null, successor_id: null, provenance: sealed,
+    source_memory_id: sourceMemoryId, source_message_id: sourceMessageId,
+    source_run_id: sourceRunId, source_ids: Array.from(new Set((sourceIds || []).map(String))).slice(0, 12)
+  });
+  const events = await appendEvents(run, [{
+    workspaceId,
+    entityType: "graph_node",
+    entityId: id,
+    transition: "graph_node_created",
+    toState: { ...graphNodeState(created), id, node_key: created.node_key, content_sha256: hash },
+    delta: { trust: draft.trust, version },
+    sourceRunId: sourceRunId ?? null,
+    sourceMessageId: sourceMessageId ?? null,
+    sourceKind: "api",
+    payload: { type: draft.type, label: clean, namespace: prefix, provenance: sealed }
+  }]);
+  return { node: created, events, created: true };
+}
+
+/**
  * Create an edge between two nodes in the same workspace. Both endpoints must
  * exist; cross-workspace links are refused. Duplicate active edges resolve to
  * the existing row.
@@ -424,7 +502,8 @@ export async function createNode(run, {
 export async function createEdge(run, {
   workspaceId, srcNodeId, dstNodeId, kind = "is-about",
   trust = "untrusted", weight = 0.5,
-  sourceRunId = null, sourceMessageId = null, actor = "system", note = null, tsMs = null
+  sourceRunId = null, sourceMessageId = null, actor = "system", note = null, tsMs = null,
+  provenanceExtras = null
 }) {
   const ekind = normalizeEdgeKind(kind);
   const [src, dst] = await Promise.all([getNode(run, srcNodeId), getNode(run, dstNodeId)]);
@@ -442,7 +521,11 @@ export async function createEdge(run, {
   if (live) return { edge: live, events: [], existing: true };
 
   const id = newId("gedge");
-  const prov = buildProvenance({ actor, version: 1, runId: sourceRunId, messageId: sourceMessageId, note, tsMs });
+  const prov = {
+    ...buildProvenance({ actor, version: 1, runId: sourceRunId, messageId: sourceMessageId, note, tsMs }),
+    ...(provenanceExtras || {})
+  };
+
   const draft = {
     src_node_id: String(srcNodeId), dst_node_id: String(dstNodeId),
     kind: ekind, trust: normalizeTrust(trust), weight: clamp01(num(weight, 0.5)),
