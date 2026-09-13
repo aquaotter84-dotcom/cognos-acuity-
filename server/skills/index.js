@@ -15,10 +15,16 @@
 // — the last of which phase15.complexity_justification requires of every
 // subsystem.
 //
-// Phase 19 shipped T0–T2 only. Phase 20 adds T3 (external READ): web.fetch and
+// Phase 19 shipped T0–T2 only. Phase 20 added T3 (external READ): web.fetch and
 // web.search stage an `external_read` effect the Action Governor judges, and
-// subagent.spawn runs a narrow T0/T1-only worker. T3 cannot write externally;
-// T4 (external write) and T5 (irreversible) stay refused until Phases 21–22.
+// subagent.spawn runs a narrow T0/T1-only worker.
+//
+// Phase 21 adds T4 (external WRITE) — one adapter, `webhook.post`. It is the
+// only externally-writing skill in the registry, it is off unless the rung flag
+// is set, and even then the Action Governor refuses a LIVE release until a
+// recorded shadow corpus justifies it. T5 (irreversible) stays refused until
+// Phase 22, because an irreversible act needs per-effect human approval and
+// that surface is not built.
 
 import { appendNote } from "./noteAppend.js";
 import { readEvidence } from "./evidenceRead.js";
@@ -30,6 +36,7 @@ import { emitNotice } from "./noticeEmit.js";
 import { spawnSubagent } from "./subagentSpawn.js";
 import { fetchUrl } from "./webFetch.js";
 import { searchWebSkill } from "./webSearch.js";
+import { postWebhook } from "./webhookPost.js";
 
 /** Effect tiers. The Action Governor speaks this vocabulary. */
 export const TIERS = Object.freeze({
@@ -186,6 +193,37 @@ export const SKILL_REGISTRY = Object.freeze({
       query: { type: "string", max: 500, required: true }
     },
     execute: searchWebSkill
+  }),
+
+  // --- T4: external write (Phase 21, Rung 4) ---------------------------------
+  // A webhook is a trigger, not a message: it can deploy, trade, unlock a door
+  // or post publicly. So it is judged harder than a read of the same URL —
+  // https only, destinations granted in scope rows only, an argument-header
+  // allowlist that refuses Authorization, a byte-capped body, signing by
+  // secret REFERENCE, and a shadow corpus before any live delivery.
+  //
+  // maxPayloadBytes is the envelope (body + headers + provenance). The body's
+  // own cap is config.webhook.maxBodyBytes, checked separately in bytes, so a
+  // multi-byte body that fits the character schema but not the byte cap is
+  // refused rather than truncated.
+  "webhook.post": def({
+    tier: "T4",
+    effectType: "external_write",
+    killSwitch: "COGNOS_SKILL_WEBHOOK_POST",
+    requiresRung: "externalWrites",
+    maxPayloadBytes: 40_960,
+    timeoutMs: 12_000,
+    summary: "POST one body to one destination granted in the goal's scope. https only, judged per delivery, shadow until a corpus earns live.",
+    idempotencyRule: "keyed by (goal, url, body): the same trigger stages once however many steps ask for it, and a released key returns its receipt instead of sending again",
+    args: {
+      url: { type: "string", max: 2000, required: true },
+      method: { type: "enum", values: ["POST"], required: false },
+      headers: { type: "object", required: false },
+      body: { type: "string", max: 32_768, required: true },
+      secret_ref: { type: "string", max: 64, required: false },
+      reason: { type: "string", max: 300, required: false }
+    },
+    execute: postWebhook
   })
 });
 
@@ -238,7 +276,11 @@ export function isSkillEnabled(id, config = null) {
   // does not even name is not enabled.
   if (skill.requiresRung && rung[skill.requiresRung] !== true) return false;
   if (skill.tier === "T2" && (notices.mode === "none" || notices.enabled === false)) return false;
-  if (["T4", "T5"].includes(skill.tier)) return false;   // not built yet (Phases 21–22)
+  // Phase 21: T4 is BUILT and still off. The rung flag above already gates a
+  // skill that declares requiresRung; this repeats the question at the tier so
+  // a future T4 skill cannot forget to declare one and slip through.
+  if (skill.tier === "T4" && rung.externalWrites !== true) return false;
+  if (skill.tier === "T5") return false;   // not built (Phase 22)
   return true;
 }
 

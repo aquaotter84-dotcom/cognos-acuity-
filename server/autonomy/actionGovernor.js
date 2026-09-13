@@ -13,6 +13,14 @@
 // urlAllowlist, and the staged scope binding refuses an effect approved after
 // its scope changed.
 //
+// Phase 21 extends it with T4 — the first EXTERNAL WRITE. A write is judged
+// harder than a read: https only, destinations from granted scope rows only
+// (never the read allowlist, never a free-form argument), argument headers
+// against an allowlist that refuses `Authorization` outright, a body byte cap,
+// a `secret_ref` that must name an environment variable that actually exists,
+// quiet hours, and — for a LIVE release — a recorded shadow-evidence row. The
+// last one is what makes Rung 4 earned rather than enabled.
+//
 // The two properties that make the barrier real rather than decorative:
 //   * STAGING IS NOT ACTING. A step may stage freely; nothing happens to the
 //     world until a release succeeds. A buggy planner can fill the outbox; it
@@ -22,9 +30,11 @@
 
 import { getSkill, TIERS } from "../skills/index.js";
 import { SECRET_PATTERNS } from "../meta/policy.js";
-import { tierAllowed, budgetLineExhausted } from "./config.js";
+import { tierAllowed, budgetLineExhausted, insideQuietHours } from "./config.js";
 import { authorizationCovers } from "./authorize.js";
-import { urlAllowedByScope } from "./scopeUrl.js";
+import { urlAllowedByScope, destinationsForScope, scopeEntryFor } from "./scopeUrl.js";
+import { checkWebhookUrl, checkWebhookHeaders, resolveSecretRef } from "./webhookPost.js";
+import { RUNGS } from "./evidenceGate.js";
 
 /** Every rule, so a refusal names what fired instead of just "no". */
 export const RULES = Object.freeze({
@@ -40,8 +50,15 @@ export const RULES = Object.freeze({
   SCOPE_EXPIRED: "the authorization covering this effect has expired",
   SECRET_IN_PAYLOAD: "the payload contains something that looks like a credential",
   PAYLOAD_TOO_LARGE: "the payload exceeds the skill's limit",
+  BODY_TOO_LARGE: "the delivery body exceeds the adapter's byte cap",
   RATE_LIMIT: "the per-goal or per-day effect limit is reached",
   UNSAFE_URL: "the URL fails the SSRF boundary",
+  METHOD_NOT_ALLOWED: "only POST is built for external writes",
+  HEADER_NOT_ALLOWED: "a supplied header is not allowlisted",
+  SECRET_REF_UNRESOLVED: "secret_ref does not name a set environment variable",
+  QUIET_HOURS: "external deliveries are inside the deployment's quiet hours",
+  EVIDENCE_GATE_UNMET: "no recorded shadow corpus justifies a live release at this tier",
+  OPERATOR_REFUSED: "an operator refused this effect by hand",
   NOTICES_DISABLED: "notices are disabled",
   SPEND_UNVERIFIABLE: "the spend ledger could not be read, so the ceiling cannot be checked"
 });
@@ -61,14 +78,41 @@ async function workspaceSpendToday(db, workspaceId, nowMs) {
   return Number(rows[0]?.total || 0);
 }
 
-/** Effects released for this goal today. */
+/**
+ * Effects this goal has had a DELIVERY DECISION on today.
+ *
+ * `would_release` counts alongside `released`. The cap bounds how often the
+ * loop decides to act, and a shadow corpus that ignored the cap would be both
+ * unbounded and unrepresentative of the live behaviour it exists to justify.
+ */
+/**
+ * Notices judged for this goal today, from the ledger.
+ *
+ * The Governor needs its own count rather than `spent.notices` because two
+ * paths emit notices — the `notice.emit` skill and the loop's terminal reports
+ * (parked, completed, failed) — and only the first one bumps spend. A cap read
+ * from a counter that one path never writes is a cap on that path only.
+ */
+async function goalNoticesToday(db, goalId, nowMs) {
+  if (!db || typeof db.query !== "function" || !goalId) return null;
+  const start = new Date(nowMs);
+  start.setHours(0, 0, 0, 0);
+  const rows = await db.query(
+    `SELECT COUNT(*)::int AS n FROM autonomy_outbox
+      WHERE goal_id = $1 AND effect_type = 'notify'
+        AND status IN ('released','would_release') AND created_date >= $2`,
+    [goalId, start.toISOString()]
+  );
+  return Number(rows[0]?.n || 0);
+}
+
 async function goalEffectsToday(db, goalId, nowMs) {
   if (!db || typeof db.query !== "function" || !goalId) return null;
   const start = new Date(nowMs);
   start.setHours(0, 0, 0, 0);
   const rows = await db.query(
     `SELECT COUNT(*)::int AS n FROM autonomy_outbox
-      WHERE goal_id = $1 AND status = 'released' AND created_date >= $2`,
+      WHERE goal_id = $1 AND status IN ('released','would_release') AND created_date >= $2`,
     [goalId, start.toISOString()]
   );
   return Number(rows[0]?.n || 0);
@@ -103,7 +147,7 @@ function describeUnsafeUrl(href, parsed, literalIp) {
  *
  * @returns {{decision:'release'|'refuse'|'replay', passed:string[], failed:Array, mode:string}}
  */
-export async function judgeEffect({ db, effect, goal, authorization, config, nowMs = Date.now() }) {
+export async function judgeEffect({ db, effect, goal, authorization, config, nowMs = Date.now(), mode = null }) {
   const passed = [];
   const failed = [];
   const fail = (rule, law, reason) => failed.push({ rule, law, reason: reason || RULES[rule] });
@@ -111,6 +155,10 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
   const skill = getSkill(effect.skill_id);
   const tier = effect.tier || skill?.tier || "T0";
   const payload = effect.payload || {};
+  // The mode a release would run in. decideEffect passes the effective mode; a
+  // direct caller gets the row's own. The evidence gate needs it, because a
+  // shadow verdict is the corpus and a live verdict is the consequence.
+  const effectiveMode = mode || effect.mode || "shadow";
 
   // --- identity of the effect ---------------------------------------------
   if (!skill) {
@@ -137,8 +185,14 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
   // --- scope ---------------------------------------------------------------
   const scope = goal?.scope || {};
   const effectsAllowed = Array.isArray(scope.effectsAllowed) ? scope.effectsAllowed : [];
+  // An entry may name the effect TYPE ("external_write") or the SKILL that
+  // produces it ("webhook.post"), because AUTONOMY.md §4.7.1 writes the write
+  // gate in terms of the skill — the entry that carries a destination list has
+  // to be findable by whichever name the operator used. A string entry still
+  // grants the class exactly as it did before.
   const effectAllowedByScope = effectsAllowed.some(entry =>
-    (typeof entry === "string" ? entry : entry?.effect) === effect.effect_type);
+    (typeof entry === "string" ? entry : (entry?.effect ?? entry?.skill)) === effect.effect_type)
+    || Boolean(scopeEntryFor(scope, { effectType: effect.effect_type, skillId: effect.skill_id }));
 
   // T0 and T1 are internal and need no explicit scope entry; T2 and above do.
   if (["T2", "T3", "T4", "T5"].includes(tier) && !effectAllowedByScope) {
@@ -210,6 +264,123 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
     }
   }
 
+  // --- T4 external writes (Phase 21) ----------------------------------------
+  // A write is judged harder than a read. The destination is not the model's to
+  // choose: it picks from rows granted at authorization, and a grant that names
+  // no destination grants nothing. Read allowlists never widen into write
+  // destinations — looking somewhere and acting there are different authorities.
+  if (effect.effect_type === "external_write") {
+    const storedSha = effect.scope_sha256 || payload.scopeSha256 || null;
+    if (storedSha && authorization?.scope_sha256 && storedSha !== authorization.scope_sha256) {
+      fail("EFFECT_NOT_IN_SCOPE", "pin.goal_scope_immutable",
+        "staged under a different scope than the current authorization");
+    }
+    if (authorization
+        && !authorizationCovers(authorization, { goalId: goal?.id, scope, budget: goal?.budget || {}, nowMs })) {
+      fail("EFFECT_NOT_IN_SCOPE", "pin.goal_scope_immutable",
+        "the goal's scope or budget no longer matches the authorization");
+    }
+
+    const href = typeof payload.url === "string" ? payload.url : "";
+    const shaped = checkWebhookUrl(href);
+    if (!shaped.ok) {
+      fail("UNSAFE_URL", "pin.effect_staged", shaped.reason);
+    } else {
+      passed.push("the destination is https on 443, carries no credentials, and names no literal IP or local host");
+    }
+
+    const granted = destinationsForScope(scope, { effectType: effect.effect_type, skillId: effect.skill_id });
+    if (!granted.length) {
+      fail("DESTINATION_NOT_IN_SCOPE", "pin.goal_scope_immutable",
+        "the goal's scope grants no destination for this write skill");
+    } else if (shaped.ok) {
+      const grant = urlAllowedByScope(href, granted);
+      if (!grant.allowed) {
+        fail("DESTINATION_NOT_IN_SCOPE", "pin.goal_scope_immutable",
+          `the destination is not granted (${grant.reason}); ${granted.length} destination(s) are`);
+      } else {
+        passed.push(`the destination is granted by a scope entry (${grant.reason})`);
+      }
+    }
+
+    const method = String(payload.method || "POST").toUpperCase();
+    if (method !== "POST") {
+      fail("METHOD_NOT_ALLOWED", "pin.effect_staged", `method '${method}' — POST is the only method built`);
+    } else {
+      passed.push("the method is POST");
+    }
+
+    const headers = checkWebhookHeaders(payload.headers);
+    if (!headers.ok) {
+      fail("HEADER_NOT_ALLOWED", "pin.secrets_env_only", headers.errors.join("; "));
+    } else {
+      passed.push(`every supplied header is allowlisted (${headers.names.length} named)`);
+    }
+
+    const bodyText = typeof payload.body === "string" ? payload.body : "";
+    const bodyBytes = Buffer.byteLength(bodyText, "utf8");
+    const bodyCap = Number(config.webhook?.maxBodyBytes ?? 32_768);
+    if (!bodyText.trim()) {
+      fail("BODY_TOO_LARGE", "pin.effect_staged", "a webhook body is required");
+    } else if (bodyBytes > bodyCap) {
+      fail("BODY_TOO_LARGE", "pin.effect_staged", `${bodyBytes} bytes > the ${bodyCap} byte cap`);
+    } else {
+      passed.push(`the body is ${bodyBytes} byte(s), within the cap`);
+    }
+
+    // The NAME is judged; the value is read at send time and stored nowhere.
+    const secret = resolveSecretRef(payload.secretRef ?? payload.secret_ref ?? null);
+    if (!secret.ok) {
+      fail("SECRET_REF_UNRESOLVED", "pin.secrets_env_only", secret.reason);
+    } else if (secret.name) {
+      passed.push(`the body is signed with the secret named '${secret.name}' (the value is never stored)`);
+    } else {
+      passed.push("the delivery is unsigned (no secret_ref named)");
+    }
+
+    // Quiet hours are a brake on deliveries, not on records: a notice is how an
+    // operator learns a goal parked, so suppressing it would hide the thing it
+    // exists to report. Only external writes observe the window.
+    if (insideQuietHours(config.quietHours, nowMs)) {
+      const qh = config.quietHours || {};
+      fail("QUIET_HOURS", "phase19.autonomy_default_off",
+        `external deliveries are quiet between ${qh.startHour}:00 and ${qh.endHour}:00`);
+    }
+
+    // The earned-not-enabled gate. A live release at this tier requires a
+    // recorded shadow corpus that satisfied the gate, and the recorded metrics
+    // must still satisfy the gate as it is configured NOW — raising
+    // minShadowSamples after the fact invalidates an old justification instead
+    // of grandfathering it.
+    if (effectiveMode === "live") {
+      const rung = RUNGS.external_writes;
+      const evidence = typeof db?.RungEvidence?.currentJustified === "function"
+        ? await db.RungEvidence.currentJustified(goal?.workspace_id, rung.rung).catch(() => null)
+        : null;
+      if (!evidence) {
+        fail("EVIDENCE_GATE_UNMET", "phase19.autonomy_default_off",
+          `no recorded evidence row justifies live ${tier} delivery for this workspace`);
+      } else {
+        const metrics = evidence.metrics && typeof evidence.metrics === "object"
+          ? evidence.metrics
+          : (() => { try { return JSON.parse(evidence.metrics || "{}"); } catch { return {}; } })();
+        const gate = evidence.gate && typeof evidence.gate === "object"
+          ? evidence.gate
+          : (() => { try { return JSON.parse(evidence.gate || "{}"); } catch { return {}; } })();
+        const minSamples = Number(config.shadow?.minShadowSamples ?? gate.minShadowSamples ?? 25);
+        const maxFalse = Number(config.shadow?.maxAcceptableFalseReleases ?? gate.maxAcceptableFalseReleases ?? 0);
+        const samples = Number(metrics.samples ?? 0);
+        const falseReleases = Number(metrics.falseReleaseCount ?? 0);
+        if (samples < minSamples || falseReleases > maxFalse) {
+          fail("EVIDENCE_GATE_UNMET", "phase19.autonomy_default_off",
+            `the recorded corpus (${samples} sample(s), ${falseReleases} false release(s)) no longer satisfies the gate (${minSamples} samples, ${maxFalse} false releases)`);
+        } else {
+          passed.push(`a recorded shadow corpus justifies live delivery (${samples} samples, ${falseReleases} false releases, ${String(evidence.metrics_sha256 || "").slice(0, 12)}…)`);
+        }
+      }
+    }
+  }
+
   // --- authorization -------------------------------------------------------
   if (tier === "T5") {
     // Irreversible: one-by-one human approval naming THIS outbox id. Never
@@ -227,10 +398,25 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
   }
 
   // --- budgets -------------------------------------------------------------
+  // A notice is counted as an effect, and that double count has a failure mode:
+  // a goal that exhausts maxEffectsPerDay would be refused the notice reporting
+  // the exhaustion, so the operator sees a goal go quiet for a reason recorded
+  // nowhere they look. Silence is the one outcome this design treats as worse
+  // than a stopped goal — the goal route authorizes `notify` by default for
+  // exactly this reason. Notices therefore answer to their OWN line,
+  // maxNoticesPerDay, enforced from the ledger just below, and are exempt from
+  // the two effect-count lines. Every other budget line still applies to them.
+  const isNotice = effect.effect_type === "notify";
+  const EFFECT_CAP_LINES = ["maxEffectsPerDay", "maxExternalEffects"];
   const over = budgetLineExhausted(goal?.spent || {}, goal?.budget || {}, nowMs);
-  if (over) fail("GOAL_BUDGET_EXHAUSTED", "pin.goal_scope_immutable",
-    `${over.key} at ${over.used} of ${over.limit}`);
-  else passed.push("every per-goal budget line has headroom");
+  if (over && isNotice && EFFECT_CAP_LINES.includes(over.key)) {
+    passed.push(`a notice is bounded by maxNoticesPerDay, not by the ${over.key} line it exists to report`);
+  } else if (over) {
+    fail("GOAL_BUDGET_EXHAUSTED", "pin.goal_scope_immutable",
+      `${over.key} at ${over.used} of ${over.limit}`);
+  } else {
+    passed.push("every per-goal budget line has headroom");
+  }
 
   const spentToday = await workspaceSpendToday(db, goal?.workspace_id, nowMs);
   if (spentToday === null) {
@@ -247,10 +433,29 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
   const perDay = Number(goal?.budget?.maxEffectsPerDay || 10);
   if (today === null) {
     fail("SPEND_UNVERIFIABLE", "pin.effect_staged", "the effect ledger could not be read");
-  } else if (today >= perDay) {
+  } else if (today >= perDay && !isNotice) {
     fail("RATE_LIMIT", "pin.effect_staged", `${today} effect(s) today, limit ${perDay}`);
+  } else if (today >= perDay) {
+    passed.push(`the per-day effect limit is reached (${today}/${perDay}), and a notice is how that is reported`);
   } else {
     passed.push("under the per-day effect limit");
+  }
+
+  // The notice cap, read from the ledger so it binds on the terminal-report path
+  // as well as on `notice.emit`. This is the line that keeps the exemption above
+  // from becoming an unbounded channel: three notices a day by default, and
+  // "more than three a day is narration, not reporting".
+  if (isNotice) {
+    const noticesTodayCount = await goalNoticesToday(db, goal?.id, nowMs);
+    const noticesPerDay = Number(goal?.budget?.maxNoticesPerDay || 3);
+    if (noticesTodayCount === null) {
+      fail("SPEND_UNVERIFIABLE", "pin.effect_staged", "the notice ledger could not be read");
+    } else if (noticesTodayCount >= noticesPerDay) {
+      fail("RATE_LIMIT", "pin.notice_deterministic",
+        `${noticesTodayCount} notice(s) today, limit ${noticesPerDay}`);
+    } else {
+      passed.push(`under the per-day notice limit (${noticesTodayCount}/${noticesPerDay})`);
+    }
   }
 
   // --- secrets -------------------------------------------------------------
@@ -268,7 +473,11 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
     decision: refuse ? "refuse" : "release",
     passed,
     failed,
-    mode: effect.mode || "shadow",
+    // The mode this verdict was judged FOR, which decideEffect passes down. A
+    // live judgement carries the evidence gate; a shadow one does not, because
+    // the shadow judgement is the evidence.
+    mode: effectiveMode,
+    stagedMode: effect.mode || "shadow",
     tier,
     judgedAt: new Date(nowMs).toISOString(),
     law: refuse ? failed[0].law : "pin.effect_staged"

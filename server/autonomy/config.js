@@ -159,6 +159,49 @@ export function autonomyConfig() {
     outboxMode: ["shadow", "dry_run", "live"].includes(process.env.COGNOS_AUTONOMY_OUTBOX_MODE)
       ? process.env.COGNOS_AUTONOMY_OUTBOX_MODE : "shadow",
 
+    // Phase 21 — the webhook adapter's bounds. Every number here is a ceiling
+    // on an OUTBOUND request the loop decided to make, so each is derived like
+    // the budgets in §4.10.1 rather than chosen for convenience.
+    webhook: Object.freeze({
+      // §4.7.1: body <= 32 KiB. A trigger carries a fact, not a document.
+      maxBodyBytes: envNum("COGNOS_WEBHOOK_MAX_BODY_BYTES", 32_768, 1, 32_768),
+      // §4.7.1 default 8000ms: long enough for a real endpoint, short enough
+      // that one hung receiver cannot eat a whole slice (tick.sliceMs is 120s).
+      timeoutMs: envNum("COGNOS_WEBHOOK_TIMEOUT_MS", 8_000, 500, 30_000),
+      // Two redirects, and every hop is re-resolved and re-checked. An outbound
+      // URL is safeFetch's inbound SSRF problem seen in a mirror.
+      maxRedirects: envNum("COGNOS_WEBHOOK_MAX_REDIRECTS", 2, 0, 2),
+      // One retry, only on a retryable status, honouring Retry-After capped
+      // here — the same discipline server/llm.js uses.
+      maxRetryDelayMs: envNum("COGNOS_WEBHOOK_MAX_RETRY_DELAY_MS", 2_000, 0, 5_000),
+      // Response bodies are digest-only; this caps how much is even read.
+      maxResponseBytes: envNum("COGNOS_WEBHOOK_MAX_RESPONSE_BYTES", 65_536, 1_024, 262_144),
+      digestBytes: 4_096,
+      // https only. A webhook is a trigger, and a trigger in clear text is a
+      // trigger anyone on the path can read and replay.
+      schemes: Object.freeze(["https:"]),
+      ports: Object.freeze(["443"]),
+      retryStatuses: Object.freeze([429, 502, 503, 504])
+    }),
+
+    // Quiet hours apply to EXTERNAL deliveries only (T4+). A notice is the
+    // record of why a goal stopped, and refusing to write it at 3am would hide
+    // the very thing an operator needs to see in the morning.
+    quietHours: (() => {
+      const raw = String(process.env.COGNOS_AUTONOMY_QUIET_HOURS || "").trim();
+      const match = raw.match(/^(\d{1,2})\s*-\s*(\d{1,2})$/);
+      if (!match) {
+        return Object.freeze({ enabled: false, requested: raw || null, startHour: null, endHour: null,
+          misconfigured: Boolean(raw) });
+      }
+      const startHour = Number(match[1]);
+      const endHour = Number(match[2]);
+      if (startHour > 23 || endHour > 23) {
+        return Object.freeze({ enabled: false, requested: raw, startHour: null, endHour: null, misconfigured: true });
+      }
+      return Object.freeze({ enabled: true, requested: raw, startHour, endHour, misconfigured: false });
+    })(),
+
     // The tick. sliceMs is the hard guarantee that one pathological goal cannot
     // occupy the loop, and that a SIGTERM always has a window to land in.
     tick: {
@@ -179,12 +222,14 @@ export function autonomyConfig() {
       maxCostPerMonthUsd: WORKSPACE_CEILING.maxMonthlyUsd },
     shadow: SHADOW_GATE,
 
-    // Tiers available in this build. Phase 20 adds T3 (external READ): the
-    // model-chosen URL must be in the goal's allowlist, the Governor judges
-    // every fetch, and shadow mode fetches nothing. T4–T5 stay declared but
-    // unbuilt; the registry refuses them and the Action Governor refuses them
-    // too. Reading is not writing, and nothing here can write externally.
-    builtTiers: Object.freeze(["T0", "T1", "T2", "T3"]),
+    // Tiers available in this build. Phase 20 added T3 (external READ).
+    // Phase 21 adds T4 (external WRITE): one adapter, `webhook.post`, judged
+    // per delivery against a destination allowlist granted at authorization,
+    // and gated behind BOTH its rung flag and a recorded shadow-evidence row.
+    // T5 stays declared and unbuilt — the registry refuses it and the Action
+    // Governor refuses it — because an irreversible act needs per-effect human
+    // approval that Phase 22 has not designed the surface for yet.
+    builtTiers: Object.freeze(["T0", "T1", "T2", "T3", "T4"]),
 
     // Phase 20 — sub-agent bounds. The planner proposes its sub-budget in the
     // spawn arguments; these ceilings clamp it. A planner can ask for less
@@ -210,6 +255,28 @@ export function tierAllowed(tier, config) {
   // A webhook notice channel with no URL configured is a misconfiguration; the
   // tier is not allowed until it is fixed, rather than failing open to nowhere.
   if (tier === "T2" && notices.misconfigured) return false;
-  if (["T4", "T5"].includes(tier)) return false;    // Phases 21–22
+  // Phase 21: T4 is BUILT, and still off. Building a rung is not enabling one
+  // (phase19.autonomy_default_off) — the flag is the difference, and the
+  // shadow-evidence gate inside the Governor is the second half.
+  if (tier === "T4" && config.rung?.externalWrites !== true) return false;
+  if (tier === "T5") return false;    // Phase 22
   return true;
+}
+
+/**
+ * Inside the deployment's quiet hours? Applies to external deliveries only.
+ * A window that wraps midnight (22-7) is the common case, so the comparison is
+ * explicit about it rather than assuming start < end. An unconfigured or
+ * misconfigured window is never active: quiet hours are a brake an operator
+ * asks for, not one the system invents.
+ */
+export function insideQuietHours(quietHours, nowMs = Date.now()) {
+  const qh = quietHours ?? {};
+  if (qh.enabled !== true || qh.misconfigured === true) return false;
+  const hour = new Date(nowMs).getHours();
+  const start = Number(qh.startHour);
+  const end = Number(qh.endHour);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+  if (start === end) return false;                 // an empty window is not a window
+  return start < end ? (hour >= start && hour < end) : (hour >= start || hour < end);
 }

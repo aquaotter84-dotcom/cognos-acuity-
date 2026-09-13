@@ -15,7 +15,8 @@
 
 import { autonomyConfig } from "../autonomy/config.js";
 import { scopeHashes, authorizationCovers, isTightening } from "../autonomy/authorize.js";
-import { decideEffect, revertEffect, shadowCorpus } from "../autonomy/outbox.js";
+import { decideEffect, revertEffect, refuseEffect, shadowCorpus } from "../autonomy/outbox.js";
+import { RUNGS, RUNG_IDS, recordRungEvidence, rungEvidenceStatus } from "../autonomy/evidenceGate.js";
 import { decidePromotion } from "../autonomy/promote.js";
 import { describeSkills } from "../skills/index.js";
 import { publicNotice, NOTICE_TEMPLATE_IDS } from "../autonomy/notice.js";
@@ -37,12 +38,13 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
   app.get("/api/autonomy/status", wrap(async (req, res) => {
     const cfg = config();
     const ws = await db.Workspace.ensureDefault();
-    const [agents, active, parked, awaiting, openPromos] = await Promise.all([
+    const [agents, active, parked, awaiting, openPromos, evidenceRows] = await Promise.all([
       db.AutonomyAgent.list(ws.id, 100),
       db.query(`SELECT COUNT(*)::int AS n FROM autonomy_goals WHERE workspace_id=$1 AND status='active'`, [ws.id]),
       db.query(`SELECT COUNT(*)::int AS n FROM autonomy_goals WHERE workspace_id=$1 AND status='parked'`, [ws.id]),
       db.query(`SELECT COUNT(*)::int AS n FROM autonomy_outbox WHERE workspace_id=$1 AND status='staged'`, [ws.id]),
-      db.query(`SELECT COUNT(*)::int AS n FROM note_promotions WHERE workspace_id=$1 AND status='requested'`, [ws.id])
+      db.query(`SELECT COUNT(*)::int AS n FROM note_promotions WHERE workspace_id=$1 AND status='requested'`, [ws.id]),
+      db.RungEvidence.list(ws.id, { limit: 20 }).catch(() => [])
     ]);
     res.json({
       enabled: cfg.enabled,
@@ -62,6 +64,28 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       ceilings: cfg.ceiling,
       shadowGate: cfg.shadow,
       tick: cfg.tick,
+      // Phase 21 — what an external write is allowed to look like here, and
+      // whether this deployment has earned one. Reported as separate facts:
+      // built, rung on, and live are three different questions.
+      webhook: cfg.webhook,
+      quietHours: cfg.quietHours,
+      externalWrites: {
+        built: cfg.builtTiers.includes("T4"),
+        rungEnabled: cfg.rung.externalWrites === true,
+        killSwitch: "COGNOS_AUTONOMY_EXTERNAL_WRITES",
+        deliversNow: cfg.rung.externalWrites === true && cfg.outboxMode === "live",
+        requiresEvidenceRow: true,
+        evidence: (evidenceRows || [])
+          .filter(row => row.rung === RUNGS.external_writes.rung)
+          .slice(0, 5)
+          .map(row => ({
+            id: row.id, decision: row.decision, tier: row.tier,
+            decided_ms: Number(row.decided_ms), decided_by: row.decided_by,
+            reason: row.reason, metrics_sha256: row.metrics_sha256,
+            samples: parseJson(row.metrics, {}).samples ?? null,
+            falseReleases: parseJson(row.metrics, {}).falseReleaseCount ?? null
+          }))
+      },
       skills: describeSkills(cfg),
       noticeTemplates: NOTICE_TEMPLATE_IDS,
       law: "phase19.autonomy_default_off",
@@ -342,11 +366,67 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       db.AutonomyOutbox.list(ws.id, {
         goalId: req.query.goalId || null,
         status: req.query.status || null,
+        tier: req.query.tier || null,
+        effectType: req.query.effectType || null,
+        destination: req.query.destination || null,
         limit: req.query.limit
       }),
       shadowCorpus(db, ws.id)
     ]);
     res.json({ effects: rows, corpus });
+  }));
+
+  // --- Rungs (Phase 21): what is built, what is switched on, and what has been
+  // EARNED. Three different questions, so three different fields. The evidence
+  // measurement is the expensive one (it reads the corpus), which is why the
+  // status route reports only the recorded rows and this route re-measures.
+  app.get("/api/autonomy/rungs", wrap(async (req, res) => {
+    const cfg = config();
+    const ws = await db.Workspace.ensureDefault();
+    const rungs = [];
+    for (const rung of RUNG_IDS) {
+      rungs.push(await rungEvidenceStatus({ db, workspaceId: ws.id, rung, config: cfg }));
+    }
+    res.json({
+      rungs,
+      outboxMode: cfg.outboxMode,
+      gate: cfg.shadow,
+      enabled: cfg.enabled,
+      note: "A rung flag says an operator switched it on. An evidence row says the shadow corpus justified it. A live delivery needs both, and the Action Governor still judges every individual effect."
+    });
+  }));
+
+  /**
+   * Record the shadow corpus as an evidence row. Append-only: re-measuring
+   * writes a new row, so "what did we know when we turned this on" stays
+   * answerable. A measurement that does not satisfy the gate is recorded too,
+   * as `insufficient` — a failed gate with no record is a gate nobody can
+   * prove was ever checked.
+   */
+  app.post("/api/autonomy/rungs/:rung/evidence", wrap(async (req, res) => {
+    if (config().enabled !== true) {
+      return res.status(409).json({ error: "Autonomy is disabled (COGNOS_AUTONOMY_ENABLED), so there is no corpus to measure." });
+    }
+    const rung = String(req.params.rung || "").trim();
+    if (!RUNG_IDS.includes(rung)) {
+      return res.status(404).json({ error: `Unknown rung. Known rungs: ${RUNG_IDS.join(", ")}` });
+    }
+    const ws = await db.Workspace.ensureDefault();
+    const out = await recordRungEvidence({
+      db, workspaceId: ws.id, rung, config: config(),
+      decidedBy: safe(req.body?.decided_by, 60) || "operator",
+      reason: safe(req.body?.reason, 300) || null
+    });
+    if (!out.ok) return res.status(400).json({ error: out.error });
+    res.status(201).json({
+      rung: out.rung, tier: out.tier, decision: out.decision,
+      satisfied: out.satisfied, reasons: out.reasons,
+      gate: out.gate, metrics: out.metrics, metricsSha256: out.metricsSha256,
+      evidence: out.row,
+      note: out.decision === "justified"
+        ? "Recorded. A live release at this tier now passes the evidence gate — the rung flag and the Governor's per-effect verdicts still apply."
+        : "Recorded as insufficient. Nothing is enabled by this row; it is the history of having asked."
+    });
   }));
 
   app.post("/api/autonomy/outbox/:id/decision", wrap(async (req, res) => {
@@ -362,12 +442,14 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       return res.json(out);
     }
     if (decision === "refuse") {
-      const goal = effect.goal_id ? await db.AutonomyGoal.get(effect.goal_id) : null;
-      const out = await decideEffect({
-        db, effectId: effect.id, goal,
-        authorization: null,              // no authorization → the Governor refuses
-        config: config(), mode: "shadow"
+      // A human refusal is its own recorded rule, not a Governor verdict
+      // manufactured by withdrawing the authorization.
+      const out = await refuseEffect({
+        db, effectId: effect.id,
+        reason: safe(req.body?.reason, 300) || null,
+        decidedBy: "operator"
       });
+      if (!out.ok) return res.status(409).json({ error: out.error });
       return res.json(out);
     }
     if (decision !== "approve") {
@@ -376,6 +458,24 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
 
     const goal = effect.goal_id ? await db.AutonomyGoal.get(effect.goal_id) : null;
     if (!goal) return res.status(409).json({ error: "This effect has no goal" });
+
+    const cfg = config();
+    // Approving an external write in a deployment that has not switched the
+    // rung on would be a button that does nothing but look like it worked. Say
+    // so instead, and leave the row staged and judged.
+    if (effect.tier === "T4" && cfg.rung.externalWrites !== true) {
+      return res.status(409).json({
+        error: "Rung 4 (external writes) is off. Set COGNOS_AUTONOMY_EXTERNAL_WRITES=true to make an approval mean anything; the effect stays staged and judged in shadow.",
+        tier: effect.tier,
+        killSwitch: "COGNOS_AUTONOMY_EXTERNAL_WRITES"
+      });
+    }
+    if (effect.tier === "T5") {
+      return res.status(409).json({
+        error: "T5 (irreversible) effects are not built. Phase 22 adds them with per-effect human approval.",
+        tier: effect.tier
+      });
+    }
 
     const authorization = await db.GoalAuthorization.current(goal.id, Date.now());
     if (!authorization) return res.status(409).json({ error: "The goal has no unexpired authorization" });
@@ -388,8 +488,47 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       });
     }
     const out = await decideEffect({
-      db, effectId: effect.id, goal, authorization, config: config(), mode: "live"
+      db, effectId: effect.id, goal, authorization, config: cfg, mode: "live"
     });
+    // An already-judged row replays its verdict instead of acting again. For a
+    // DELIVERED effect that is the right answer — the receipt is idempotent, and
+    // a second approval must not mean a second send. For every other terminal
+    // state a 200 would read as "approved and sent" when what happened is
+    // "already decided in shadow, performed nothing", which is the one thing an
+    // operator clicking approve on Rung 4 must not be allowed to believe.
+    if (out?.replayed && out?.row?.status !== "released") {
+      return res.status(409).json({
+        error: `This effect was already judged '${out.row.status}' and this approval delivered nothing. `
+          + (out.row.status === "would_release"
+            ? "It was judged in shadow or dry-run mode, where a release verdict is recorded and not performed. Set COGNOS_AUTONOMY_OUTBOX_MODE=live (and, for T4, earn the rung with a recorded evidence row) for an approval to send, or refuse/revert this row."
+            : "A terminal row is not re-decidable: refuse or revert it, or let the loop stage a new effect."),
+        replayed: true,
+        row: out.row,
+        verdict: out.verdict
+      });
+    }
+    if (out?.replayed) {
+      // Delivered already: return the receipt, and say that it is the earlier
+      // delivery being reported rather than a new one.
+      return res.json({ ...out, replayed: true });
+    }
+    // An approval is a request, not a guarantee: the Action Governor still
+    // judges the effect, and a refusal is a 409 naming the rules rather than a
+    // 200 with a refused row buried in the body.
+    if (out?.row?.status === "refused") {
+      return res.status(409).json({
+        error: `The Action Governor refused this effect: ${(out.verdict?.failed || []).map(f => f.rule).join(", ")}`,
+        verdict: out.verdict,
+        row: out.row
+      });
+    }
+    if (out?.row?.status === "failed") {
+      return res.status(502).json({
+        error: out.error || "The delivery failed; the row records what was attempted",
+        row: out.row,
+        verdict: out.verdict
+      });
+    }
     res.json(out);
   }));
 

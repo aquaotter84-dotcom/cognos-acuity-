@@ -58,7 +58,75 @@ check("capabilities distinguish availability and include honest limits", () => {
     assert.ok(ids.has(id), `missing ${id}`);
   }
   assert.match(COGNOS_IDENTITY.boundaries.join(" "), /cannot guarantee correctness/i);
-  assert.match(COGNOS_IDENTITY.boundaries.join(" "), /no autonomous write budget/i);
+  // Phase 21 reworded this boundary because "no autonomous write budget" stopped
+  // being true the moment a rung-gated T4 adapter existed. The claim is now
+  // scoped to where it holds — a chat turn — and the write that does exist is
+  // described with every one of its gates named.
+  assert.match(COGNOS_IDENTITY.boundaries.join(" "), /A chat turn has no write tools and no write budget/i);
+  assert.match(COGNOS_IDENTITY.boundaries.join(" "), /shadow-recorded until a measured corpus is stored as an evidence row/i);
+  assert.match(COGNOS_IDENTITY.boundaries.join(" "), /a delivered webhook cannot be un-sent/i);
+  assert.match(COGNOS_IDENTITY.boundaries.join(" "), /Irreversible autonomous acts \(T5\) are designed and not built/i);
+  // The manifest names the subsystems it gained, or the About page renders a
+  // capability list that does not describe the build.
+  for (const id of ["durable_autonomy", "external_effects"]) {
+    assert.ok(ids.has(id), `missing ${id}`);
+  }
+  const autonomyCapability = COGNOS_IDENTITY.capabilities.find(c => c.id === "external_effects");
+  assert.equal(autonomyCapability.availability, "runtime_switch",
+    "an external write is a switch, never a built-in claim");
+  assert.ok(COGNOS_IDENTITY.supportingSubsystems.some(sub => sub.id === "action_governor"),
+    "the Action Governor is named as a subsystem — and it is not an operator");
+  assert.equal(COGNOS_IDENTITY.operators.length, 6, "gaining a subsystem is not gaining a seat");
+});
+
+check("the runtime reports autonomy as built and OFF, never as absent or enabled", () => {
+  // Read with the autonomy switches unset: the resting state of this system is
+  // frozen, and the manifest must say so without either hiding the capability
+  // or implying an operator turned it on.
+  for (const key of ["COGNOS_AUTONOMY_ENABLED", "COGNOS_AUTONOMY_EXTERNAL_WRITES",
+    "COGNOS_AUTONOMY_OUTBOX_MODE"]) delete process.env[key];
+  const runtime = describeIdentity({}, {}).runtime;
+  const a = runtime.autonomy;
+  assert.equal(a.defaultOff, true);
+  assert.equal(a.enabled, false);
+  assert.equal(a.killSwitch, "COGNOS_AUTONOMY_ENABLED");
+  assert.equal(a.outboxMode, "shadow");
+  assert.equal(a.builtTiers.includes("T4"), true, "T4 is built");
+  assert.deepEqual(a.unbuiltTiers, ["T5"], "and T5 is not");
+  assert.equal(a.backgroundTasks, false, "no heartbeat without the flag");
+  assert.equal(a.externalWrites.built, true);
+  assert.equal(a.externalWrites.rungEnabled, false);
+  assert.equal(a.externalWrites.deliversNow, false);
+  assert.equal(a.externalWrites.requiresEvidenceRow, true);
+  assert.deepEqual(a.externalWrites.adapters, ["webhook.post"]);
+  assert.equal(a.answersFromAutonomy, false, "a goal never drafts an answer");
+  assert.equal(a.writesFromChatTurn, false, "and a chat turn never writes");
+  // `unsupported` now means "not built", so the two entries that became runtime
+  // switches are gone from it and the ones that are genuinely absent remain.
+  assert.equal(runtime.unsupported.irreversibleAutonomousActs, true);
+  assert.equal(runtime.unsupported.inboundMessaging, true);
+  assert.equal(runtime.unsupported.autonomousWritesFromChatTurn, true);
+  assert.equal("consequentialAgentWrites" in runtime.unsupported, false,
+    "a built-but-off capability is reported as a switch, not as absent");
+
+  // With both switches on, the same manifest reports the truth in the other
+  // direction: it does not keep claiming "off" to be safe.
+  process.env.COGNOS_AUTONOMY_ENABLED = "true";
+  process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES = "true";
+  process.env.COGNOS_AUTONOMY_OUTBOX_MODE = "live";
+  try {
+    const on = describeIdentity({}, {}).runtime.autonomy;
+    assert.equal(on.enabled, true);
+    assert.equal(on.backgroundTasks, true);
+    assert.equal(on.externalWrites.rungEnabled, true);
+    assert.equal(on.externalWrites.deliversNow, true);
+    assert.equal(on.answersFromAutonomy, false, "no switch makes a goal an answer path");
+    assert.equal(on.writesFromChatTurn, false, "and no switch gives a chat turn a write");
+  } finally {
+    delete process.env.COGNOS_AUTONOMY_ENABLED;
+    delete process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES;
+    delete process.env.COGNOS_AUTONOMY_OUTBOX_MODE;
+  }
 });
 
 check("runtime description reports configured state without secrets", () => {
@@ -118,10 +186,13 @@ check("runtime feature switches are reflected in the compact prompt", () => {
 });
 
 check("the law layer pins truthful identity and policy refuses runtime rewrites", () => {
-  assert.equal(LAW_LAYER_VERSION, "1.5.0"); // Phase 20 added the promotion + citation pins
+  assert.equal(LAW_LAYER_VERSION, "1.6.0"); // Phase 21 added the external-write pins
   assert.ok(lawById("pin.truthful_self_model"));
   assert.ok(lawById("pin.promotion_inferred"));
   assert.ok(lawById("pin.cite_loaded_notes"));
+  assert.ok(lawById("pin.external_write_earned"));
+  assert.ok(lawById("pin.destination_granted"));
+  assert.ok(lawById("pin.receipt_metadata_only"));
   const result = evaluateAdaptation({
     action: "modify_identity",
     target: "rename to Cognito",

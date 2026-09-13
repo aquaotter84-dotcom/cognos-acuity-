@@ -175,7 +175,7 @@ export const OPERATIONAL_LAWS = Object.freeze([
       "agent answer channel",
       "agent bypass of the Governor"
     ],
-    source: "Phase 17; server/agent/runner.js. Phase 19 delivered the approval barrier and refined the forbids list",
+    source: "Phase 17; server/agent/runner.js. Phase 19 delivered the approval barrier and refined the forbids list; Phase 21 added the first external write behind it",
     runtime_modifiable: false
   }),
   Object.freeze({
@@ -293,6 +293,55 @@ export const OPERATIONAL_LAWS = Object.freeze([
     runtime_modifiable: false
   }),
 
+  // --- Phase 21 — the first external write ----------------------------------
+  // Rung 4 is where an autonomous loop stops being a reader. These three laws
+  // are the reason that transition does not have to be a change of product: the
+  // write is earned rather than enabled, its destination is granted rather than
+  // chosen, and its record is metadata rather than content.
+  Object.freeze({
+    id: "pin.external_write_earned",
+    layer: "operational",
+    name: "An external write is earned, not enabled",
+    statement: "A T4 external write is built, switched off, and shadow-judged until a recorded evidence row shows the Action Governor's corpus was neither too loose nor too tight. A live release requires the rung flag, an unexpired authorization whose scope grants the destination, and that evidence row; the recorded metrics must still satisfy the gate as it is configured now. Zero false releases is the tolerance, because a count can be rationalised and a single false release cannot.",
+    forbids: [
+      "a live external write with no recorded shadow corpus",
+      "grandfathering an old justification after the gate is raised",
+      "counting a shadow release as a delivery",
+      "an external write enabled by configuration alone"
+    ],
+    source: "Phase 21; server/autonomy/evidenceGate.js + server/autonomy/actionGovernor.js",
+    runtime_modifiable: false
+  }),
+  Object.freeze({
+    id: "pin.destination_granted",
+    layer: "operational",
+    name: "A write destination is granted, never chosen",
+    statement: "An external write may only be delivered to a destination granted in the goal's authorized scope, named entry by entry. A read allowlist never widens into a write destination, a free-form model argument is never a grant, and the destination is re-checked structurally and against DNS on every hop including every redirect. Credentials travel by secret reference resolved at send time, never in a payload, header argument, or stored row.",
+    forbids: [
+      "a model-named destination with no granted row",
+      "a read allowlist authorizing a write",
+      "an http or literal-IP destination",
+      "an Authorization header supplied as an argument",
+      "following a redirect without re-resolving and re-checking it"
+    ],
+    source: "Phase 21; server/autonomy/scopeUrl.js + server/autonomy/webhookPost.js",
+    runtime_modifiable: false
+  }),
+  Object.freeze({
+    id: "pin.receipt_metadata_only",
+    layer: "operational",
+    name: "A receipt is metadata, never content",
+    statement: "The record of an external effect stores ids, statuses, counts, timestamps, header NAMES and content digests. A response body is read, digested and discarded; a signature value exists only for the lifetime of the request; a secret is stored as the name of an environment variable and never as its value. An endpoint that echoes a credential back cannot write that credential into the outbox, the ledger, or telemetry.",
+    forbids: [
+      "storing a response body",
+      "storing a header value",
+      "storing a resolved secret",
+      "a receipt that could carry a credential into the ledger"
+    ],
+    source: "Phase 21; server/autonomy/webhookPost.js + server/autonomy/outbox.js",
+    runtime_modifiable: false
+  }),
+
   Object.freeze({
     id: "phase15.observe_only",
     layer: "phase_scope",
@@ -326,7 +375,7 @@ export const LAWS = Object.freeze([...CHARTER_LAWS, ...OPERATIONAL_LAWS]);
 
 /** Bumped when a law is added or reworded in code. Recorded on improvement rows
  *  so a reviewer can tell which version of the law layer judged a proposal. */
-export const LAW_LAYER_VERSION = "1.5.0";
+export const LAW_LAYER_VERSION = "1.6.0";
 
 const BY_ID = Object.freeze(LAWS.reduce((acc, law) => ({ ...acc, [law.id]: law }), {}));
 

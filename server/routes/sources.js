@@ -209,7 +209,22 @@ export function registerSourceRoutes(app, { wrap, db, logger }) {
         // the boundary is visible from the outside. Computed from the same
         // builtTiers the Action Governor enforces — never a second list to
         // drift.
-        unbuiltTiers: Object.keys(TIERS).filter(t => !cfg.builtTiers.includes(t))
+        unbuiltTiers: Object.keys(TIERS).filter(t => !cfg.builtTiers.includes(t)),
+        // Phase 21: the external-write boundary, stated as three separate facts
+        // rather than one boolean, because "built", "rung on" and "live" are
+        // three different questions and collapsing them is how a reader ends up
+        // believing a shadow deployment can POST to the internet.
+        externalWrites: {
+          built: cfg.builtTiers.includes("T4"),
+          rungEnabled: cfg.rung.externalWrites === true,
+          killSwitch: "COGNOS_AUTONOMY_EXTERNAL_WRITES",
+          outboxMode: cfg.outboxMode,
+          deliversNow: cfg.rung.externalWrites === true && cfg.outboxMode === "live",
+          requiresEvidenceRow: true,
+          maxBodyBytes: cfg.webhook.maxBodyBytes,
+          timeoutMs: cfg.webhook.timeoutMs,
+          quietHours: cfg.quietHours
+        }
       },
       note: "Agent mode is a bounded read-only subsystem. Research mode proposes a plan and executes only after the user approves each step. It cannot release an answer or write memory. Autonomy skills are separate: they are code-owned, tier-gated, and every effect they produce is staged and judged before anything happens."
     });

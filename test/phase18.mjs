@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import { parseImage } from "../server/sources/imageParse.js";
 import { buildEvidencePack } from "../server/sources/index.js";
+import { IDENTITY_VERSION } from "../server/identity.js";
 import { bootHarness } from "./harness.mjs";
 
 let passed = 0;
@@ -92,7 +93,12 @@ try {
     assert.equal(health.json.research.approvalGate, true);
     assert.equal(health.json.projects, true);
     const identity = await h.raw("/api/identity");
-    assert.equal(identity.json.version, "1.4.0"); // Phase 20 restated the autonomy boundary (promotion path)
+    // Compared against the code-owned constant rather than a literal: a
+    // hardcoded "1.4.0" here broke the moment Phase 21 bumped the manifest, and
+    // a test that fails on an honest version bump trains the next reader to
+    // edit assertions instead of reading them. The check that matters is that
+    // the API reports the SAME version the module declares.
+    assert.equal(identity.json.version, IDENTITY_VERSION);
     assert.equal(identity.json.operators.length, 6);
     const runtime = identity.json.runtime || {};
     assert.equal(runtime.unsupported.imageSourceIngestion, undefined);

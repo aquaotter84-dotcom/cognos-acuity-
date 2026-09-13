@@ -20,7 +20,9 @@ import { createRunRecorder } from "../meta/telemetry.js";
 import { getSkill, validateArgs, isSkillEnabled } from "../skills/index.js";
 import { stageEffect, decideEffect } from "./outbox.js";
 import { autonomyConfig, budgetLineExhausted } from "./config.js";
+import { destinationsForScope } from "./scopeUrl.js";
 import { buildNoticeFields } from "./notice.js";
+import { redactSecrets } from "../meta/policy.js";
 import { createLogger } from "../shared/logging.js";
 
 const rootLogger = createLogger("autonomy.tick");
@@ -58,8 +60,15 @@ const dayKey = (ms) => new Date(ms).toISOString().slice(0, 10);
 // refusal tells the operator exactly which switch to consider.
 const RUNG_FLAGS = Object.freeze({
   residents: "COGNOS_AUTONOMY_RESIDENTS",
-  search: "COGNOS_AUTONOMY_SEARCH"
+  search: "COGNOS_AUTONOMY_SEARCH",
+  externalWrites: "COGNOS_AUTONOMY_EXTERNAL_WRITES"
 });
+
+// Refusals that mean "stop", not "try something else". A rate limit or an
+// exhausted budget is not a transient obstacle: queueing more work behind it is
+// exactly the silent accumulation §4.10 forbids, so the goal parks at once with
+// the rule that fired recorded as the reason.
+const PARKING_RULES = Object.freeze(["RATE_LIMIT", "GOAL_BUDGET_EXHAUSTED", "WORKSPACE_CEILING"]);
 
 // The planner aims web.fetch at this. Telling it the allowlist is not trusting
 // it: the Governor re-checks every URL structurally, and a URL outside the
@@ -67,20 +76,46 @@ const RUNG_FLAGS = Object.freeze({
 function scopePromptLines(goal) {
   // The goal row carries the live scope; the authorization row carries only
   // its hash. The Governor binds the two with authorizationCovers.
+  const lines = [];
   const allowlist = goal?.scope?.urlAllowlist;
-  if (!Array.isArray(allowlist) || !allowlist.length) return [];
-  const shown = allowlist.filter(u => typeof u === "string").slice(0, 10);
-  const more = allowlist.length > shown.length ? ` (+${allowlist.length - shown.length} more)` : "";
-  return [`You may fetch only these URLs (exact page, or anything under a listed path): ${shown.join("; ")}${more}`];
+  if (Array.isArray(allowlist) && allowlist.length) {
+    const shown = allowlist.filter(u => typeof u === "string").slice(0, 10);
+    const more = allowlist.length > shown.length ? ` (+${allowlist.length - shown.length} more)` : "";
+    lines.push(`You may fetch only these URLs (exact page, or anything under a listed path): ${shown.join("; ")}${more}`);
+  }
+  // Phase 21: write destinations are listed separately from read allowlists,
+  // because they are granted separately. Naming them to the planner is not
+  // trusting it — a destination outside this list is a refused effect however
+  // the step was phrased, and a destination inside it is still judged per send.
+  const destinations = destinationsForScope(goal?.scope, { effectType: "external_write", skillId: "webhook.post" });
+  if (destinations.length) {
+    const shown = destinations.slice(0, 5);
+    const more = destinations.length > shown.length ? ` (+${destinations.length - shown.length} more)` : "";
+    lines.push(`You may POST a webhook only to these granted destinations: ${shown.join("; ")}${more}`);
+  }
+  return lines;
 }
 
 /** Notices already emitted for this goal today. */
+/**
+ * How many notices this goal has had JUDGED today.
+ *
+ * Counted from the effect ledger, not from `autonomy_notices`: that table only
+ * gains a row when a notice is delivered, and every deployment runs the outbox
+ * in shadow until it earns live — so counting delivered rows made
+ * `maxNoticesPerDay` a ceiling that could not be reached in the only mode
+ * anybody actually runs. Same defect, same family as the effect ceilings Phase
+ * 21 fixed: a guard that cannot fire is not a guard. A shadowed notice is a
+ * decision to notify, and the cap bounds decisions.
+ */
 async function noticesToday(db, goalId, nowMs) {
   const start = new Date(nowMs);
   start.setHours(0, 0, 0, 0);
   const rows = await db.query(
-    `SELECT COUNT(*)::int AS n FROM autonomy_notices
-      WHERE goal_id = $1 AND created_date >= $2`, [goalId, start.toISOString()]
+    `SELECT COUNT(*)::int AS n FROM autonomy_outbox
+      WHERE goal_id = $1 AND effect_type = 'notify'
+        AND status IN ('released','would_release') AND created_date >= $2`,
+    [goalId, start.toISOString()]
   );
   return Number(rows[0]?.n || 0);
 }
@@ -280,6 +315,15 @@ async function advanceGoal({ db, cfg, goal, workspaceId, workerId, deadline, tic
     result.effectsRefused += stepOutcome.effectsRefused;
 
     if (stepOutcome.failed) {
+      // A ceiling is not a transient obstacle. Park now, with the rule that
+      // fired, instead of letting the failure brake discover it three steps
+      // later — the goal must not queue work behind a limit it already hit.
+      const stopping = (stepOutcome.rules || []).find(rule => PARKING_RULES.includes(rule));
+      if (stopping) {
+        await park(db, current, "budget_exhausted", tickId, result, nowMs, cfg,
+          { rule: stopping, error: stepOutcome.error });
+        return result;
+      }
       consecutiveFailures++;
       current = await setFailures(current, consecutiveFailures);
       if (consecutiveFailures >= cfg.tick.maxConsecutiveFailures) {
@@ -323,11 +367,60 @@ async function advanceGoal({ db, cfg, goal, workspaceId, workerId, deadline, tic
 }
 
 /** One step: plan, validate, execute, record. */
-async function runStep({ db, cfg, goal, agent, authorization, workspaceId, workerId, tickId, ordinal, logger, signal }) {
+/**
+ * One planner step, with its spend recorded on EVERY exit path.
+ *
+ * `runStepInner` returns early in seven places — a blocked plan, a done plan, a
+ * plan naming no skill, a planning failure, a rung/allowlist/kill-switch
+ * refusal, an invalid-argument refusal, and a failed skill. Six of those had
+ * already paid for a model call and none of them recorded it, so `spent.*`
+ * counted only the steps that worked. A budget that under-counts every failure
+ * is a budget a failing goal can never exhaust — the same shape as the inert
+ * effect ceilings Phase 21 just fixed, one layer up. And Phase 21 makes it
+ * concrete: in shadow, the commonest outcome of a T4 step IS a refusal, so the
+ * loop's most frequent path was its only free one.
+ *
+ * The bump lives in the wrapper rather than at each return on purpose. The next
+ * early return somebody adds is accounted for by construction.
+ */
+async function runStep(args) {
+  const { db, goal } = args;
+  const out = await runStepInner(args);
+  try {
+    await db.AutonomyGoal.bumpSpent(goal.id, {
+      // `spent.steps` counts PROGRESS, not cost, and stays that way: the
+      // planner prompt tells the model "Steps used: N" and `maxSteps` reads as
+      // a bound on work done, so counting a refusal there would tell the model
+      // it advanced when it did not. What a refused step really consumed is
+      // money — one planner call and its tokens — and that is what the lines
+      // below record, on every path. `maxModelCalls` and `maxCostUsd` are the
+      // ceilings a failing goal exhausts; `maxSteps` is the one a working goal
+      // exhausts. Both can now fire.
+      ...(out.executed ? { steps: 1 } : {}),
+      modelCalls: Number(out.modelCalls) || 0,
+      tokensIn: Number(out.tokensTotal) || 0,
+      costUsd: Number(out.costUsd) || 0,
+      // A delivery DECISION is spend, performed or not (see runStepInner).
+      ...(out.effectsDecided ? { effects: out.effectsDecided } : {}),
+      ...(out.externalEffectsDecided ? { externalEffects: out.externalEffectsDecided } : {}),
+      // The one thing only the inner function knows: which skill it ran.
+      ...(out.spendExtra || {})
+    });
+  } catch (error) {
+    // Spend accounting must never fail the step it is accounting for; the row
+    // it could not write is logged, and the ceiling check reads the ledger.
+    args.logger?.warn?.("spend accounting failed", { goalId: goal.id, error: String(error) });
+  }
+  return out;
+}
+
+async function runStepInner({ db, cfg, goal, agent, authorization, workspaceId, workerId, tickId, ordinal, logger, signal }) {
   const out = {
     executed: false, failed: false, done: false, blocked: null, error: null,
+    rules: null, shadowed: 0, spendExtra: null,
     modelCalls: 0, tokensTotal: 0, costUsd: 0,
-    effectsStaged: 0, effectsReleased: 0, effectsRefused: 0
+    effectsStaged: 0, effectsReleased: 0, effectsRefused: 0,
+    effectsDecided: 0, externalEffectsDecided: 0
   };
 
   const runId = `goal:${goal.id}:tick:${tickId}`;
@@ -425,7 +518,7 @@ async function runStep({ db, cfg, goal, agent, authorization, workspaceId, worke
     await db.GoalStep.create({
       goal_id: goal.id, agent_id: agent?.id || null, tick_id: tickId, ordinal,
       skill_id: skillId || "(none)", tier: skill?.tier || "T0", status: "refused",
-      input: plan?.args || {}, error_message: String(reason).slice(0, 400),
+      input: redactSecrets(plan?.args || {}), error_message: String(reason).slice(0, 400),
       idempotency_key: `step:${goal.id}:${tickId}:${ordinal}:refused:${skillId || "none"}`
     });
     await db.GoalEvent.append({
@@ -464,7 +557,11 @@ async function runStep({ db, cfg, goal, agent, authorization, workspaceId, worke
   let stepRow = await db.GoalStep.create({
     goal_id: goal.id, agent_id: agent?.id || null, tick_id: tickId, ordinal,
     skill_id: skillId, tier: skill.tier, status: "running",
-    input: plan.args || {}, idempotency_key: idempotencyKey, started_ms: Date.now()
+    // A refused step is still a stored row, and Phase 21 gave the planner a
+    // `headers` argument: without this, a credential the model proposed would
+    // survive in goal_steps.input exactly because the effect was refused. The
+    // record of an attempt keeps its shape and loses its secrets.
+    input: redactSecrets(plan.args || {}), idempotency_key: idempotencyKey, started_ms: Date.now()
   });
   if (!stepRow) {
     // Same key already used — a retried tick after a crash. Replay the row.
@@ -482,7 +579,30 @@ async function runStep({ db, cfg, goal, agent, authorization, workspaceId, worke
     skillResult = { ok: false, error: String(error?.message || error).slice(0, 400) };
   }
 
+  // Self-reported effects from skills that stage and decide their own effects
+  // inside the step (T3 reads, T4 writes), so the planner can reason over what
+  // came back. Counted BEFORE the failure branch on purpose: a refused write
+  // still staged a row and still got a verdict, and those are the numbers the
+  // rate limits and the shadow corpus are read against. Staged and refused join
+  // the tick counters; shadowed joins nothing — a shadowed effect performed
+  // nothing, and counting it as released would lie about what acted.
+  const fx = skillResult?.effects && typeof skillResult.effects === "object" ? skillResult.effects : {};
+  out.effectsStaged += Number(fx.staged) > 0 ? Math.floor(Number(fx.staged)) : 0;
+  out.effectsReleased += Number(fx.released) > 0 ? Math.floor(Number(fx.released)) : 0;
+  out.effectsRefused += Number(fx.refused) > 0 ? Math.floor(Number(fx.refused)) : 0;
+  out.shadowed += Number(fx.shadowed) > 0 ? Math.floor(Number(fx.shadowed)) : 0;
+  // A delivery DECISION is spend, performed or not. `spent.effects` and
+  // `spent.externalEffects` were declared as budget lines in Phase 19 and
+  // nothing incremented them, so both ceilings were inert — the same shape as
+  // every other defect this design keeps finding: a guard that could not fire.
+  // A shadowed write counts because the cap bounds how often the loop DECIDES
+  // to act, and a shadow corpus that ignored the cap would be unbounded and
+  // unrepresentative of the live behaviour it exists to justify.
+  out.effectsDecided += out.effectsReleased + out.shadowed;
+  if (["T4", "T5"].includes(skill.tier)) out.externalEffectsDecided += out.effectsReleased + out.shadowed;
+
   if (!skillResult?.ok) {
+    out.rules = Array.isArray(skillResult?.rules) ? skillResult.rules : null;
     await db.GoalStep.update(stepRow.id, {
       status: "failed",
       error_message: String(skillResult?.error || "skill failed").slice(0, 400),
@@ -498,15 +618,6 @@ async function runStep({ db, cfg, goal, agent, authorization, workspaceId, worke
     return out;
   }
 
-  // Self-reported effects from skills that judge their own reads (T3 stages and
-  // decides inside the step, so the planner can reason over what came back).
-  // Staged and refused join the tick counters; shadowed joins nothing — a
-  // shadowed read performed nothing, and counting it as released would lie
-  // about what acted. The record of a shadow is its outbox row and verdict.
-  const fx = skillResult.effects && typeof skillResult.effects === "object" ? skillResult.effects : {};
-  out.effectsStaged += Number(fx.staged) > 0 ? Math.floor(Number(fx.staged)) : 0;
-  out.effectsReleased += Number(fx.released) > 0 ? Math.floor(Number(fx.released)) : 0;
-  out.effectsRefused += Number(fx.refused) > 0 ? Math.floor(Number(fx.refused)) : 0;
 
   // Notes the skill produced become durable, typed, append-only records.
   for (const entry of Array.isArray(plan.noteEntries) ? plan.noteEntries.slice(0, 5) : []) {
@@ -563,13 +674,9 @@ async function runStep({ db, cfg, goal, agent, authorization, workspaceId, worke
     detail: { skillId, tier: skill.tier, output: skillResult.output || null }
   });
 
-  await db.AutonomyGoal.bumpSpent(goal.id, {
-    steps: 1,
-    modelCalls: out.modelCalls,
-    tokensIn: out.tokensTotal,
-    costUsd: out.costUsd,
-    ...(skillId === "notice.emit" ? { notices: 1 } : {})
-  });
+  // Reported to the wrapper, which writes it: a notice that was actually
+  // emitted is the one spend line only this scope knows about.
+  out.spendExtra = skillId === "notice.emit" ? { notices: 1 } : null;
 
   out.executed = true;
   return out;
