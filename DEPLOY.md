@@ -27,7 +27,8 @@ nullable latency-observability fields, Phase 17's `sources`,
 `source_chunks`, `agent_runs`, `agent_steps`, `agent_events`, and
 `agent_approvals` tables, and Phase 18's `projects`, `source_images`, and
 `image_analyses` tables (plus the `project_id` columns on conversations and
-sources).
+sources), Phase 19–21 autonomy tables, and Phase 25's `autonomy_settings`
+(migration `0012` — one on/off row per workspace, no rung or budget column).
 
 If you would rather apply the DDL explicitly before traffic arrives:
 
@@ -89,6 +90,9 @@ Project → Settings → Environment Variables (Production **and** Preview):
 | `COGNOS_LINK_TIMEOUT_MS` | optional | safe link fetch timeout, default `12000` |
 | `COGNOS_AGENT_ENABLED` | optional | non-off bounded agent modes; default `true`; does not enable writes |
 | `COGNOS_RUNTIME_SECRET` | optional | set → gate on; unset → app opens straight to chat |
+| `COGNOS_AUTONOMY_ENABLED` | optional | **pin.** Unset = frozen. `true` turns the loop on and the UI cannot turn it off. Heartbeat runs only in `server/serve.js` (not on Vercel). |
+| `COGNOS_AUTONOMY_UI_CONTROL` | optional | **delegation.** Hands the on/off switch to the Autonomy page. Does not enable anything by itself. |
+| `COGNOS_ACCOUNTS_ENABLED` | optional | Optional email/Google accounts. Default on; set `false` to keep unauthenticated single-tenant use. |
 
 None of these are exposed to the browser — there are no `VITE_*` variables in
 this app, so nothing can leak into the bundle by construction.

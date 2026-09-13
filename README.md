@@ -100,8 +100,10 @@ example, document/link and bounded-agent capabilities can be disabled by runtime
 switches; voice and dictation depend on browser support; database-backed memory
 reports whether persistence is configured. The manifest states unavailable
 capabilities rather than inventing them: private-network browsing,
-consequential agent writes, autonomous background work, an account system,
+consequential writes from a chat turn, irreversible autonomous acts,
 pixel-level vision inside answer drafts, and image editing are not present.
+Optional email/Google accounts and durable autonomy are runtime switches,
+reported off until an operator enables them.
 Image ingestion is supported but bounded: an image original is the
 authoritative artifact, its vision transcript is a labeled model-extracted
 reading that can misread, and printed image text is untrusted evidence.
@@ -187,7 +189,7 @@ boundary recorded on every row.
 
 ## Durable autonomy (off by default)
 
-`AUTONOMY.md` is the design; Phases 19–21 of it are built and **green**, and the
+`AUTONOMY.md` is the design; Phases 19–21 and 25 of it are built and **green**, and the
 subsystem is off until an operator switches it on. A *resident* is a job with a
 versioned brief and a narrow skill allowlist. A *goal* does no work until an
 authorization row records consent against hashes of the exact scope and budget
@@ -288,7 +290,8 @@ is a short design note about the rows it proposes, not an answer to a question:
 The page also answers *"what does autonomy want from me?"* in one glance
 (`GET /api/autonomy/attention`): waiting authorizations, staged actions, unread
 notices, paused goals and open promotions, each group naming the tab that
-resolves it. Statuses read as sentences everywhere — *Waiting for you*, *Paused
+resolves it. Rows are bounded; **count is the full total**, so `?limit=1` cannot
+pretend the inbox is empty. Statuses read as sentences everywhere — *Waiting for you*, *Paused
 with a reason*, *Ran out of budget* — in the page and in the chat Goal Card, with
 the machine vocabulary demoted into a **Technical details** disclosure rather
 than deleted, and a glossary behind the **?** button. Labels live in
@@ -362,7 +365,8 @@ npm run dev
 | `COGNOS_RESEARCH_ENABLED` | no | Default `true`; hides research mode from the agent vocabulary when false. |
 | `COGNOS_RESEARCH_MAX_STEPS` | no | Research plan size, clamped to 1–5 steps; default 3. Approving a plan consents only to the listed exact URLs. |
 | `COGNOS_AGENT_ENABLED` | no | Default `true`; disables non-off agent modes when false. Agent writes remain unavailable regardless. |
-| `COGNOS_AUTONOMY_ENABLED` | no | **Unset = the loop is frozen.** No goal wakes, no notice is written, no tick row is recorded. |
+| `COGNOS_AUTONOMY_ENABLED` | no | **Unset = the loop is frozen.** No goal wakes, no notice is written, no tick row is recorded. Set `true` to **pin** it on; the UI cannot override a pin. |
+| `COGNOS_AUTONOMY_UI_CONTROL` | no | **Delegation, not enablement.** Set `true` to hand the on/off switch to the Autonomy page. The system stays off until someone flips it. |
 | `COGNOS_AUTONOMY_OUTBOX_MODE` | no | `shadow` (default) records verdicts and performs nothing; `dry_run` also records the exact request it declined to send; `live` performs. |
 | `COGNOS_AUTONOMY_NOTICE_MODE` | no | `none`, `internal` (default), or `webhook` with `COGNOS_AUTONOMY_NOTICE_WEBHOOK`. Notices are templates with declared fields. |
 | `COGNOS_AUTONOMY_RESIDENTS` | no | Rung 3: sub-agents, promotion, and `web.search`. Default off. |
@@ -408,7 +412,8 @@ server/
     sources.js          immutable uploads (docs/links/images) + agent runs,
                         image bytes, and the research decision route
     autonomy.js         residents, goals + the authorization barrier, the outbox
-                        and its decision route, rungs/evidence, promotions, ticks
+                        and its decision route, rungs/evidence, promotions, ticks,
+                        the delegated switch, attention queue, resident designer
   serve.js              local/self-hosted listener (Vercel does not use this)
   mock-openai.js        local OpenAI-compatible mock (development aid)
   mock-latency.js       local latency injector (development aid)
@@ -429,7 +434,7 @@ server/
   shared/               orchestrator, registry, protocol, runtime, eventBus,
                         errors, logging, cooperative cancellation, and the
                         single governance-approved answer release point
-  autonomy/             Phases 19–21: the loop and everything that bounds it
+  autonomy/             Phases 19–21 + 25: the loop, hybrid enablement, designer
     tick.js             lease-guarded slice: plan, gate, execute, park, report
     outbox.js           stage / judge / perform, idempotency, reversal, corpus
     actionGovernor.js   the verdict: named rules, cited laws, tier gates
@@ -466,7 +471,7 @@ server/
     latency.js          p50/p95 analysis + evidence gate for an outbox
     policy.js           the Policy Engine
     store.js            createMetaStore(run): telemetry, strategies, ledger
-migrations/             additive SQL (0001 phase 14 through 0008 webhook effects)
+migrations/             additive SQL (0001 phase 14 through 0012 autonomy settings)
 scripts/
   generate-migrations.mjs  migrations/*.sql from server/db/schema.js
   migrate.mjs              apply them (refuses non-additive SQL)

@@ -360,6 +360,62 @@ try {
     A.model.reset();
   });
 
+  await test("the catalogue reports an enabled rung as available, and an off one as off", async () => {
+    // The prompt used to tag every rung-gated skill as "NOT available here"
+    // whenever it merely *declared* a rung. clampSkills still used isSkillEnabled,
+    // so the lie never showed up in the draft the tests already checked — it
+    // only showed up as the model quietly refusing to propose a design the
+    // operator was entitled to. Flip the search rung and assert both sides.
+    const previous = process.env.COGNOS_AUTONOMY_SEARCH;
+    try {
+      A.model.reset();
+      A.model.state.residentDraft = {
+        reply: "A watcher that searches and notes.",
+        questions: [],
+        resident: {
+          name: "Searcher",
+          purpose: "Search",
+          brief: "Search the web and note what you find.",
+          skills: ["web.search", "note.append", "webhook.post"],
+          heartbeat_minutes: 60
+        }
+      };
+
+      process.env.COGNOS_AUTONOMY_SEARCH = "false";
+      const off = await A.raw("/api/autonomy/designer", {
+        method: "POST",
+        body: { messages: [{ role: "user", content: "Give it search." }] }
+      });
+      assert.equal(off.status, 200);
+      assert.deepEqual(off.json.draft.skills, ["note.append"]);
+      assert.ok(off.json.droppedSkills.some(d => d.id === "web.search"));
+      const offReq = A.model.requests.filter(r => r.role === "residentDesigner").pop();
+      const offSearch = (offReq.content.split("\n").find(l => l.includes("web.search")) || "");
+      assert.match(offSearch, /needs the search rung, which is off here/);
+      assert.match(offSearch, /NOT executable/);
+
+      process.env.COGNOS_AUTONOMY_SEARCH = "true";
+      const on = await A.raw("/api/autonomy/designer", {
+        method: "POST",
+        body: { messages: [{ role: "user", content: "Give it search." }] }
+      });
+      assert.equal(on.status, 200);
+      assert.deepEqual(on.json.draft.skills, ["web.search", "note.append"]);
+      assert.ok(!on.json.droppedSkills.some(d => d.id === "web.search"));
+      const onReq = A.model.requests.filter(r => r.role === "residentDesigner").pop();
+      const onSearch = (onReq.content.split("\n").find(l => l.includes("web.search")) || "");
+      assert.match(onSearch, /search rung is on/);
+      assert.doesNotMatch(onSearch, /NOT executable/);
+      const webhookLine = (onReq.content.split("\n").find(l => l.includes("webhook.post")) || "");
+      assert.match(webhookLine, /NOT executable/);
+      assert.match(webhookLine, /externalWrites rung, which is off here/);
+    } finally {
+      if (previous === undefined) delete process.env.COGNOS_AUTONOMY_SEARCH;
+      else process.env.COGNOS_AUTONOMY_SEARCH = previous;
+      A.model.reset();
+    }
+  });
+
   await test("a broken model answer is a friendly failure, and the previous draft survives", async () => {
     A.model.state.malformed = { roles: ["residentDesigner"], content: "", finishReason: "length" };
     const turn = await A.raw("/api/autonomy/designer", {
@@ -505,16 +561,34 @@ try {
     const waiting = attention.json.groups.find(g => g.kind === "awaiting_authorization");
     assert.equal(waiting.tab, "goals", "each group names the tab that resolves it");
     assert.equal(waiting.count, 1);
+    assert.equal(waiting.truncated, false);
     assert.equal(waiting.rows[0].title, "Watch this week");
     assert.ok(waiting.label.length > 5 && waiting.hint.length > 10, "in words, not codes");
 
-    // Bounded on both sides: a handful of rows per kind, never the whole table.
+    // Count is the full total, not the page size. A second waiting goal plus
+    // ?limit=1 must still say there are two things waiting — otherwise the
+    // panel looks empty after the first row.
+    const wsId = (await A.sql(`SELECT id FROM workspaces LIMIT 1`))[0].id;
+    const agentId = (await A.sql(`SELECT id FROM autonomy_agents LIMIT 1`))[0].id;
+    await A.sql(
+      `INSERT INTO autonomy_goals (id, workspace_id, agent_id, title, objective, status, scope, budget, spent, created_date, updated_date)
+       VALUES ($1, $2, $3, 'Second wait', 'Also waiting.', 'awaiting_authorization', '{}', '{}', '{}', NOW(), NOW())`,
+      [`goal_attn_${Date.now()}`, wsId, agentId]
+    );
     const bounded = await A.raw("/api/autonomy/attention?limit=1");
     assert.ok(bounded.json.groups.every(g => g.rows.length <= 1));
+    const boundedWaiting = bounded.json.groups.find(g => g.kind === "awaiting_authorization");
+    assert.equal(boundedWaiting.rows.length, 1);
+    assert.equal(boundedWaiting.count, 2, "count is independent of the page size");
+    assert.equal(boundedWaiting.truncated, true);
 
-    // Resolving the item empties the panel: decline the goal and it is gone.
-    const goalId = waiting.rows[0].id;
-    await A.raw(`/api/autonomy/goals/${goalId}/decision`, { method: "POST", body: { decision: "decline", reason: "test" } });
+    // Resolving the items empties the panel: decline every waiting goal.
+    const waitingIds = (await A.sql(
+      `SELECT id FROM autonomy_goals WHERE status='awaiting_authorization'`
+    )).map(r => r.id);
+    for (const goalId of waitingIds) {
+      await A.raw(`/api/autonomy/goals/${goalId}/decision`, { method: "POST", body: { decision: "decline", reason: "test" } });
+    }
     const after = await A.raw("/api/autonomy/attention");
     const stillWaiting = after.json.groups.find(g => g.kind === "awaiting_authorization");
     assert.equal(stillWaiting.count, 0, "a declined goal stops waiting on you");

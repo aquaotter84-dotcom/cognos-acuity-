@@ -68,7 +68,7 @@ check("capabilities distinguish availability and include honest limits", () => {
   assert.match(COGNOS_IDENTITY.boundaries.join(" "), /Irreversible autonomous acts \(T5\) are designed and not built/i);
   // The manifest names the subsystems it gained, or the About page renders a
   // capability list that does not describe the build.
-  for (const id of ["durable_autonomy", "external_effects"]) {
+  for (const id of ["durable_autonomy", "external_effects", "accounts"]) {
     assert.ok(ids.has(id), `missing ${id}`);
   }
   const autonomyCapability = COGNOS_IDENTITY.capabilities.find(c => c.id === "external_effects");
@@ -76,7 +76,11 @@ check("capabilities distinguish availability and include honest limits", () => {
     "an external write is a switch, never a built-in claim");
   assert.ok(COGNOS_IDENTITY.supportingSubsystems.some(sub => sub.id === "action_governor"),
     "the Action Governor is named as a subsystem — and it is not an operator");
+  assert.ok(COGNOS_IDENTITY.supportingSubsystems.some(sub => sub.id === "resident_designer"),
+    "the designer is a subsystem, not a seventh seat");
   assert.equal(COGNOS_IDENTITY.operators.length, 6, "gaining a subsystem is not gaining a seat");
+  assert.match(COGNOS_IDENTITY.boundaries.join(" "), /Optional email and Google accounts/i);
+  assert.doesNotMatch(COGNOS_IDENTITY.boundaries.join(" "), /There are no user accounts/);
 });
 
 check("the runtime reports autonomy as built and OFF, never as absent or enabled", () => {
@@ -89,7 +93,14 @@ check("the runtime reports autonomy as built and OFF, never as absent or enabled
   const a = runtime.autonomy;
   assert.equal(a.defaultOff, true);
   assert.equal(a.enabled, false);
+  assert.equal(a.enabledSource, "default-off");
+  assert.equal(a.pinned, false);
+  assert.equal(a.uiControl, false);
+  assert.equal(a.canToggleFromUi, false);
   assert.equal(a.killSwitch, "COGNOS_AUTONOMY_ENABLED");
+  assert.equal(a.uiControlSwitch, "COGNOS_AUTONOMY_UI_CONTROL");
+  assert.equal(a.designer.createsNothing, true);
+  assert.equal(a.designer.notAnAnswerPath, true);
   assert.equal(a.outboxMode, "shadow");
   assert.equal(a.builtTiers.includes("T4"), true, "T4 is built");
   assert.deepEqual(a.unbuiltTiers, ["T5"], "and T5 is not");
@@ -106,6 +117,9 @@ check("the runtime reports autonomy as built and OFF, never as absent or enabled
   assert.equal(runtime.unsupported.irreversibleAutonomousActs, true);
   assert.equal(runtime.unsupported.inboundMessaging, true);
   assert.equal(runtime.unsupported.autonomousWritesFromChatTurn, true);
+  assert.equal(typeof runtime.accounts.enabled, "boolean");
+  assert.equal("accountAuthentication" in runtime.unsupported, false,
+    "accounts are a runtime switch after Phase 24, not an absence");
   assert.equal("consequentialAgentWrites" in runtime.unsupported, false,
     "a built-but-off capability is reported as a switch, not as absent");
 
@@ -164,6 +178,9 @@ check("answer prompts carry authoritative self-knowledge after mutable instructi
   assert.ok(mutableAt >= 0 && identityAt > mutableAt, "self-model must follow mutable workspace context");
   assert.match(prompt, /You are COGNOS .*not Cognito/i);
   assert.match(prompt, /no writes, background continuation, seventh seat/i);
+  assert.match(prompt, /COGNOS_AUTONOMY_UI_CONTROL/);
+  assert.match(prompt, /conversational designer drafts a resident/);
+  assert.doesNotMatch(prompt, /no account system/);
 });
 
 check("runtime feature switches are reflected in the compact prompt", () => {

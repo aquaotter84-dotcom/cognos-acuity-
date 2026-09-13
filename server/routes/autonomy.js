@@ -215,12 +215,24 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     const ws = await db.Workspace.ensureDefault();
     const perKind = Math.max(1, Math.min(10, Number(req.query.limit) || 5));
 
-    const [awaiting, parked, staged, notices, promotions] = await Promise.all([
+    // Rows are bounded (a handful per kind). Count is the full total, so a
+    // truncated list cannot pretend there is only one thing waiting. A previous
+    // version set count = rows.length, which made `?limit=1` look like an empty
+    // inbox.
+    const [
+      awaiting, parked, staged, notices, promotions,
+      awaitingN, parkedN, stagedN, noticesN, promotionsN
+    ] = await Promise.all([
       db.AutonomyGoal.list(ws.id, { status: "awaiting_authorization", limit: perKind }),
       db.AutonomyGoal.list(ws.id, { status: "parked", limit: perKind }),
       db.AutonomyOutbox.list(ws.id, { status: "staged", limit: perKind }),
       db.AutonomyNotice.listUnread(ws.id, perKind),
-      db.NotePromotion.list(ws.id, { status: "requested", limit: perKind })
+      db.NotePromotion.list(ws.id, { status: "requested", limit: perKind }),
+      db.query(`SELECT COUNT(*)::int AS n FROM autonomy_goals WHERE workspace_id=$1 AND status='awaiting_authorization'`, [ws.id]),
+      db.query(`SELECT COUNT(*)::int AS n FROM autonomy_goals WHERE workspace_id=$1 AND status='parked'`, [ws.id]),
+      db.query(`SELECT COUNT(*)::int AS n FROM autonomy_outbox WHERE workspace_id=$1 AND status='staged'`, [ws.id]),
+      db.query(`SELECT COUNT(*)::int AS n FROM autonomy_notices WHERE workspace_id=$1 AND acked_ms IS NULL`, [ws.id]),
+      db.query(`SELECT COUNT(*)::int AS n FROM note_promotions WHERE workspace_id=$1 AND status='requested'`, [ws.id])
     ]);
 
     const groups = [
@@ -274,7 +286,18 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
           atMs: p.created_date ? Date.parse(p.created_date) : null
         }))
       }
-    ].map(group => ({ ...group, count: group.rows.length }));
+    ];
+    const totals = [
+      Number(awaitingN[0]?.n || 0),
+      Number(stagedN[0]?.n || 0),
+      Number(noticesN[0]?.n || 0),
+      Number(parkedN[0]?.n || 0),
+      Number(promotionsN[0]?.n || 0)
+    ];
+    groups.forEach((group, i) => {
+      group.count = totals[i];
+      group.truncated = group.count > group.rows.length;
+    });
 
     res.json({
       groups,

@@ -145,8 +145,9 @@ function clampBudget(proposed, adjustments) {
       continue;
     }
     const ceiling = Number(DEFAULT_GOAL_BUDGET[key]);
-    const floor = key === "maxCostUsd" ? 0 : 0;
-    const wanted = Math.max(floor, requested);
+    // Every budget line is a ceiling. Zero is the only floor that means
+    // anything — a negative proposal is nonsense, not a special case for cost.
+    const wanted = Math.max(0, requested);
     const clamped = Math.min(wanted, ceiling);
     out[key] = clamped;
     if (clamped !== wanted) {
@@ -328,12 +329,27 @@ export function clampDraft(rawValue, { config } = {}) {
   return { draft, adjustments, droppedSkills: dropped, ignoredFields };
 }
 
-/** The capability list the model is allowed to choose from, as prose. */
+/**
+ * The capability list the model is allowed to choose from, as prose.
+ *
+ * The annotation MUST repeat isSkillEnabled's verdict. A previous version
+ * tagged every rung-gated skill as "NOT available here" whenever the skill
+ * merely *declared* a rung — including when that rung was on. The allowlist
+ * was still correct (clampSkills uses isSkillEnabled), so the lie was
+ * invisible in every output the tests already checked: it only showed up as
+ * the model quietly refusing to propose a design the operator was entitled
+ * to. A prompt that overstates what is off is as much a lie as one that
+ * understates it.
+ */
 function skillCatalogue(probe) {
   return SKILL_IDS.map(id => {
     const skill = SKILL_REGISTRY[id];
     const runnable = isSkillEnabled(id, probe);
-    const rung = skill.requiresRung ? ` [needs the ${skill.requiresRung} rung — NOT available here]` : "";
+    const rung = skill.requiresRung
+      ? (runnable
+        ? ` [${skill.requiresRung} rung is on]`
+        : ` [needs the ${skill.requiresRung} rung, which is off here]`)
+      : "";
     return `- ${id} (${skill.tier} ${TIERS[skill.tier] || ""})${runnable ? "" : " [NOT executable in this deployment]"}${rung}: ${skill.summary}`;
   }).join("\n");
 }
@@ -466,7 +482,11 @@ export async function designTurn({ config, messages = [], draft = null, signal =
   }
 
   const current = draft && typeof draft === "object" ? draft : emptyDraft();
-  const budget = cfg.goalBudget || DEFAULT_GOAL_BUDGET;
+  // The ceilings quoted to the model are the same constants clampBudget()
+  // enforces. Reading cfg.goalBudget would be fine today (autonomyConfig
+  // returns DEFAULT_GOAL_BUDGET under that name) and wrong the day a
+  // deployment override appears that the clamp does not honour.
+  const budget = DEFAULT_GOAL_BUDGET;
 
   const system = [
     `${DESIGNER_NEEDLE}, a drafting assistant inside the COGNOS autonomy surface.`,

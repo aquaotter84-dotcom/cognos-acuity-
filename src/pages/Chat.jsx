@@ -7,9 +7,10 @@
 // simulation is deleted. Council progress streams live, while answer chunks are
 // released only after the Governor has approved the complete final text.
 //
-// DIVERGENCES: no base44 client, no auth, no attachments/vision (no blob store),
-// and no LiveKit dependency. Browser-native speech output can auto-speak only
-// the governed final answer. Style selector and the web-search toggle remain.
+// DIVERGENCES: no base44 client, no LiveKit. Optional accounts live at /signin;
+// chat itself does not require them. Attachments and vision are Phase 17/18.
+// Browser-native speech output can auto-speak only the governed final answer.
+// Style selector and the web-search toggle remain.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';

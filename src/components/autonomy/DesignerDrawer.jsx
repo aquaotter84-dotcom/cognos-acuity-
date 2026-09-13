@@ -124,9 +124,19 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
     } catch (e) {
       // The server answers a designer failure with a sentence, not a stack
       // trace, and the draft it echoes back is the one we already had — so a
-      // failed turn costs nothing but the message.
+      // failed turn costs nothing but the message. The user bubble is already
+      // on screen; mark it failed rather than appending a second copy.
       setError(e?.message || 'The designer could not produce a draft.');
-      setMessages(prev => [...prev, { role: 'user', content: text, failed: true }]);
+      setMessages(prev => {
+        const next = [...prev];
+        for (let i = next.length - 1; i >= 0; i--) {
+          if (next[i].role === 'user' && next[i].content === text && !next[i].failed) {
+            next[i] = { ...next[i], failed: true };
+            break;
+          }
+        }
+        return next;
+      });
       if (e?.body?.draft) setDraft(e.body.draft);
     } finally {
       setBusy(false);

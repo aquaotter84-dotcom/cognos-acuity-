@@ -1126,3 +1126,84 @@ variables: `COGNOS_AUTONOMY_EXTERNAL_WRITES`, `COGNOS_AUTONOMY_QUIET_HOURS`,
 but unbuilt. Phase 22 is what turns an earned corpus into deliveries, and it
 should not start until this one has been running in shadow long enough to have
 something to measure.
+
+## Phase 25 — Hybrid enablement, the resident designer, plain-language autonomy UX — BUILT, default off
+
+Phases 19–21 built a loop that is frozen until an operator flips a variable and
+restarts. That is the right resting state. It is the wrong *surface*: the
+Autonomy page could show you a frozen system and offer the name of a variable
+you cannot set from a browser. A safety property that can only be explained is
+a safety property that will be worked around.
+
+Phase 25 does not add a rung, a skill, a write, or a law. It adds **who
+decides**, **how you describe a resident**, and **how the page talks**. Autonomy
+is still off by default. What changed is that an operator can now decide *who*
+decides.
+
+**Hybrid enablement.** Two variables, one row, one precedence order resolved in
+exactly one place (`server/autonomy/settings.js`, which `autonomyConfig()` asks):
+
+- `COGNOS_AUTONOMY_ENABLED=true` is a **pin**. Autonomy is on and the UI may not
+  turn it off. `POST /api/autonomy/settings` answers 409 and says so.
+- `COGNOS_AUTONOMY_UI_CONTROL=true` is a **delegation**. The Autonomy page gets
+  a real Enable/Off switch. Delegation is not enablement — the system is still
+  off until someone flips it.
+- Neither set: the page hands over copyable setup steps instead of a dead toggle.
+
+The stored value lives in `autonomy_settings` (migration `0012`), one row per
+workspace, and it can hold **only** the global on/off — there is no column for a
+rung, a ceiling, a skill or a budget, so the table cannot widen anything. A flip
+takes effect on the next heartbeat with no restart, and every flip is appended
+to `workspace_audit` as `autonomy.enabled` with its from/to values and who did
+it. Both switches are allow-lists: only `1/true/yes/on/enabled` enable, so
+`COGNOS_AUTONOMY_ENABLED=` — the most likely misconfiguration on a real host —
+is **off**. An unloaded cache reads `false`; a failed re-read keeps the last
+known value and marks itself `stale`. Health already reports `enabledSource` /
+`pinned` / `uiControl`; identity 1.8.0 now reports the same facts, plus that the
+designer creates nothing and is not an answer path. Optional email/Google
+accounts (Phase 24) are a runtime switch, not an absence — the stale "no user
+accounts" boundary is gone.
+
+**The conversational designer.** A Bot button in chat and *Design with COGNOS*
+on the Autonomy page open the same drawer. Describe what you want watched and
+how often; COGNOS drafts the complete resident. Four rules make that safe:
+
+1. A turn creates nothing. Creation is a separate explicit POST that re-clamps
+   what the browser sent.
+2. Skills are intersected against the registry *and* `isSkillEnabled`, and every
+   omission is named. The catalogue in the prompt repeats that verdict — a
+   previous version tagged every rung-gated skill as "NOT available here"
+   whenever the skill merely *declared* a rung, including when that rung was on.
+   The allowlist was still correct, so the lie was invisible in every output the
+   tests already checked; it only showed up as the model quietly refusing a
+   design the operator was entitled to.
+3. Budgets only clamp down against `DEFAULT_GOAL_BUDGET` (the same constant the
+   prompt quotes). Zero is the only floor; a negative proposal is nonsense, not
+   a special case for cost.
+4. Failures are sentences. A missing key, an unreachable provider, or
+   unparseable output return a bounded, secret-free message and a code (503/502,
+   never a 500), and the previous draft survives. The drawer marks the user
+   bubble that already exists as failed rather than appending a second copy of it.
+
+The designer works while autonomy is frozen — that is the point of it. Creation
+is what waits. Its model prose is a short design note about the rows it
+proposes: `POST /api/chat` remains the only route that composes an answer.
+
+**Attention.** `GET /api/autonomy/attention` answers "what does autonomy want
+from me?" in one query: waiting authorizations, staged effects, unread notices,
+parked goals, open promotions. Each group names the tab that resolves it. Rows
+are bounded; **count is the full total**, so `?limit=1` cannot pretend the inbox
+is empty. Statuses read as sentences everywhere — *Waiting for you*, *Paused
+with a reason* — from `src/lib/autonomyLabels.js`, with the machine vocabulary
+demoted into a Technical details disclosure rather than deleted.
+
+Building this found the same shape of defect Phases 19–21 kept finding — a
+guard that could not fire, or a surface that lied while the clamps were honest.
+The catalogue annotation ignored `runnable`. Attention `count` was
+`rows.length`. Identity still claimed "no user accounts" after Phase 24. All
+three are pinned.
+
+Per the §10 rhythm: migration `0012`, identity `1.8.0` (laws stay `1.6.0` —
+Phase 25 adds no pin), `test/autonomy-ux.mjs` (17 checks, three harnesses:
+delegated / not / pinned), and this section. New environment variable:
+`COGNOS_AUTONOMY_UI_CONTROL`. Rungs 5–6 remain designed and unbuilt.

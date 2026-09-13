@@ -1,6 +1,6 @@
 # AUTONOMY.md — a design for durable, governed agency in COGNOS
 
-**Status:** proposed design. No code in this document has been written yet.
+**Status:** design + implementation. Phases 19–21 and 25 of this document are built and green. Rungs 5–6 (inbound, T5) remain designed and unbuilt.
 **Read first:** `server/council/laws.js`, `server/identity.js`, `server/agent/runner.js`,
 `server/chatOrchestrate.js`, `DIVERGENCES.md` §14.4.
 
@@ -65,7 +65,7 @@ Two things the Archivist immediately revealed:
 
 ---
 
-## Status — Phases 19–21 are built
+## Status — Phases 19–21 and 25 are built
 
 This document is the design. As of this revision, Phases 19–21 of it are
 **implemented and green**: `npm test` runs `test/autonomy.mjs` plus
@@ -154,8 +154,10 @@ is a pin the UI cannot override (and the UI says so rather than silently failing
 page, where a flip takes effect on the next heartbeat without a restart and is
 appended to `workspace_audit`. Neither variable being set is no longer a dead
 end — the page hands over copyable setup steps. §4.11.1 has the design and the
-four rules that make the designer safe; `test/autonomy-ux.mjs` (16 checks across
-three harnesses: delegated, not delegated, pinned) pins all of it.
+four rules that make the designer safe; `test/autonomy-ux.mjs` (17 checks across
+three harnesses: delegated, not delegated, pinned) pins all of it. The
+catalogue the model reads repeats `isSkillEnabled`'s verdict, so a rung that is
+on is not described as off.
 
 **Autonomy is off by default.** `COGNOS_AUTONOMY_ENABLED` unset means the loop is
 frozen: no goal wakes, no notice is written, no tick row is recorded.
@@ -428,9 +430,10 @@ budget; the workspace also gets a ceiling (`COGNOS_AUTONOMY_MAX_*`) so twenty
 enthusiastic residents cannot spend more than you agreed to spend. Per-resident
 budgets are carved from the workspace ceiling, and exhaustion of either parks.
 
-**Honest limit, stated in the manifest:** `pin.no_auth` means there are no accounts.
-Every resident shares one workspace, one memory, one ledger. Residents are a
-single-operator deployment's feature, not a multi-tenant one.
+**Honest limit, stated in the manifest:** `pin.no_auth` originally meant there
+are no accounts. Phase 24 added optional email/Google accounts as a runtime
+switch; unauthenticated single-tenant use remains the default. Residents still
+share the workspace they live in — they are workers, not principals.
 
 ### 4.2 Goals
 
@@ -1106,9 +1109,11 @@ governance this document has spent four phases building:
 2. **Skills are intersected, and every omission is named.** The draft's allowlist
    meets the code-owned registry *and* what this deployment can execute. A skill
    that does not exist, whose rung is off, whose notice channel is unset, or
-   whose kill switch is closed is dropped **with the reason shown**. A silently
-   shortened allowlist is how an operator authorizes something other than what
-   they read. The executability question is asked with the global switch held
+   whose kill switch is closed is dropped **with the reason shown**. The
+   catalogue in the prompt repeats that same verdict: a skill whose rung is on
+   is described as on, not as "NOT available here" merely because it declares a
+   rung. A silently shortened allowlist is how an operator authorizes something
+   other than what they read. The executability question is asked with the global switch held
    open (`executableProbe`) — otherwise designing while frozen, which is the
    whole point, would strip every skill and tell you your resident can do
    nothing. Every rung, notice channel and unbuilt tier is still honoured; only
@@ -1606,7 +1611,7 @@ itself the credential.
 
 ### 8b. Phase 25 tests — `test/autonomy-ux.mjs`
 
-Sixteen checks, three harnesses in one process. The harness boundaries are the
+Seventeen checks, three harnesses in one process. The harness boundaries are the
 interesting part: `server/autonomy/settings.js` caches the stored switch at
 module scope and `process.env` survives `bootHarness`, so each boundary resets
 **both**. Forgetting either leaks a switch from one harness into the next, and
@@ -1643,6 +1648,10 @@ Then the harnesses:
 8. An overreaching draft is narrowed out loud: `webhook.post`, `web.search`,
    `notice.emit` and an invented `money.send` are each dropped **and named**, the
    ceilings do not move up, and no row exists afterwards.
+8b. The catalogue repeats `isSkillEnabled`: with the search rung off, `web.search`
+    is NOT executable; with it on, the line says the rung is on and `webhook.post`
+    remains off. A prompt that overstates what is off is as much a lie as one that
+    understates it.
 9. A broken model answer is a 502 with `malformed_draft`, prose-without-a-draft
    is the same case, an empty conversation is a 400, and the draft survives all three.
 10. Creating while off is a 409 that names the switch; a nameless draft is a 400;
@@ -1653,7 +1662,9 @@ Then the harnesses:
     `origin: "designer"` on the goal event, and leaves the first goal in
     `awaiting_authorization` — a tick then executes zero steps against it.
 12. The attention panel answers "what does autonomy want from me?" in one bounded
-    query, names the tab per group, and empties when the item is resolved.
+    query, names the tab per group, reports **count as the full total** (not the
+    page size — `?limit=1` against two waiting goals still says two), and empties
+    when the items are resolved.
 13. **Not delegated**: the toggle is refused with the setup in the message, a
     refused flip writes no row, the frozen-creation refusal names both variables
     (the old dead-end message is asserted gone), and the designer still works.
@@ -1690,6 +1701,7 @@ One migration, one law bump, one test file, one identity bump, one
 | **19** | **BUILT.** Residents, goals, tick + lease, notes, budgets, outbox for T0–T2, Action Governor, heartbeat + graceful shutdown, the Autonomy page, laws 1.4.0, `test/autonomy.mjs` (40) | **Rung 1–2**, default off |
 | **20** | **BUILT.** Sub-agents, promotion path, Goal Card in chat, T3 evidence fetch, `[goal_…:nN]` locators + Governor extension; `test/phase20.mjs` (22); laws 1.5.0, identity 1.4.0, migration `0007` | **Rung 3**, default off |
 | **21** | **BUILT.** `webhook.post` (§4.7.1) + delivery adapter (DNS-pinned, per-hop re-validation, one bounded retry), destination grants in scope rows, outbound-SSRF gate, `secret_ref` signing, quiet hours, Action Governor T4 rules in **shadow**, digest-only receipts, reversal that admits it cannot un-send, the rung-evidence gate + its two routes and Autonomy panel; `test/phase21.mjs` (35); laws 1.6.0, identity 1.5.0, migration `0008` | **Rung 4**, default off; a shadow corpus can now be earned but nothing delivers until `live` |
+| **25** | **BUILT.** Hybrid enablement (`COGNOS_AUTONOMY_UI_CONTROL` + `autonomy_settings`), conversational resident designer (clamped drafts, catalogue honesty, budgets down), attention queue with real totals, plain-language statuses; `test/autonomy-ux.mjs` (17); identity 1.8.0, migration `0012`. No new laws. | Operator surface; still **Rung 1–4 default off** |
 | **22** | Outbox → `live` based on the shadow evidence record; T5 with per-effect human approval | **Rung 4–5**, default off, separate security review |
 | **23** | Inbound messaging (§4.12): channels, HMAC verification, replay defence, headless turn, pairing tokens, shadow-mode replies | **Rung 5**, default off; requires accepting that the channel is the credential |
 
