@@ -117,6 +117,94 @@ export function budgetLabel(key) {
   return BUDGET_LABEL[String(key || '')] || String(key || '').replace(/^max/, '').replace(/([A-Z])/g, ' $1').trim();
 }
 
+function effectNames(entry) {
+  if (typeof entry === 'string') return [entry];
+  if (!entry || typeof entry !== 'object') return [];
+  return [entry.effect, entry.skill, entry.effectType, entry.skillId].filter(v => typeof v === 'string');
+}
+
+function hasEffect(effects, names) {
+  const wanted = new Set(names);
+  return (Array.isArray(effects) ? effects : []).some(entry => effectNames(entry).some(n => wanted.has(n)));
+}
+
+function writeDestinations(effects) {
+  const out = [];
+  for (const entry of Array.isArray(effects) ? effects : []) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const names = effectNames(entry);
+    if (!names.includes('webhook.post') && !names.includes('external_write')) continue;
+    for (const dest of Array.isArray(entry.destinations) ? entry.destinations : []) {
+      if (typeof dest === 'string' && dest.trim()) out.push(dest.trim());
+    }
+  }
+  return out;
+}
+
+function humanDuration(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const days = Math.round(n / 86_400_000);
+  if (days >= 1) return days === 1 ? 'one day' : `${days} days`;
+  const hours = Math.round(n / 3_600_000);
+  if (hours >= 1) return hours === 1 ? 'one hour' : `${hours} hours`;
+  const minutes = Math.round(n / 60_000);
+  if (minutes >= 1) return minutes === 1 ? 'one minute' : `${minutes} minutes`;
+  return `${Math.round(n / 1000)} seconds`;
+}
+
+/**
+ * What authorizing this scope means, in sentences. The JSON stays in
+ * Technical details — hashes belong there too.
+ */
+export function describeScope(scope) {
+  const s = scope && typeof scope === 'object' ? scope : {};
+  const effects = s.effectsAllowed;
+  const lines = [];
+  if (hasEffect(effects, ['notify'])) {
+    lines.push('It may send you templated notices — never free-written messages.');
+  } else {
+    lines.push('It will not send you notices.');
+  }
+  const urls = Array.isArray(s.urlAllowlist) ? s.urlAllowlist.filter(u => typeof u === 'string' && u.trim()) : [];
+  if (hasEffect(effects, ['external_read']) && urls.length) {
+    lines.push(`It may read only ${urls.length === 1 ? 'this page' : 'these pages'}: ${urls.join(', ')}.`);
+  } else if (hasEffect(effects, ['external_read'])) {
+    lines.push('It may read the web, but no page is allowlisted — so it can reach nothing.');
+  } else {
+    lines.push('It may not fetch any web page.');
+  }
+  const dest = writeDestinations(effects);
+  if (hasEffect(effects, ['webhook.post', 'external_write']) && dest.length) {
+    lines.push(`It may POST only to: ${dest.join(', ')}.`);
+  } else if (hasEffect(effects, ['webhook.post', 'external_write'])) {
+    lines.push('Outside writes are named, but no destination is granted — so it can post nowhere.');
+  } else {
+    lines.push('It may not write outside COGNOS.');
+  }
+  return lines;
+}
+
+/** How far the budget lets it go, in sentences. */
+export function describeBudget(budget) {
+  const b = budget && typeof budget === 'object' ? budget : {};
+  const lines = [];
+  if (b.maxSteps != null && Number.isFinite(Number(b.maxSteps))) {
+    lines.push(`Up to ${Number(b.maxSteps).toLocaleString()} steps.`);
+  }
+  if (b.maxCostUsd != null && Number.isFinite(Number(b.maxCostUsd))) {
+    lines.push(`Spend at most $${Number(b.maxCostUsd).toFixed(2)}.`);
+  }
+  if (b.maxNoticesPerDay != null && Number.isFinite(Number(b.maxNoticesPerDay))) {
+    const n = Number(b.maxNoticesPerDay);
+    lines.push(`At most ${n} notice${n === 1 ? '' : 's'} per day.`);
+  }
+  const lasts = humanDuration(b.maxWallClockMs);
+  if (lasts) lines.push(`This authorization lasts ${lasts}.`);
+  if (!lines.length) lines.push('The default budget ceilings apply.');
+  return lines;
+}
+
 /**
  * The glossary behind the "?" button. One line each, in the order a new
  * operator meets them. `technical` carries the jargon the line replaces, so the

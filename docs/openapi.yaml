@@ -1,11 +1,13 @@
 openapi: 3.1.0
 info:
-  title: COGNOS Accounts & Multi-Tenant Workspaces (Phase 24)
-  version: "24.0"
-  summary: Email + Google sign-in, isolated append-only workspaces over the trust-annotated Atlas.
+  title: COGNOS Accounts, Workspaces, and Autonomy (Phases 24–25)
+  version: "25.0"
+  summary: Email + Google sign-in, isolated append-only workspaces, and the Phase 25 autonomy operator surface.
   description: |
     Multi-tenant workspace layer over the Phase 23 trust-annotated knowledge
-    graph ("Atlas").
+    graph ("Atlas"), plus Phase 25's hybrid enablement, resident designer, and
+    attention queue. Autonomy routes create no answers: POST /api/chat remains
+    the only user-message-to-answer path.
 
     ## Provenance rule
     User facts are asserted ONLY from trusted Atlas rows:
@@ -51,6 +53,7 @@ tags:
   - name: auth-google
   - name: workspaces
   - name: groups
+  - name: autonomy
 
 components:
   securitySchemes:
@@ -974,5 +977,196 @@ paths:
       responses:
         '200':
           description: Updated group.
+
+  /api/autonomy/status:
+    get:
+      tags: [autonomy]
+      summary: Built / rung-on / delivers-now, plus hybrid enablement (enabledSource, pinned, uiControl).
+      responses:
+        '200':
+          description: Effective switch, rung flags, counts, and how the switch was decided.
+
+  /api/autonomy/settings:
+    get:
+      tags: [autonomy]
+      summary: The delegated on/off switch — value, pin, whether the UI may use it, recent flips.
+      responses:
+        '200':
+          description: Settings plus flip history.
+    post:
+      tags: [autonomy]
+      summary: Flip the delegated switch (409 against a pin, or with no delegation).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+                updated_by:
+                  type: string
+      responses:
+        '200':
+          description: New effective state. Takes effect on the next heartbeat — no restart.
+        '400':
+          description: enabled must be a boolean.
+        '409':
+          description: pinned_by_operator or not_delegated.
+
+  /api/autonomy/attention:
+    get:
+      tags: [autonomy]
+      summary: What autonomy wants from a human, grouped, each with its tab.
+      description: |
+        Rows are bounded (`limit`, default 5, max 10 per kind). `count` is the
+        full total so a truncated page cannot pretend the inbox is empty.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 5
+            maximum: 10
+      responses:
+        '200':
+          description: groups[], total, needsAttention, enabled.
+
+  /api/autonomy/designer:
+    post:
+      tags: [autonomy]
+      summary: One designer turn → a clamped draft. Creates nothing. Reachable while frozen.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                messages:
+                  type: array
+                  items:
+                    type: object
+                draft:
+                  type: object
+      responses:
+        '200':
+          description: Draft plus a short design note. Nothing was created.
+        '400':
+          description: empty_conversation
+        '502':
+          description: malformed_draft / model failure — previous draft survives
+        '503':
+          description: no_model_key / misconfigured
+
+  /api/autonomy/designer/create:
+    post:
+      tags: [autonomy]
+      summary: THE explicit click — re-clamps the draft, then creates the resident.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                draft:
+                  type: object
+                create_first_goal:
+                  type: boolean
+      responses:
+        '201':
+          description: Created. A first goal lands awaiting_authorization.
+        '400':
+          description: incomplete_draft
+        '409':
+          description: autonomy_disabled or slug_taken. The draft is kept.
+
+  /api/autonomy/agents:
+    get:
+      tags: [autonomy]
+      summary: Current residents (one row per slug — the live brief version).
+      responses:
+        '200':
+          description: OK.
+    post:
+      tags: [autonomy]
+      summary: Create a resident (allowlist is code-owned).
+      responses:
+        '201':
+          description: Created.
+        '409':
+          description: autonomy_disabled
+
+  /api/autonomy/goals:
+    get:
+      tags: [autonomy]
+      summary: Goals + status.
+      responses:
+        '200':
+          description: OK.
+    post:
+      tags: [autonomy]
+      summary: Propose a goal (lands awaiting_authorization).
+      responses:
+        '201':
+          description: Created, waiting on authorization.
+        '409':
+          description: autonomy_disabled
+
+  /api/autonomy/goals/{goalId}/decision:
+    post:
+      tags: [autonomy]
+      summary: THE BARRIER — authorize or decline, by hash. Also pause / resume / cancel.
+      parameters:
+        - name: goalId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [authorize, decline, pause, resume, cancel]
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Recorded.
+        '409':
+          description: Wrong status for this decision.
+
+  /api/autonomy/outbox:
+    get:
+      tags: [autonomy]
+      summary: Staged / refused / released / shadowed effects plus the corpus.
+      responses:
+        '200':
+          description: OK.
+
+  /api/autonomy/rungs:
+    get:
+      tags: [autonomy]
+      summary: Rung flags plus the shadow-corpus measurement.
+      responses:
+        '200':
+          description: OK.
+
+  /api/autonomy/tick:
+    post:
+      tags: [autonomy]
+      summary: Run one slice now (ops / cron fallback). Frozen deployments return frozen=true.
+      responses:
+        '200':
+          description: Slice result or frozen.
 
 security: []

@@ -34,7 +34,7 @@
 
 import { callLLM } from "../llm.js";
 import { SKILL_IDS, SKILL_REGISTRY, TIERS, getSkill, isSkillEnabled } from "../skills/index.js";
-import { DEFAULT_GOAL_BUDGET } from "./config.js";
+import { DEFAULT_GOAL_BUDGET, resolveNotices } from "./config.js";
 
 /** The needle test/mockModel.mjs keys on to script this role. */
 export const DESIGNER_NEEDLE = "You are the COGNOS Resident Designer";
@@ -57,7 +57,9 @@ export const DESIGNER_LIMITS = Object.freeze({
   maxTurnChars: 4_000,
   heartbeatMinMs: 60_000,
   heartbeatMaxMs: 7 * DAY_MS,
-  heartbeatDefaultMs: 900_000
+  heartbeatDefaultMs: 900_000,
+  proposedUrls: 8,
+  urlChars: 2000
 });
 
 /** Budget keys a draft may propose, and the ceiling each one clamps against. */
@@ -66,7 +68,7 @@ const BUDGET_KEYS = Object.freeze(["maxSteps", "maxModelCalls", "maxTokensIn", "
 
 /** Fields a draft may carry. Anything else the model proposes is ignored and named. */
 const KNOWN_RESIDENT_FIELDS = Object.freeze(["name", "slug", "purpose", "brief", "skills",
-  "heartbeat_minutes", "budget", "first_goal"]);
+  "heartbeat_minutes", "budget", "first_goal", "proposed_urls"]);
 
 /**
  * Control characters out, whitespace collapsed, length bounded.
@@ -86,6 +88,97 @@ function clean(value, max) {
 const slugify = (value) => clean(value, DESIGNER_LIMITS.slug)
   .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, DESIGNER_LIMITS.slug);
 
+
+/**
+ * Structural URL gate for a *proposal*. DNS-private resolution is still
+ * safeFetch's job at perform time. A draft may only name https pages that
+ * look public; ticking one at create is what turns it into scope.
+ */
+function isBlockedProposalHost(hostname) {
+  const host = String(hostname || "").toLowerCase().replace(/\.$/, "");
+  if (!host) return true;
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")
+    || host.endsWith(".internal") || host.endsWith(".lan") || host.endsWith(".home")) return true;
+  if (host === "::1") return true;
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const a = Number(ipv4[1]);
+    const b = Number(ipv4[2]);
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+  }
+  // IPv6 literals: refuse at proposal time. Fetch still re-resolves hostnames.
+  if (host.includes(":")) return true;
+  return false;
+}
+
+export function clampProposedUrl(raw) {
+  const text = String(raw ?? "").trim().replace(/[),.;]+$/g, "");
+  if (!text) return null;
+  let url;
+  try { url = new URL(text); } catch { return null; }
+  if (url.protocol !== "https:") return null;
+  if (url.username || url.password) return null;
+  if (url.port && url.port !== "443") return null;
+  if (isBlockedProposalHost(url.hostname)) return null;
+  url.hash = "";
+  const href = url.href;
+  if (href.length > DESIGNER_LIMITS.urlChars) return null;
+  return href;
+}
+
+export function clampProposedUrls(list, adjustments = []) {
+  const kept = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(list) ? list : []) {
+    const href = clampProposedUrl(raw);
+    if (!href) {
+      if (String(raw ?? "").trim()) {
+        adjustments.push({
+          field: "proposed_urls", code: "rejected_url",
+          note: `"${clean(raw, 80)}" is not an https page this deployment will fetch — https only, no credentials, no private hosts.`
+        });
+      }
+      continue;
+    }
+    if (seen.has(href)) continue;
+    if (kept.length >= DESIGNER_LIMITS.proposedUrls) {
+      adjustments.push({
+        field: "proposed_urls", code: "too_many",
+        note: `Only the first ${DESIGNER_LIMITS.proposedUrls} pages are kept.`
+      });
+      break;
+    }
+    seen.add(href);
+    kept.push(href);
+  }
+  return kept;
+}
+
+export function extractHttpsUrls(text) {
+  const matches = String(text || "").match(/https:\/\/[^\s<>"'`]+/gi) || [];
+  return clampProposedUrls(matches);
+}
+
+/**
+ * Scope for a designer-created first goal. Always starts at notify-only.
+ * Operator-ticked https URLs become urlAllowlist + external_read, and only
+ * when web.fetch survived the skill clamp. Proposed URLs are not a grant.
+ */
+export function firstGoalScope({ skills = [], grantUrls = [] } = {}) {
+  const urls = clampProposedUrls(grantUrls);
+  const effectsAllowed = ["notify"];
+  const scope = { effectsAllowed };
+  if (urls.length && (skills || []).includes("web.fetch")) {
+    effectsAllowed.push("external_read");
+    scope.urlAllowlist = urls;
+  }
+  return scope;
+}
+
+
 /** The draft an empty conversation starts from. Explicit, so the UI can render it. */
 export function emptyDraft() {
   return {
@@ -97,6 +190,7 @@ export function emptyDraft() {
     heartbeatMs: DESIGNER_LIMITS.heartbeatDefaultMs,
     budget: { ...DEFAULT_GOAL_BUDGET },
     firstGoal: null,
+    proposedUrls: [],
     complete: false
   };
 }
@@ -121,7 +215,11 @@ export function emptyDraft() {
  * tick and the Action Governor keep reading the real config.
  */
 export function executableProbe(config) {
-  return { ...config, enabled: true };
+  // Pretend autonomy is on so a frozen deployment can still be designed. Notices
+  // follow that same hypothetical: unset + on → internal, so notice.emit is not
+  // stripped from a draft the operator will create after they flip the switch.
+  // Explicit none/webhook still wins — the probe does not invent a channel.
+  return { ...config, enabled: true, notices: resolveNotices(true) };
 }
 
 /**
@@ -192,7 +290,18 @@ function clampSkills(proposed, probe, adjustments) {
       const why = [];
       if (process.env[skill.killSwitch] === "false") why.push(`its kill switch ${skill.killSwitch} is off`);
       if (skill.requiresRung) why.push(`it needs the ${skill.requiresRung} rung, which this deployment has not enabled`);
-      if (skill.tier === "T2") why.push("no notice channel is configured (COGNOS_AUTONOMY_NOTICE_MODE is 'none')");
+      if (skill.tier === "T2") {
+        const notices = probe.notices || {};
+        if (notices.modeSource === "env" && notices.mode === "none") {
+          why.push("the notice channel is set to none (COGNOS_AUTONOMY_NOTICE_MODE=none)");
+        } else if (notices.misconfigured) {
+          why.push("the notice channel is webhook but COGNOS_AUTONOMY_NOTICE_WEBHOOK is empty");
+        } else if (notices.enabled === false) {
+          why.push("notices are switched off (COGNOS_AUTONOMY_NOTICES=false)");
+        } else {
+          why.push("no notice channel is configured");
+        }
+      }
       if (skill.tier === "T4" && !why.length) why.push("external writes are built but switched off here");
       if (skill.tier === "T5") why.push("irreversible effects are not built yet");
       dropped.push({ id, reason: "not_executable_here", tier: skill.tier, tierName: TIERS[skill.tier] || skill.tier,
@@ -229,10 +338,14 @@ export function normalizeDraft(value) {
   if (out.first_goal === undefined && source.firstGoal !== undefined) {
     out.first_goal = source.firstGoal;
   }
+  if (out.proposed_urls === undefined && source.proposedUrls !== undefined) {
+    out.proposed_urls = source.proposedUrls;
+  }
   // Clamped-shape bookkeeping is not a proposed field, so it must not be
   // reported back to the operator as something the model tried to sneak in.
   delete out.heartbeatMs;
   delete out.firstGoal;
+  delete out.proposedUrls;
   delete out.complete;
   return out;
 }
@@ -246,7 +359,7 @@ export function normalizeDraft(value) {
  * forget to call it: the only way to get a draft out of designTurn() is through
  * here.
  */
-export function clampDraft(rawValue, { config } = {}) {
+export function clampDraft(rawValue, { config, extraUrls = [] } = {}) {
   const adjustments = [];
   const ignoredFields = [];
   const resident = normalizeDraft(rawValue);
@@ -317,19 +430,37 @@ export function clampDraft(rawValue, { config } = {}) {
     }
   }
 
+  const proposedUrls = clampProposedUrls(
+    [...(Array.isArray(resident.proposed_urls) ? resident.proposed_urls : []),
+      ...(Array.isArray(extraUrls) ? extraUrls : [])],
+    adjustments
+  );
+
   const draft = {
     name, slug, purpose, brief,
     skills: kept,
     heartbeatMs,
     budget,
     firstGoal,
+    proposedUrls,
     complete: Boolean(name)
   };
 
   return { draft, adjustments, droppedSkills: dropped, ignoredFields };
 }
 
-/** The capability list the model is allowed to choose from, as prose. */
+/**
+ * The capability list the model is allowed to choose from, as prose.
+ *
+ * The annotation MUST repeat isSkillEnabled's verdict. A previous version
+ * tagged every rung-gated skill as "NOT available here" whenever the skill
+ * merely *declared* a rung — including when that rung was on. The allowlist
+ * was still correct (clampSkills uses isSkillEnabled), so the lie was
+ * invisible in every output the tests already checked: it only showed up as
+ * the model quietly refusing to propose a design the operator was entitled
+ * to. A prompt that overstates what is off is as much a lie as one that
+ * understates it.
+ */
 function skillCatalogue(probe) {
   return SKILL_IDS.map(id => {
     const skill = SKILL_REGISTRY[id];
@@ -446,6 +577,11 @@ export const DESIGNER_SCHEMA = Object.freeze({
             title: { type: "string" },
             objective: { type: "string" }
           }
+        },
+        proposed_urls: {
+          type: "array",
+          items: { type: "string" },
+          description: "https pages the operator might allowlist. Proposals only — never a grant. The operator ticks them at create."
         }
       },
       required: ["name", "purpose", "brief", "skills"]
@@ -492,6 +628,7 @@ export async function designTurn({ config, messages = [], draft = null, signal =
     `- A skill marked NOT executable cannot be granted by you, by a brief, or by a database row. Do not propose one; explain what is missing instead.`,
     `- Budget ceilings may be LOWERED, never raised. The defaults here are the maximum: maxSteps ${budget.maxSteps}, maxModelCalls ${budget.maxModelCalls}, maxCostUsd ${budget.maxCostUsd}, maxNoticesPerDay ${budget.maxNoticesPerDay}.`,
     "- You cannot set scope, authority, tiers or rungs. Those come from the operator's authorization.",
+    "- You may list https URLs under proposed_urls. They are proposals the operator ticks at create, never a grant and never a urlAllowlist.",
     "- You cannot create anything. Your draft is shown to the operator, who creates it with an explicit click.",
     `- Wake-up intervals are minutes, between ${Math.round(DESIGNER_LIMITS.heartbeatMinMs / 60_000)} and ${Math.round(DESIGNER_LIMITS.heartbeatMaxMs / 60_000)} (${DESIGNER_LIMITS.heartbeatMaxMs / DAY_MS} days). "Every morning" is 1440.`,
     "",
@@ -509,7 +646,8 @@ export async function designTurn({ config, messages = [], draft = null, signal =
       name: current.name || "", purpose: current.purpose || "", brief: current.brief || "",
       skills: current.skills || [], heartbeat_minutes: Math.round(Number(current.heartbeatMs || DESIGNER_LIMITS.heartbeatDefaultMs) / 60_000),
       budget: current.budget || null,
-      first_goal: current.firstGoal || null
+      first_goal: current.firstGoal || null,
+      proposed_urls: current.proposedUrls || []
     }),
     "",
     "Produce the next complete draft and your short reply."
@@ -537,7 +675,8 @@ export async function designTurn({ config, messages = [], draft = null, signal =
       message: "The model returned a response without a resident draft, so nothing changed. Try again or restate what you want." };
   }
 
-  const clamped = clampDraft(result.resident, { config: cfg });
+  const extraUrls = extractHttpsUrls(transcript.map(m => m.content).join("\n"));
+  const clamped = clampDraft(result.resident, { config: cfg, extraUrls });
   const reply = clean(result.reply, DESIGNER_LIMITS.replyChars)
     || "Here is the draft — nothing else to add.";
   const questions = Array.isArray(result.questions)

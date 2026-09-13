@@ -1,6 +1,6 @@
 # AUTONOMY.md — a design for durable, governed agency in COGNOS
 
-**Status:** proposed design. No code in this document has been written yet.
+**Status:** design + implementation. Phases 19–21 and 25 of this document are built and green. Rungs 5–6 (inbound, T5) remain designed and unbuilt.
 **Read first:** `server/council/laws.js`, `server/identity.js`, `server/agent/runner.js`,
 `server/chatOrchestrate.js`, `DIVERGENCES.md` §14.4.
 
@@ -50,9 +50,10 @@ prompt, every resident is amnesiac and the heartbeat is pointless.
 every hour is noise, not reporting. It appends a finding only when something
 moved, and a watermark after each look.
 
-Seed it with `npm run seed:archivist`. The goal is created
-**awaiting_authorization** on purpose — authorizing is the operator's decision,
-not a seed script's.
+Seed it with `npm run seed:archivist`, or **Try the Archivist** on the Autonomy
+overview. Both use the existing agent and goal writes; neither authorizes. The
+goal is created **awaiting_authorization** on purpose — authorizing is the
+operator's decision, not a seed script's.
 
 Two things the Archivist immediately revealed:
 
@@ -65,7 +66,7 @@ Two things the Archivist immediately revealed:
 
 ---
 
-## Status — Phases 19–21 are built
+## Status — Phases 19–21 and 25 are built
 
 This document is the design. As of this revision, Phases 19–21 of it are
 **implemented and green**: `npm test` runs `test/autonomy.mjs` plus
@@ -155,7 +156,9 @@ page, where a flip takes effect on the next heartbeat without a restart and is
 appended to `workspace_audit`. Neither variable being set is no longer a dead
 end — the page hands over copyable setup steps. §4.11.1 has the design and the
 four rules that make the designer safe; `test/autonomy-ux.mjs` (17 checks across
-three harnesses: delegated, not delegated, pinned) pins all of it.
+three harnesses: delegated, not delegated, pinned) pins all of it. The
+catalogue the model reads repeats `isSkillEnabled`'s verdict, so a rung that is
+on is not described as off.
 
 **Autonomy is off by default.** `COGNOS_AUTONOMY_ENABLED` unset means the loop is
 frozen: no goal wakes, no notice is written, no tick row is recorded.
@@ -428,9 +431,10 @@ budget; the workspace also gets a ceiling (`COGNOS_AUTONOMY_MAX_*`) so twenty
 enthusiastic residents cannot spend more than you agreed to spend. Per-resident
 budgets are carved from the workspace ceiling, and exhaustion of either parks.
 
-**Honest limit, stated in the manifest:** `pin.no_auth` means there are no accounts.
-Every resident shares one workspace, one memory, one ledger. Residents are a
-single-operator deployment's feature, not a multi-tenant one.
+**Honest limit, stated in the manifest:** `pin.no_auth` originally meant there
+are no accounts. Phase 24 added optional email/Google accounts as a runtime
+switch; unauthenticated single-tenant use remains the default. Residents still
+share the workspace they live in — they are workers, not principals.
 
 ### 4.2 Goals
 
@@ -1106,9 +1110,11 @@ governance this document has spent four phases building:
 2. **Skills are intersected, and every omission is named.** The draft's allowlist
    meets the code-owned registry *and* what this deployment can execute. A skill
    that does not exist, whose rung is off, whose notice channel is unset, or
-   whose kill switch is closed is dropped **with the reason shown**. A silently
-   shortened allowlist is how an operator authorizes something other than what
-   they read. The executability question is asked with the global switch held
+   whose kill switch is closed is dropped **with the reason shown**. The
+   catalogue in the prompt repeats that same verdict: a skill whose rung is on
+   is described as on, not as "NOT available here" merely because it declares a
+   rung. A silently shortened allowlist is how an operator authorizes something
+   other than what they read. The executability question is asked with the global switch held
    open (`executableProbe`) — otherwise designing while frozen, which is the
    whole point, would strip every skill and tell you your resident can do
    nothing. Every rung, notice channel and unbuilt tier is still honoured; only
@@ -1119,7 +1125,9 @@ governance this document has spent four phases building:
    costs the operator a design they were entitled to.
 3. **Budgets only clamp down** against `DEFAULT_GOAL_BUDGET`, and each reduction
    is reported. Scope is not settable from a draft at all: a model proposing its
-   own scope would be proposing its own authority.
+   own scope would be proposing its own authority. It may *propose* https URLs;
+   the operator ticks them at create, and only then do they become
+   `urlAllowlist` + `external_read` on the first goal.
 4. **Failures are sentences.** No API key, unreachable provider, unparseable
    output — each becomes a bounded, secret-free message plus a code (503/502,
    never a 500 carrying raw configuration text), and the previous draft survives,
@@ -1665,7 +1673,9 @@ Then the harnesses:
     `origin: "designer"` on the goal event, and leaves the first goal in
     `awaiting_authorization` — a tick then executes zero steps against it.
 12. The attention panel answers "what does autonomy want from me?" in one bounded
-    query, names the tab per group, and empties when the item is resolved.
+    query, names the tab per group, reports **count as the full total** (not the
+    page size — `?limit=1` against two waiting goals still says two), and empties
+    when the items are resolved.
 13. **Not delegated**: the toggle is refused with the setup in the message, a
     refused flip writes no row, the frozen-creation refusal names both variables
     (the old dead-end message is asserted gone), and the designer still works.
@@ -1702,6 +1712,7 @@ One migration, one law bump, one test file, one identity bump, one
 | **19** | **BUILT.** Residents, goals, tick + lease, notes, budgets, outbox for T0–T2, Action Governor, heartbeat + graceful shutdown, the Autonomy page, laws 1.4.0, `test/autonomy.mjs` (40) | **Rung 1–2**, default off |
 | **20** | **BUILT.** Sub-agents, promotion path, Goal Card in chat, T3 evidence fetch, `[goal_…:nN]` locators + Governor extension; `test/phase20.mjs` (22); laws 1.5.0, identity 1.4.0, migration `0007` | **Rung 3**, default off |
 | **21** | **BUILT.** `webhook.post` (§4.7.1) + delivery adapter (DNS-pinned, per-hop re-validation, one bounded retry), destination grants in scope rows, outbound-SSRF gate, `secret_ref` signing, quiet hours, Action Governor T4 rules in **shadow**, digest-only receipts, reversal that admits it cannot un-send, the rung-evidence gate + its two routes and Autonomy panel; `test/phase21.mjs` (35); laws 1.6.0, identity 1.5.0, migration `0008` | **Rung 4**, default off; a shadow corpus can now be earned but nothing delivers until `live` |
+| **25** | **BUILT.** Hybrid enablement (`COGNOS_AUTONOMY_UI_CONTROL` + `autonomy_settings`), conversational resident designer (clamped drafts, catalogue honesty, budgets down), attention queue with real totals, plain-language statuses; `test/autonomy-ux.mjs` (17); identity 1.8.0, migration `0012`. No new laws. | Operator surface; still **Rung 1–4 default off** |
 | **22** | Outbox → `live` based on the shadow evidence record; T5 with per-effect human approval | **Rung 4–5**, default off, separate security review |
 | **23** | Inbound messaging (§4.12): channels, HMAC verification, replay defence, headless turn, pairing tokens, shadow-mode replies | **Rung 5**, default off; requires accepting that the channel is the credential |
 

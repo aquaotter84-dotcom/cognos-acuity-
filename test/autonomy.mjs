@@ -8,7 +8,8 @@
 // can check, not a promise in a design document.
 
 import assert from "node:assert/strict";
-import { autonomyConfig, tierAllowed } from "../server/autonomy/config.js";
+import { autonomyConfig, tierAllowed, resolveNotices } from "../server/autonomy/config.js";
+import { describeBudget, describeScope } from "../src/lib/autonomyLabels.js";
 import { SKILL_REGISTRY, TIERS, SKILL_IDS, getSkill, isSkillEnabled, validateArgs, describeSkills } from "../server/skills/index.js";
 import { NOTICE_TEMPLATE_IDS, validateNoticeFields, buildNoticeFields, renderNotice, publicNotice } from "../server/autonomy/notice.js";
 import { canonicalize, effectIdempotencyKey } from "../server/autonomy/outbox.js";
@@ -71,7 +72,8 @@ await test("exactly one externally-writing skill exists, and it is off", async (
     }
   }
 
-  // T2 depends on the notice channel, whose default is "record only".
+  // T2 depends on the notice channel. Explicit none/internal/webhook still
+  // win; the default is tested separately so unset is not confused with none.
   const previousMode = process.env.COGNOS_AUTONOMY_NOTICE_MODE;
   const previousUrl = process.env.COGNOS_AUTONOMY_NOTICE_WEBHOOK;
   try {
@@ -135,6 +137,53 @@ await test("a skill kill switch can only remove a capability, never grant one", 
   // kill switch cannot be bypassed by passing the config in a different shape.
   assert.equal(isSkillEnabled("notice.emit", { autonomy: off }), false);
   assert.equal(isSkillEnabled("notice.emit", { autonomy: on }), true);
+});
+
+await test("unset notice mode is internal when autonomy is on, none when frozen, and explicit none still wins", async () => {
+  const previousMode = process.env.COGNOS_AUTONOMY_NOTICE_MODE;
+  const previousEnabled = process.env.COGNOS_AUTONOMY_ENABLED;
+  try {
+    delete process.env.COGNOS_AUTONOMY_NOTICE_MODE;
+    process.env.COGNOS_AUTONOMY_ENABLED = "false";
+    const frozen = resolveNotices(false);
+    assert.equal(frozen.mode, "none");
+    assert.equal(frozen.modeSource, "default-off");
+    assert.equal(tierAllowed("T2", autonomyConfig()), false);
+
+    process.env.COGNOS_AUTONOMY_ENABLED = "true";
+    const on = resolveNotices(true);
+    assert.equal(on.mode, "internal");
+    assert.equal(on.modeSource, "default-on");
+    assert.equal(on.enabled, true);
+    assert.equal(tierAllowed("T2", autonomyConfig()), true);
+
+    process.env.COGNOS_AUTONOMY_NOTICE_MODE = "none";
+    const silent = resolveNotices(true);
+    assert.equal(silent.mode, "none");
+    assert.equal(silent.modeSource, "env");
+    assert.equal(tierAllowed("T2", autonomyConfig()), false);
+  } finally {
+    if (previousMode === undefined) delete process.env.COGNOS_AUTONOMY_NOTICE_MODE;
+    else process.env.COGNOS_AUTONOMY_NOTICE_MODE = previousMode;
+    if (previousEnabled === undefined) delete process.env.COGNOS_AUTONOMY_ENABLED;
+    else process.env.COGNOS_AUTONOMY_ENABLED = previousEnabled;
+  }
+});
+
+await test("authorization copy is sentences, not JSON", async () => {
+  const silent = describeScope({ effectsAllowed: [] });
+  assert.ok(silent.some(l => /will not send you notices/i.test(l)));
+  assert.ok(silent.some(l => /may not fetch any web page/i.test(l)));
+  const watching = describeScope({
+    effectsAllowed: ["notify", "external_read"],
+    urlAllowlist: ["https://example.com/agenda"]
+  });
+  assert.ok(watching.some(l => /templated notices/i.test(l)));
+  assert.ok(watching.some(l => /https:\/\/example.com\/agenda/.test(l)));
+  assert.ok(!watching.join(" ").includes("{"));
+  const budget = describeBudget({ maxSteps: 500, maxCostUsd: 1, maxNoticesPerDay: 3, maxWallClockMs: 14 * 86_400_000 });
+  assert.ok(budget.some(l => /500/.test(l)));
+  assert.ok(budget.some(l => /\$1\.00/.test(l)));
 });
 
 await test("durable autonomy is OFF unless an operator opts in — the default is the safety property", async () => {

@@ -55,7 +55,8 @@ function defaultResidentDraft() {
       first_goal: {
         title: "Watch this week's agenda",
         objective: "Read the allowlisted agenda page each morning and record what changed."
-      }
+      },
+      proposed_urls: ["https://example.com/agenda"]
     }
   };
 }

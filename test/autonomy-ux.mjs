@@ -27,10 +27,11 @@ import {
   resetSettingsCache, effectiveEnabled
 } from "../server/autonomy/settings.js";
 import {
-  DESIGNER_LIMITS, clampDraft, describeDesignerError, emptyDraft,
-  executableProbe, normalizeDraft
+  DESIGNER_LIMITS, clampDraft, clampProposedUrl, describeDesignerError, emptyDraft,
+  executableProbe, firstGoalScope, normalizeDraft
 } from "../server/autonomy/designer.js";
 import { SKILL_IDS, isSkillEnabled } from "../server/skills/index.js";
+import { ARCHIVIST } from "../src/lib/archivist.js";
 import { bootHarness } from "./harness.mjs";
 
 let passed = 0;
@@ -139,6 +140,31 @@ await test("the clamp only ever narrows a draft: budgets down, skills intersecte
   assert.ok(out.ignoredFields.includes("scope"), "scope is named as ignored");
   assert.ok(out.ignoredFields.includes("tier"), "so is a tier");
   assert.equal(d.firstGoal.title, "t");
+  assert.deepEqual(d.proposedUrls, []);
+});
+
+await test("proposed URLs are clamped, never a grant, and only ticked https pages become scope", async () => {
+  assert.equal(clampProposedUrl("http://example.com/x"), null);
+  assert.equal(clampProposedUrl("https://127.0.0.1/x"), null);
+  assert.equal(clampProposedUrl("https://localhost/secret"), null);
+  assert.equal(clampProposedUrl("https://user:pass@example.com/x"), null);
+  assert.equal(clampProposedUrl("https://example.com/agenda"), "https://example.com/agenda");
+
+  const cfg = autonomyConfig();
+  const out = clampDraft({
+    name: "Watcher", purpose: "p", brief: "b", skills: ["web.fetch", "note.append"],
+    proposed_urls: ["https://example.com/agenda", "http://evil.example/x", "https://192.168.1.4/admin", "https://example.com/agenda"]
+  }, { config: cfg, extraUrls: ["https://county.example/hearings"] });
+  assert.deepEqual(out.draft.proposedUrls, ["https://example.com/agenda", "https://county.example/hearings"]);
+  assert.ok(out.adjustments.some(a => a.code === "rejected_url"));
+
+  const granted = firstGoalScope({ skills: ["web.fetch", "note.append"], grantUrls: ["https://example.com/agenda"] });
+  assert.deepEqual(granted.effectsAllowed, ["notify", "external_read"]);
+  assert.deepEqual(granted.urlAllowlist, ["https://example.com/agenda"]);
+  const untouched = firstGoalScope({ skills: ["web.fetch"], grantUrls: [] });
+  assert.deepEqual(untouched, { effectsAllowed: ["notify"] });
+  const noFetch = firstGoalScope({ skills: ["note.append"], grantUrls: ["https://example.com/agenda"] });
+  assert.deepEqual(noFetch, { effectsAllowed: ["notify"] });
 });
 
 await test("a draft survives the round trip through a browser: clamped shape re-clamps without losing data", async () => {
@@ -164,6 +190,7 @@ await test("a draft survives the round trip through a browser: clamped shape re-
   assert.equal(normalizeDraft(first).first_goal.title, "Nightly read");
   assert.equal("complete" in normalizeDraft(first), false, "bookkeeping is not reported as a smuggled field");
   assert.deepEqual(emptyDraft().skills, []);
+  assert.deepEqual(emptyDraft().proposedUrls, []);
 });
 
 await test("the executability probe holds the global switch open and nothing else", async () => {
@@ -175,6 +202,20 @@ await test("the executability probe holds the global switch open and nothing els
   assert.equal(isSkillEnabled("webhook.post", probe), cfg.rung.externalWrites === true,
     "T4 still needs its rung flag even in a draft");
   assert.equal(isSkillEnabled("web.search", probe), cfg.rung.search === true, "and T3 search still needs its rung");
+  // Unset notice mode + the probe's hypothetical "on" → internal, so notice.emit
+  // survives a draft made while frozen. Explicit none still drops it.
+  const previousNotice = process.env.COGNOS_AUTONOMY_NOTICE_MODE;
+  try {
+    delete process.env.COGNOS_AUTONOMY_NOTICE_MODE;
+    const open = executableProbe({ ...autonomyConfig(), enabled: false });
+    assert.equal(isSkillEnabled("notice.emit", open), true, "unset notices become internal in a design probe");
+    process.env.COGNOS_AUTONOMY_NOTICE_MODE = "none";
+    const closed = executableProbe({ ...autonomyConfig(), enabled: false });
+    assert.equal(isSkillEnabled("notice.emit", closed), false, "explicit none still drops T2");
+  } finally {
+    if (previousNotice === undefined) delete process.env.COGNOS_AUTONOMY_NOTICE_MODE;
+    else process.env.COGNOS_AUTONOMY_NOTICE_MODE = previousNotice;
+  }
   assert.equal(SKILL_IDS.some(id => isSkillEnabled(id, { ...probe, rung: { ...probe.rung, externalWrites: true } }) && id === "webhook.post"), true,
     "with the rung on, the probe would allow it — so the refusal is about this deployment");
 });
@@ -301,6 +342,7 @@ try {
     assert.equal(turn.json.draft.heartbeatMs, 24 * 60 * 60 * 1000, "every morning is 1440 minutes");
     assert.equal(turn.json.draft.budget.maxSteps, 200, "a proposed lower ceiling is kept");
     assert.equal(turn.json.draft.firstGoal.title, "Watch this week's agenda");
+    assert.deepEqual(turn.json.draft.proposedUrls, ["https://example.com/agenda"]);
     assert.equal(turn.json.frozen, true, "the drawer is told autonomy is off");
     assert.match(turn.json.note, /nothing can be created until autonomy is on/i);
 
@@ -337,15 +379,17 @@ try {
     });
     assert.equal(turn.status, 200);
     const d = turn.json.draft;
-    assert.deepEqual(d.skills, ["note.append"], "only what this deployment can execute survived");
+    assert.deepEqual(d.skills, ["notice.emit", "note.append"],
+      "notice.emit survives a frozen draft when the notice mode is unset — it will be executable once autonomy is on");
     assert.equal(d.budget.maxSteps, DEFAULT_GOAL_BUDGET.maxSteps, "the ceiling did not move up");
     assert.equal(d.budget.maxCostUsd, DEFAULT_GOAL_BUDGET.maxCostUsd);
     assert.equal(d.heartbeatMs, DESIGNER_LIMITS.heartbeatMinMs);
 
     const dropped = turn.json.droppedSkills.map(x => x.id);
-    for (const id of ["webhook.post", "web.search", "notice.emit", "money.send"]) {
+    for (const id of ["webhook.post", "web.search", "money.send"]) {
       assert.ok(dropped.includes(id), `${id} is named as dropped`);
     }
+    assert.equal(dropped.includes("notice.emit"), false, "T2 is not dropped for an unset channel");
     const webhook = turn.json.droppedSkills.find(x => x.id === "webhook.post");
     assert.equal(webhook.reason, "not_executable_here");
     assert.equal(webhook.tier, "T4");
@@ -360,57 +404,58 @@ try {
     A.model.reset();
   });
 
-  await test("a rung this deployment enabled is offered to the model, not denied", async () => {
-    // web.search is gated behind COGNOS_AUTONOMY_SEARCH. With the rung OFF the
-    // catalogue has to say so. With the rung ON it must not claim a capability
-    // this deployment has is out of reach — that is not a clamp failing, it is a
-    // prompt lying, and the model then refuses to propose a legitimate design.
-    A.model.state.residentDraft = {
-      reply: "Drafted, with a search step each morning.",
-      questions: [],
-      resident: {
-        name: "Hearing Searcher", slug: "hearing-searcher",
-        purpose: "Find hearings", brief: "Search once a day and note what is new.",
-        skills: ["web.search", "web.fetch", "note.append"],
-        heartbeat_minutes: 1440
-      }
-    };
-
-    const rungOff = await A.raw("/api/autonomy/designer", {
-      method: "POST",
-      body: { messages: [{ role: "user", content: "Search the county site for hearings." }] }
-    });
-    assert.equal(rungOff.status, 200);
-    assert.deepEqual(rungOff.json.droppedSkills.map(x => x.id), ["web.search"],
-      "off, the search skill is dropped and named");
-    assert.match(rungOff.json.droppedSkills[0].note, /search rung/);
-    assert.ok(!rungOff.json.draft.skills.includes("web.search"));
-
-    process.env.COGNOS_AUTONOMY_SEARCH = "true";
+  await test("the catalogue reports an enabled rung as available, and an off one as off", async () => {
+    // The prompt used to tag every rung-gated skill as "NOT available here"
+    // whenever it merely *declared* a rung. clampSkills still used isSkillEnabled,
+    // so the lie never showed up in the draft the tests already checked — it
+    // only showed up as the model quietly refusing to propose a design the
+    // operator was entitled to. Flip the search rung and assert both sides.
+    const previous = process.env.COGNOS_AUTONOMY_SEARCH;
     try {
-      const rungOn = await A.raw("/api/autonomy/designer", {
+      A.model.reset();
+      A.model.state.residentDraft = {
+        reply: "A watcher that searches and notes.",
+        questions: [],
+        resident: {
+          name: "Searcher",
+          purpose: "Search",
+          brief: "Search the web and note what you find.",
+          skills: ["web.search", "note.append", "webhook.post"],
+          heartbeat_minutes: 60
+        }
+      };
+
+      process.env.COGNOS_AUTONOMY_SEARCH = "false";
+      const off = await A.raw("/api/autonomy/designer", {
         method: "POST",
-        body: { messages: [{ role: "user", content: "Search the county site for hearings." }] }
+        body: { messages: [{ role: "user", content: "Give it search." }] }
       });
-      assert.equal(rungOn.status, 200);
-      assert.deepEqual(rungOn.json.droppedSkills, [], "on, the same draft loses nothing");
-      assert.deepEqual(rungOn.json.draft.skills, ["web.search", "web.fetch", "note.append"]);
+      assert.equal(off.status, 200);
+      assert.deepEqual(off.json.draft.skills, ["note.append"]);
+      assert.ok(off.json.droppedSkills.some(d => d.id === "web.search"));
+      const offReq = A.model.requests.filter(r => r.role === "residentDesigner").pop();
+      const offSearch = (offReq.content.split("\n").find(l => l.includes("web.search")) || "");
+      assert.match(offSearch, /needs the search rung, which is off here/);
+      assert.match(offSearch, /NOT executable/);
 
-      const prompt = A.model.requests.filter(r => r.role === "residentDesigner").pop().content;
-      const searchLine = prompt.split("\n").find(line => line.startsWith("- web.search"));
-      assert.ok(searchLine, "web.search is still in the catalogue");
-      assert.match(searchLine, /search rung is on/, "and the catalogue says the rung is available");
-      assert.ok(!/NOT executable/.test(searchLine), "it is not marked unexecutable");
-
-      // Honesty runs both ways: a tier that is genuinely off still says so.
-      const webhookLine = prompt.split("\n").find(line => line.startsWith("- webhook.post"));
-      assert.match(webhookLine, /NOT executable/, "webhook.post is still reported as unavailable");
+      process.env.COGNOS_AUTONOMY_SEARCH = "true";
+      const on = await A.raw("/api/autonomy/designer", {
+        method: "POST",
+        body: { messages: [{ role: "user", content: "Give it search." }] }
+      });
+      assert.equal(on.status, 200);
+      assert.deepEqual(on.json.draft.skills, ["web.search", "note.append"]);
+      assert.ok(!on.json.droppedSkills.some(d => d.id === "web.search"));
+      const onReq = A.model.requests.filter(r => r.role === "residentDesigner").pop();
+      const onSearch = (onReq.content.split("\n").find(l => l.includes("web.search")) || "");
+      assert.match(onSearch, /search rung is on/);
+      assert.doesNotMatch(onSearch, /NOT executable/);
+      const webhookLine = (onReq.content.split("\n").find(l => l.includes("webhook.post")) || "");
+      assert.match(webhookLine, /NOT executable/);
       assert.match(webhookLine, /externalWrites rung, which is off here/);
-
-      assert.equal((await A.sql(`SELECT COUNT(*)::int AS n FROM autonomy_agents`))[0].n, 0,
-        "an enabled rung makes a skill proposable, not a row");
     } finally {
-      delete process.env.COGNOS_AUTONOMY_SEARCH;   // later harnesses must not inherit it
+      if (previous === undefined) delete process.env.COGNOS_AUTONOMY_SEARCH;
+      else process.env.COGNOS_AUTONOMY_SEARCH = previous;
       A.model.reset();
     }
   });
@@ -487,9 +532,11 @@ try {
           heartbeatMs: 3_600_000,
           budget: { ...DEFAULT_GOAL_BUDGET, maxSteps: 999_999, maxCostUsd: 42 },
           firstGoal: { title: "Watch this week", objective: "Read the page each morning." },
+          proposedUrls: ["https://example.com/agenda", "http://127.0.0.1/x"],
           complete: true
         },
-        create_first_goal: true
+        create_first_goal: true,
+        grant_urls: ["https://example.com/agenda", "http://127.0.0.1/x", "https://evil.example/not-proposed"]
       }
     });
     assert.equal(create.status, 201);
@@ -511,6 +558,9 @@ try {
     // The first goal exists and is waiting — it does no work until authorized.
     assert.ok(create.json.goal, "the goal was created");
     assert.equal(create.json.goal.status, "awaiting_authorization");
+    assert.deepEqual(create.json.goal.scope.effectsAllowed, ["notify", "external_read"]);
+    assert.deepEqual(create.json.goal.scope.urlAllowlist, ["https://example.com/agenda"],
+      "only the operator-ticked https proposal became the allowlist");
     assert.equal(create.json.status, "awaiting_authorization");
     assert.ok(create.json.hashes.scopeSha256, "the authorization hashes are ready");
     const events = await A.sql(`SELECT event_type, detail FROM goal_events WHERE goal_id=$1 ORDER BY seq ASC`,
@@ -560,19 +610,71 @@ try {
     const waiting = attention.json.groups.find(g => g.kind === "awaiting_authorization");
     assert.equal(waiting.tab, "goals", "each group names the tab that resolves it");
     assert.equal(waiting.count, 1);
+    assert.equal(waiting.truncated, false);
     assert.equal(waiting.rows[0].title, "Watch this week");
     assert.ok(waiting.label.length > 5 && waiting.hint.length > 10, "in words, not codes");
 
-    // Bounded on both sides: a handful of rows per kind, never the whole table.
+    // Count is the full total, not the page size. A second waiting goal plus
+    // ?limit=1 must still say there are two things waiting — otherwise the
+    // panel looks empty after the first row.
+    const wsId = (await A.sql(`SELECT id FROM workspaces LIMIT 1`))[0].id;
+    const agentId = (await A.sql(`SELECT id FROM autonomy_agents LIMIT 1`))[0].id;
+    await A.sql(
+      `INSERT INTO autonomy_goals (id, workspace_id, agent_id, title, objective, status, scope, budget, spent, created_date, updated_date)
+       VALUES ($1, $2, $3, 'Second wait', 'Also waiting.', 'awaiting_authorization', '{}', '{}', '{}', NOW(), NOW())`,
+      [`goal_attn_${Date.now()}`, wsId, agentId]
+    );
     const bounded = await A.raw("/api/autonomy/attention?limit=1");
     assert.ok(bounded.json.groups.every(g => g.rows.length <= 1));
+    const boundedWaiting = bounded.json.groups.find(g => g.kind === "awaiting_authorization");
+    assert.equal(boundedWaiting.rows.length, 1);
+    assert.equal(boundedWaiting.count, 2, "count is independent of the page size");
+    assert.equal(boundedWaiting.truncated, true);
 
-    // Resolving the item empties the panel: decline the goal and it is gone.
-    const goalId = waiting.rows[0].id;
-    await A.raw(`/api/autonomy/goals/${goalId}/decision`, { method: "POST", body: { decision: "decline", reason: "test" } });
+    // Resolving the items empties the panel: decline every waiting goal.
+    const waitingIds = (await A.sql(
+      `SELECT id FROM autonomy_goals WHERE status='awaiting_authorization'`
+    )).map(r => r.id);
+    for (const goalId of waitingIds) {
+      await A.raw(`/api/autonomy/goals/${goalId}/decision`, { method: "POST", body: { decision: "decline", reason: "test" } });
+    }
     const after = await A.raw("/api/autonomy/attention");
     const stillWaiting = after.json.groups.find(g => g.kind === "awaiting_authorization");
     assert.equal(stillWaiting.count, 0, "a declined goal stops waiting on you");
+  });
+
+  await test("one-click Archivist uses the existing agent and goal writes and does not authorize", async () => {
+    const listed = await A.raw("/api/autonomy/agents");
+    let resident = listed.json.find(r => r.slug === ARCHIVIST.slug);
+    if (!resident) {
+      const made = await A.raw("/api/autonomy/agents", {
+        method: "POST",
+        body: {
+          name: ARCHIVIST.name, slug: ARCHIVIST.slug, purpose: ARCHIVIST.purpose,
+          brief: ARCHIVIST.brief, skill_allowlist: ARCHIVIST.skill_allowlist,
+          heartbeat_interval_ms: ARCHIVIST.heartbeat_interval_ms, enabled: true
+        }
+      });
+      assert.equal(made.status, 201, JSON.stringify(made.json));
+      resident = made.json;
+    }
+    assert.deepEqual(resident.skill_allowlist, ["belief.search", "note.append"]);
+    const goals = await A.raw("/api/autonomy/goals");
+    let goal = goals.json.find(g => g.title === ARCHIVIST.goalTitle && g.agent_id === resident.id);
+    if (!goal) {
+      const made = await A.raw("/api/autonomy/goals", {
+        method: "POST",
+        body: { title: ARCHIVIST.goalTitle, objective: ARCHIVIST.goalObjective, agent_id: resident.id }
+      });
+      assert.equal(made.status, 201);
+      goal = made.json.goal;
+    }
+    assert.equal(goal.status, "awaiting_authorization");
+    const auths = await A.sql(`SELECT COUNT(*)::int AS n FROM goal_authorizations WHERE goal_id=$1`, [goal.id]);
+    assert.equal(auths[0].n, 0, "seeding does not authorize");
+    const again = await A.raw("/api/autonomy/goals");
+    const copies = again.json.filter(g => g.title === ARCHIVIST.goalTitle && g.agent_id === resident.id);
+    assert.equal(copies.length, 1, "the seed is idempotent at the UI layer");
   });
 } finally {
   await A.stop();
