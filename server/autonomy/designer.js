@@ -145,8 +145,9 @@ function clampBudget(proposed, adjustments) {
       continue;
     }
     const ceiling = Number(DEFAULT_GOAL_BUDGET[key]);
-    const floor = key === "maxCostUsd" ? 0 : 0;
-    const wanted = Math.max(floor, requested);
+    // Every budget line is a ceiling, so zero is the only floor that makes
+    // sense: a negative ceiling would be an immediate exhaustion.
+    const wanted = Math.max(0, requested);
     const clamped = Math.min(wanted, ceiling);
     out[key] = clamped;
     if (clamped !== wanted) {
@@ -333,7 +334,15 @@ function skillCatalogue(probe) {
   return SKILL_IDS.map(id => {
     const skill = SKILL_REGISTRY[id];
     const runnable = isSkillEnabled(id, probe);
-    const rung = skill.requiresRung ? ` [needs the ${skill.requiresRung} rung — NOT available here]` : "";
+    // Annotate the rung only when it is what is MISSING. Saying "needs the
+    // search rung — NOT available here" on a deployment that enabled
+    // COGNOS_AUTONOMY_SEARCH would tell the model a capability it does have is
+    // out of reach, and the model would then refuse to propose a legitimate
+    // design. isSkillEnabled already asked the rung question; repeat its answer,
+    // do not second-guess it.
+    const rung = skill.requiresRung && !runnable
+      ? ` [needs the ${skill.requiresRung} rung, which is off here]`
+      : skill.requiresRung ? ` [${skill.requiresRung} rung is on]` : "";
     return `- ${id} (${skill.tier} ${TIERS[skill.tier] || ""})${runnable ? "" : " [NOT executable in this deployment]"}${rung}: ${skill.summary}`;
   }).join("\n");
 }
@@ -466,7 +475,11 @@ export async function designTurn({ config, messages = [], draft = null, signal =
   }
 
   const current = draft && typeof draft === "object" ? draft : emptyDraft();
-  const budget = cfg.goalBudget || DEFAULT_GOAL_BUDGET;
+  // The ceilings quoted to the model are exactly the ones clampBudget() enforces.
+  // A per-goal budget can only ever be LOWER than these, so DEFAULT_GOAL_BUDGET
+  // is the right thing to state — and reading a deployment override that does not
+  // exist would make the prompt and the clamp disagree about the maximum.
+  const budget = DEFAULT_GOAL_BUDGET;
 
   const system = [
     `${DESIGNER_NEEDLE}, a drafting assistant inside the COGNOS autonomy surface.`,
