@@ -6,14 +6,19 @@
 
 import { cleanText } from "../sources/extract.js";
 
-export async function appendNote({ db, goal, agent, args, tickId }) {
+export async function appendNote({ db, goal, agent, args, tickId, subAgentId = null }) {
+  // Provenance is code-owned: a model-supplied sub_agent_id ref is stripped,
+  // and the real worker id (which only the sub-agent runner passes) is added.
+  const refs = (Array.isArray(args.refs) ? args.refs.slice(0, 20) : [])
+    .filter(r => !r || typeof r !== "object" || !("sub_agent_id" in r));
+  if (subAgentId) refs.push({ sub_agent_id: subAgentId });
   const note = await db.GoalNote.append({
     goal_id: goal.id,
     agent_id: agent?.id || null,
     tick_id: tickId || null,
     kind: args.kind,
     body: cleanText(String(args.body || "")).slice(0, 2000),
-    refs: Array.isArray(args.refs) ? args.refs.slice(0, 20) : []
+    refs
   });
   return { ok: true, output: { noteId: note.id, ordinal: note.ordinal, kind: note.kind } };
 }

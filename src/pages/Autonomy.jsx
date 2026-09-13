@@ -1,8 +1,9 @@
 // Phase 19 — the Autonomy page: an operator surface, not a chat surface.
 //
-// Everything here is either a query over stored rows or one of exactly two
-// decisions: authorizing a goal, and approving/refusing/reverting a staged
-// effect. Nothing on this page composes an answer. A goal's findings are shown
+// Everything here is either a query over stored rows or one of exactly three
+// decisions: authorizing a goal, approving/refusing/reverting a staged
+// effect, and approving/refusing a promotion (Phase 20: the only route from a
+// working note to durable knowledge). Nothing on this page composes an answer. A goal's findings are shown
 // as UNTRUSTED EVIDENCE with a citation-like treatment, never as COGNOS
 // speaking, and the only way to turn them into an answer is the explicit
 // "Ask COGNOS about this" turn, which goes through the council and the
@@ -17,9 +18,10 @@ import { useNavigate } from 'react-router-dom';
 import {
   Activity, AlertTriangle, Bot, Check, ChevronDown, ChevronRight, ClipboardCheck,
   Clock, Gauge, Inbox, Menu, Pause, Play, Plus, RefreshCw, ScrollText,
-  ShieldAlert, ShieldCheck, Snowflake, ThumbsDown, ThumbsUp, Undo2, X, Zap
+  ShieldAlert, ShieldCheck, Snowflake, Sprout, ThumbsDown, ThumbsUp, Undo2, X, Zap
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { noteLocator } from '@/components/chat/GoalCard';
 import { useCognos } from '@/lib/cognosContext';
 import { Pill, Empty, ErrorNote } from '@/components/system/SystemUi';
 
@@ -29,6 +31,7 @@ const TABS = [
   { id: 'goals', label: 'Goals', icon: ScrollText },
   { id: 'notices', label: 'Notices', icon: Inbox },
   { id: 'outbox', label: 'Outbox', icon: ShieldCheck },
+  { id: 'promotions', label: 'Promotions', icon: Sprout },
 ];
 
 /** Status -> pill tone. Parked and refused are the interesting ones. */
@@ -410,6 +413,19 @@ function Goals({ status, frozen, residents, onError }) {
     } finally { setBusy(false); }
   };
 
+  const decidePromotion = async (promotionId, decision) => {
+    setBusy(true); setError('');
+    try {
+      await api.decidePromotion(promotionId, { decision });
+      if (expanded) {
+        const d = await api.getGoal(expanded);
+        setDetail(prev => ({ ...prev, [expanded]: d }));
+      }
+    } catch (err) {
+      setError(err.message || 'The promotion decision failed');
+    } finally { setBusy(false); }
+  };
+
   const handleCreate = async (e) => {
     e.preventDefault();
     if (busy || !form.title.trim() || !form.objective.trim()) return;
@@ -629,7 +645,7 @@ function Goals({ status, frozen, residents, onError }) {
                             </ul>
                           )}
                           <button
-                            onClick={() => d.goal.conversation_id && navigate(`/?c=${d.goal.conversation_id}`)}
+                            onClick={() => d.goal.conversation_id && navigate(`/?c=${d.goal.conversation_id}&goal=${d.goal.id}`)}
                             disabled={!d.goal.conversation_id}
                             className="mt-2.5 flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs disabled:opacity-40"
                           >
@@ -640,6 +656,52 @@ function Goals({ status, frozen, residents, onError }) {
                             Governor. A goal can never propose a draft answer.
                           </p>
                         </div>
+
+                        {/* ---- workers and promotions (Phase 20) ---- */}
+                        {(d.subagents?.length > 0 || d.promotions?.length > 0) && (
+                          <div className="grid md:grid-cols-2 gap-3">
+                            <div>
+                              <p className="text-[10px] font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">
+                                Workers — narrow subsets, carved budgets
+                              </p>
+                              {d.subagents?.length ? (
+                                <ul className="space-y-1">
+                                  {d.subagents.map(w => (
+                                    <li key={w.id} className="rounded border border-border px-2 py-1.5 text-[10px]">
+                                      <p className="text-foreground/90">{w.objective}</p>
+                                      <p className="text-muted-foreground mt-0.5 font-mono">
+                                        {(w.skills || []).join(', ') || '—'} · {Number(w.spent?.steps || 0)} steps · {fmtMoney(w.spent?.costUsd || 0)}
+                                      </p>
+                                      <Pill tone={w.status === 'completed' ? 'ok' : w.status === 'refused' || w.status === 'failed' ? 'bad' : 'muted'}>
+                                        {w.status}
+                                      </Pill>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : <p className="text-[10px] text-muted-foreground">No workers spawned.</p>}
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">
+                                Promotions — human confirm required
+                              </p>
+                              {d.promotions?.length ? (
+                                <div className="space-y-1.5">
+                                  {d.promotions.map(p => {
+                                    const note = (d.notes || []).find(n => n.id === p.note_id);
+                                    return (
+                                      <PromotionRow
+                                        key={p.id}
+                                        promotion={{ ...p, goal_title: null, note_ordinal: note?.ordinal ?? null, note_body: note?.body || null }}
+                                        busy={busy}
+                                        onDecide={decidePromotion}
+                                      />
+                                    );
+                                  })}
+                                </div>
+                              ) : <p className="text-[10px] text-muted-foreground">No promotion requests.</p>}
+                            </div>
+                          </div>
+                        )}
 
                         {/* ---- audit trail ---- */}
                         <div className="grid md:grid-cols-2 gap-3">
@@ -707,6 +769,102 @@ function Goals({ status, frozen, residents, onError }) {
         </div>
       </Section>
     </div>
+  );
+}
+
+// --------------------------------------------------------------- promotions
+// Phase 20 — the human-confirm half of the promotion path. Approving applies
+// the write the moment it lands (as inferred, with origin tags); refusing
+// records the decision. Answer-carried applications appear here too, with
+// decision_source answer_carried:<message>.
+function PromotionRow({ promotion: p, busy, onDecide }) {
+  const decided = p.status !== 'requested' && p.status !== 'approved';
+  return (
+    <div className="rounded-lg border border-border px-3 py-2.5">
+      <p className="text-xs">
+        {p.goal_title && <span className="font-medium">{p.goal_title} · </span>}
+        <span className="font-mono text-[10px] text-primary">{p.note_ordinal != null ? `n${p.note_ordinal}` : shortId(p.note_id)}</span>
+        {' '}→ {p.target}{' '}
+        <Pill tone={p.status === 'applied' ? 'ok' : p.status === 'refused' ? 'bad' : 'muted'}>{p.status}</Pill>
+      </p>
+      {p.redacted ? (
+        <p className="text-[11px] text-muted-foreground italic mt-1">Body withheld — refused as secret-bearing.</p>
+      ) : p.note_body ? (
+        <p className="text-[11px] text-foreground/80 mt-1">{p.note_body}</p>
+      ) : null}
+      <p className="text-[10px] text-muted-foreground mt-1 font-mono">
+        {p.decision_source || 'awaiting decision'}{p.reason ? ` — ${p.reason}` : ''} · {fmtTime(p.created_date)}
+      </p>
+      {!decided && (
+        <div className="flex items-center gap-2 mt-2">
+          <button onClick={() => onDecide(p.id, 'approve')} disabled={busy}
+            className="flex items-center gap-1 rounded-lg bg-accent text-accent-foreground px-2 py-1 text-[10px] font-medium disabled:opacity-40">
+            <Check className="w-3 h-3" /> Approve &amp; apply
+          </button>
+          <button onClick={() => onDecide(p.id, 'refuse')} disabled={busy}
+            className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40">
+            <X className="w-3 h-3" /> Refuse
+          </button>
+        </div>
+      )}
+      {p.status === 'applied' && (p.applied_memory_id || p.applied_belief_id) && (
+        <p className="text-[10px] text-green-600 dark:text-green-400 mt-1 font-mono">
+          landed as inferred → {p.applied_memory_id || p.applied_belief_id}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Promotions({ frozen }) {
+  const [rows, setRows] = useState([]);
+  const [filter, setFilter] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const refresh = useCallback(async () => {
+    try { setRows(await api.listPromotions(filter ? { status: filter } : {})); }
+    catch (e) { setError(e.message || 'Could not load promotions'); }
+  }, [filter]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const decide = async (id, decision) => {
+    setBusy(true); setError('');
+    try { await api.decidePromotion(id, { decision }); await refresh(); }
+    catch (e) { setError(e.message || 'The decision failed'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Section
+      title="Promotions"
+      subtitle="The only route from a working note to memory — every application lands inferred with origin tags"
+      icon={Sprout}
+      action={
+        <select
+          value={filter} onChange={e => setFilter(e.target.value)}
+          className="bg-background border border-border rounded-lg px-2 py-1.5 text-xs outline-none"
+        >
+          <option value="">All statuses</option>
+          {['requested', 'approved', 'applied', 'refused'].map(s => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+      }
+    >
+      <ErrorNote error={error} />
+      {frozen && <p className="text-[11px] text-muted-foreground mb-2">Autonomy is frozen — the queue is visible but decisions need it on.</p>}
+      {rows.length === 0
+        ? <Empty>No promotion requests. A worker asks with note.promote.request; you confirm here, or a Governor-approved answer carries a cited finding.</Empty>
+        : (
+          <div className="space-y-2">
+            {rows.map(p => (
+              <PromotionRow key={p.id} promotion={p} busy={busy || frozen} onDecide={decide} />
+            ))}
+          </div>
+        )}
+    </Section>
   );
 }
 
@@ -1075,6 +1233,8 @@ export default function Autonomy() {
             <Goals status={status} frozen={frozen} residents={residents} />
           ) : tab === 'notices' ? (
             <Notices />
+          ) : tab === 'promotions' ? (
+            <Promotions frozen={frozen} />
           ) : (
             <Outbox status={status} />
           )}

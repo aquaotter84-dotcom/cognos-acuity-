@@ -15,8 +15,10 @@
 // — the last of which phase15.complexity_justification requires of every
 // subsystem.
 //
-// Phase 19 ships T0–T2 only. Nothing here can reach the network or the outside
-// world; T3 (external read) and T4 (external write) arrive with Phases 20–21.
+// Phase 19 shipped T0–T2 only. Phase 20 adds T3 (external READ): web.fetch and
+// web.search stage an `external_read` effect the Action Governor judges, and
+// subagent.spawn runs a narrow T0/T1-only worker. T3 cannot write externally;
+// T4 (external write) and T5 (irreversible) stay refused until Phases 21–22.
 
 import { appendNote } from "./noteAppend.js";
 import { readEvidence } from "./evidenceRead.js";
@@ -25,6 +27,9 @@ import { searchBeliefs } from "./beliefSearch.js";
 import { snapshotSource } from "./sourceSnapshot.js";
 import { requestPromotion } from "./notePromote.js";
 import { emitNotice } from "./noticeEmit.js";
+import { spawnSubagent } from "./subagentSpawn.js";
+import { fetchUrl } from "./webFetch.js";
+import { searchWebSkill } from "./webSearch.js";
 
 /** Effect tiers. The Action Governor speaks this vocabulary. */
 export const TIERS = Object.freeze({
@@ -109,9 +114,13 @@ export const SKILL_REGISTRY = Object.freeze({
     tier: "T1",
     effectType: "internal_write",
     killSwitch: "COGNOS_SKILL_NOTE_PROMOTE",
-    summary: "Request promotion of a note into memory. Lands as 'inferred', never 'direct'.",
-    idempotencyRule: "keyed by note_id: a repeat request for the same note is a no-op, not a second request",
-    args: { noteId: { type: "string", max: 64, required: true } },
+    requiresRung: "residents",
+    summary: "Request promotion of a note into memory or belief. Lands as 'inferred', never 'direct'; applies only via human confirm or a Governor-approved citing answer.",
+    idempotencyRule: "keyed by (note, target): a repeat request resolves to the existing row, not a second decision",
+    args: {
+      noteId: { type: "string", max: 64, required: true },
+      target: { type: "enum", values: ["memory", "belief"], required: false }
+    },
     execute: requestPromotion
   }),
 
@@ -128,6 +137,55 @@ export const SKILL_REGISTRY = Object.freeze({
       severity: { type: "enum", values: ["info", "warning", "error"], required: false }
     },
     execute: emitNotice
+  }),
+
+  // --- T1: narrow workers (Phase 20, Rung 3) --------------------------------
+  "subagent.spawn": def({
+    tier: "T1",
+    effectType: "internal_write",
+    killSwitch: "COGNOS_SKILL_SUBAGENT_SPAWN",
+    requiresRung: "residents",
+    summary: "Spawn one narrow sub-agent: a declared T0/T1-only subset, a bounded objective, a carved sub-budget.",
+    idempotencyRule: "keyed by parent step: the same step's spawn resolves to the existing worker; each spawn is one row",
+    args: {
+      objective: { type: "string", max: 1000, required: true },
+      skills: { type: "array", required: true },
+      maxSteps: { type: "number", min: 1, max: 10, required: false },
+      maxModelCalls: { type: "number", min: 1, max: 12, required: false },
+      maxCostUsd: { type: "number", min: 0.01, max: 0.25, required: false }
+    },
+    execute: spawnSubagent
+  }),
+
+  // --- T3: external read (Phase 20) ------------------------------------------
+  // web.fetch is gated by the per-goal URL allowlist, not by a rung: with an
+  // empty allowlist it can reach nothing, so the default posture is closed.
+  // web.search needs Rung 3's search flag, because a query is a data flow to
+  // a third-party provider rather than a read of an allowlisted page.
+  "web.fetch": def({
+    tier: "T3",
+    effectType: "external_read",
+    killSwitch: "COGNOS_SKILL_WEB_FETCH",
+    summary: "Fetch one allowlisted URL as an immutable, citable snapshot. Judged per read; shadow mode fetches nothing.",
+    idempotencyRule: "keyed by (goal, url, scope hash): a re-asked URL replays the verdict and re-reads the immutable snapshot",
+    args: {
+      url: { type: "string", max: 2000, required: true },
+      reason: { type: "string", max: 300, required: false }
+    },
+    execute: fetchUrl
+  }),
+
+  "web.search": def({
+    tier: "T3",
+    effectType: "external_read",
+    killSwitch: "COGNOS_SKILL_WEB_SEARCH",
+    requiresRung: "search",
+    summary: "Search the web via the configured provider. Results are bounded and transient; nothing is stored.",
+    idempotencyRule: "keyed per step: results are transient and never stored, so each step's search is judged fresh",
+    args: {
+      query: { type: "string", max: 500, required: true }
+    },
+    execute: searchWebSkill
   })
 });
 
@@ -157,25 +215,30 @@ function resolveAutonomy(config) {
   let node = config && typeof config === "object" ? config : {};
   let enabled;
   let notices;
+  let rung;
   for (let depth = 0; depth < 4; depth++) {
     if (node && typeof node === "object") {
       if (enabled === undefined && typeof node.enabled === "boolean") enabled = node.enabled;
       if (!notices && node.notices && typeof node.notices === "object") notices = node.notices;
+      if (!rung && node.rung && typeof node.rung === "object") rung = node.rung;
       if (Object.prototype.hasOwnProperty.call(node, "autonomy")) node = node.autonomy;
       else break;
     } else break;
   }
-  return { enabled, notices: notices || {} };
+  return { enabled, notices: notices || {}, rung: rung || {} };
 }
 
 export function isSkillEnabled(id, config = null) {
   const skill = getSkill(id);
   if (!skill) return false;
   if (process.env[skill.killSwitch] === "false") return false;
-  const { enabled, notices } = resolveAutonomy(config);
+  const { enabled, notices, rung } = resolveAutonomy(config);
   if (enabled === false) return false;
+  // A missing rung reading fails closed: a skill that needs a rung the config
+  // does not even name is not enabled.
+  if (skill.requiresRung && rung[skill.requiresRung] !== true) return false;
   if (skill.tier === "T2" && (notices.mode === "none" || notices.enabled === false)) return false;
-  if (["T3", "T4", "T5"].includes(skill.tier)) return false;   // not built yet
+  if (["T4", "T5"].includes(skill.tier)) return false;   // not built yet (Phases 21–22)
   return true;
 }
 
@@ -238,6 +301,7 @@ export function describeSkills(config = null) {
       idempotent: skill.idempotent,
       idempotencyRule: skill.idempotencyRule || null,
       killSwitch: skill.killSwitch,
+      requiresRung: skill.requiresRung || null,
       enabled: isSkillEnabled(id, config)
     };
   });

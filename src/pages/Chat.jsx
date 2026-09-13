@@ -21,6 +21,7 @@ import ChatMessage from '@/components/chat/ChatMessage';
 import ChatInput from '@/components/chat/ChatInput';
 import WelcomeScreen from '@/components/chat/WelcomeScreen';
 import ResearchDecisionCard from '@/components/chat/ResearchDecisionCard';
+import GoalCard from '@/components/chat/GoalCard';
 
 const STYLES = ['balanced', 'casual', 'technical', 'strategic'];
 
@@ -52,6 +53,52 @@ export default function Chat() {
   // executes only when the user approves it here; the next message after the
   // decision continues with the executed run's evidence attached.
   const [researchRun, setResearchRun] = useState(null);
+  // Phase 20 — asking ABOUT a goal: ?goal=<id> deep-links from Autonomy. The
+  // goal's notes load as citable evidence for every turn until detached.
+  const [goalId, setGoalId] = useState(() => searchParams.get('goal') || null);
+  const [goalDetail, setGoalDetail] = useState(null);
+  const [goalBusy, setGoalBusy] = useState(false);
+  const [goalError, setGoalError] = useState('');
+  const [carried, setCarried] = useState(null);
+
+  // Hoisted above handleSend: the send callback's dependency array reads
+  // goalDetached and refreshGoal, so they must be initialized first.
+  const refreshGoal = useCallback(async (id) => {
+    if (!id) { setGoalDetail(null); return; }
+    try { setGoalDetail(await api.getGoal(id)); setGoalError(''); }
+    catch (e) { setGoalError(e.message || 'Could not load the goal'); setGoalDetail(null); }
+  }, []);
+
+  useEffect(() => { refreshGoal(goalId); }, [goalId, refreshGoal]);
+
+  // A fresh ?goal= link (from Autonomy) re-attaches, even mid-session.
+  useEffect(() => {
+    const g = searchParams.get('goal');
+    if ((g || null) !== goalId) { setGoalId(g || null); setCarried(null); }
+  }, [searchParams, goalId]);
+
+  const handleGoalDecision = async (id, decision, extra = {}) => {
+    setGoalBusy(true); setGoalError('');
+    try { await api.decideGoal(id, { decision, ...extra }); await refreshGoal(id); }
+    catch (e) { setGoalError(e.message || 'The decision failed'); }
+    finally { setGoalBusy(false); }
+  };
+
+  const handlePromotionDecision = async (id, decision) => {
+    setGoalBusy(true); setGoalError('');
+    try { await api.decidePromotion(id, { decision }); if (goalId) await refreshGoal(goalId); }
+    catch (e) { setGoalError(e.message || 'The promotion decision failed'); }
+    finally { setGoalBusy(false); }
+  };
+
+  const clearGoal = () => {
+    setGoalId(null); setGoalDetail(null); setCarried(null); setGoalError('');
+    setSearchParams(conversationId ? { c: conversationId } : {});
+  };
+
+  // A goal born in another thread stays in that thread.
+  const goalDetached = Boolean(goalId && goalDetail?.goal?.conversation_id && goalDetail.goal.conversation_id !== conversationId);
+
   const abortRef = useRef(null);
   const messagesEndRef = useRef(null);
 
@@ -178,9 +225,13 @@ export default function Chat() {
     const mergeLive = (patch) => setDraft(d => (d ? { ...d, live: { ...d.live, ...patch } } : d));
 
     try {
+      // The goal rides along only when it belongs here (or nowhere): a goal
+      // from another thread is shown but never sent.
+      const sendGoalId = goalId && !goalDetached ? goalId : null;
       await sendMessage(
         {
           conversationId,
+          goalId: sendGoalId,
           userMessage: text,
           style,
           webSearch,
@@ -194,7 +245,7 @@ export default function Chat() {
             setSelectedSources([]);
             if (!conversationId && data.conversationId) {
               setActiveConversationId(data.conversationId);
-              setSearchParams({ c: data.conversationId });
+              setSearchParams({ c: data.conversationId, ...(goalId ? { goal: goalId } : {}) });
               refreshConversations();
             }
           },
@@ -210,6 +261,10 @@ export default function Chat() {
           token: (d) => setDraft(prev => (prev ? { ...prev, text: prev.text + d.delta } : prev)),
           done: (data) => {
             setMessages(prev => [...prev, data.message]);
+            if (data.goalPromotions?.applied?.length) {
+              setCarried(data.goalPromotions);
+              if (goalId) refreshGoal(goalId);
+            }
             if (data.council) setCouncilTraces(prev => ({ ...prev, [data.message.id]: data.council }));
             if (data.summary) setConversationSummary(data.summary);
             if (data.response) {
@@ -244,7 +299,7 @@ export default function Chat() {
       setIsProcessing(false);
       abortRef.current = null;
     }
-  }, [activeWorkspace, isProcessing, conversationId, style, webSearch, setSearchParams, setActiveConversationId, refreshConversations, speakAutomatically, stopSpeaking, decidedResearchRunId]);
+  }, [activeWorkspace, isProcessing, conversationId, style, webSearch, setSearchParams, setActiveConversationId, refreshConversations, speakAutomatically, stopSpeaking, decidedResearchRunId, goalId, goalDetached, refreshGoal]);
 
   const handleStop = () => abortRef.current?.abort();
 
@@ -316,6 +371,25 @@ export default function Chat() {
           </div>
         )}
       </div>
+
+      {goalId && (
+        <div className="shrink-0 px-3 md:px-4 pb-1">
+          {goalDetached && (
+            <p className="max-w-3xl mx-auto text-[11px] text-amber-600 dark:text-amber-400 px-1 pb-1">
+              This goal belongs to another conversation — shown here, but detached from this chat until you open that thread.
+            </p>
+          )}
+          <GoalCard
+            detail={goalDetail}
+            busy={goalBusy}
+            error={goalError || null}
+            carried={carried}
+            onDecision={handleGoalDecision}
+            onPromotion={handlePromotionDecision}
+            onClear={clearGoal}
+          />
+        </div>
+      )}
 
       {researchRun && researchRun.run && researchRun.run.status === 'awaiting_approval' && !researchRun.decided && (
         <div className="shrink-0 px-3 md:px-4 pb-1">

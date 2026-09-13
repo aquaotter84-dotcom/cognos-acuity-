@@ -274,6 +274,24 @@ export const OPERATIONAL_LAWS = Object.freeze([
     source: "Phase 19 scope discipline; server/autonomy/config.js",
     runtime_modifiable: false
   }),
+  Object.freeze({
+    id: "pin.promotion_inferred",
+    layer: "operational",
+    name: "Promotion lands inferred, never direct",
+    statement: "A working note reaches durable memory or belief only as evidence_level 'inferred' with origin tags naming its goal — never as 'direct'. The loop can only request; application happens solely through a human confirm or a Governor-approved answer that cites the finding's locator.",
+    forbids: ["a promotion landing as direct", "a goal applying its own request", "an uncited answer promoting a finding", "a promotion without origin tags"],
+    source: "Phase 20; server/autonomy/promote.js",
+    runtime_modifiable: false
+  }),
+  Object.freeze({
+    id: "pin.cite_loaded_notes",
+    layer: "operational",
+    name: "Answers cite only the notes the turn loaded",
+    statement: "An answer cites a goal note only by a locator the turn actually loaded as evidence. A locator naming an unloaded note — a guessed ordinal, another goal's note, a paraphrase dressed as a citation — is unverifiable, and the Governor refuses it.",
+    forbids: ["citing a note the turn never loaded", "a cross-goal citation passing audit", "a bare paraphrase promoted by an answer"],
+    source: "Phase 20; server/council/governor.js + server/autonomy/goalEvidence.js",
+    runtime_modifiable: false
+  }),
 
   Object.freeze({
     id: "phase15.observe_only",
@@ -308,7 +326,7 @@ export const LAWS = Object.freeze([...CHARTER_LAWS, ...OPERATIONAL_LAWS]);
 
 /** Bumped when a law is added or reworded in code. Recorded on improvement rows
  *  so a reviewer can tell which version of the law layer judged a proposal. */
-export const LAW_LAYER_VERSION = "1.4.0";
+export const LAW_LAYER_VERSION = "1.5.0";
 
 const BY_ID = Object.freeze(LAWS.reduce((acc, law) => ({ ...acc, [law.id]: law }), {}));
 

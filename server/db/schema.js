@@ -724,11 +724,69 @@ CREATE INDEX IF NOT EXISTS messages_agent_idx ON messages (agent_id, created_dat
 CREATE INDEX IF NOT EXISTS messages_goal_idx  ON messages (goal_id);
 `;
 
+// ---------------------------------------------------------------------------
+// Phase 20 — Rung 3: sub-agents and the promotion path.
+//
+// Design invariants carried by this schema (AUTONOMY.md §4.4, §4.6):
+//   * A sub-agent is a worker, not a seat. Its output is evidence with
+//     provenance — never authority (pin.subagent_untrusted).
+//   * Promotion is the only route from note to knowledge, and it is labelled:
+//     a promoted memory lands evidence_level 'inferred', never 'direct', and a
+//     promoted belief enters as a hypothesis (AUTONOMY.md §4.4).
+//   * One open request per (note, target). A repeat request for the same note
+//     resolves to the existing row instead of queueing a second decision.
+// ---------------------------------------------------------------------------
+export const PHASE20_SCHEMA = `
+CREATE TABLE IF NOT EXISTS goal_subagents (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL,
+  goal_id               TEXT NOT NULL REFERENCES autonomy_goals(id) ON DELETE RESTRICT,
+  agent_id              TEXT,
+  tick_id               TEXT,
+  parent_step_id        TEXT,
+  objective             TEXT NOT NULL,
+  skills                JSONB NOT NULL DEFAULT '[]'::jsonb,
+  budget                JSONB NOT NULL DEFAULT '{}'::jsonb,
+  spent                 JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status                TEXT NOT NULL,
+  output                JSONB,
+  error_message         TEXT,
+  started_ms            BIGINT,
+  ended_ms              BIGINT,
+  created_date          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS goal_subagents_goal_idx ON goal_subagents (goal_id, created_date DESC);
+
+CREATE TABLE IF NOT EXISTS note_promotions (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL,
+  goal_id               TEXT NOT NULL,
+  agent_id              TEXT,
+  note_id               TEXT NOT NULL,
+  target                TEXT NOT NULL,
+  status                TEXT NOT NULL,
+  reason                TEXT,
+  decided_ms            BIGINT,
+  decision_source       TEXT,
+  applied_memory_id     TEXT,
+  applied_belief_id     TEXT,
+  run_id                TEXT,
+  message_id            TEXT,
+  created_date          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS note_promotions_ws_idx ON note_promotions (workspace_id, status, created_date DESC);
+CREATE INDEX IF NOT EXISTS note_promotions_goal_idx ON note_promotions (goal_id, created_date DESC);
+CREATE INDEX IF NOT EXISTS note_promotions_note_idx ON note_promotions (note_id, target);
+`;
+
 export const PHASE_SCHEMAS = [
   { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
   { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
   { id: "0003", phase: 16, name: "phase16_latency_observability", sql: PHASE16_SCHEMA },
   { id: "0004", phase: 17, name: "phase17_sources_and_agents", sql: PHASE17_SCHEMA },
   { id: "0005", phase: 18, name: "phase18_research_projects_images", sql: PHASE18_SCHEMA },
-  { id: "0006", phase: 19, name: "phase19_autonomy", sql: PHASE19_SCHEMA }
+  { id: "0006", phase: 19, name: "phase19_autonomy", sql: PHASE19_SCHEMA },
+  { id: "0007", phase: 20, name: "phase20_subagents_promotion", sql: PHASE20_SCHEMA }
 ];

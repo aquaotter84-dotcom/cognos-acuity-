@@ -5,15 +5,18 @@
 // release an effect on its own authority — the outbox and the Action Governor
 // do that, and the one send path still owns every sentence the user reads.
 //
-// Two barriers live here:
-//   POST /api/autonomy/goals/:id/decision   — a goal does no work until this
-//                                             records consent with scope hashes
-//   POST /api/autonomy/outbox/:id/decision  — a staged effect is approved,
-//                                             refused or reverted (T2+)
+// Three barriers live here:
+//   POST /api/autonomy/goals/:id/decision      — a goal does no work until this
+//                                                records consent with scope hashes
+//   POST /api/autonomy/outbox/:id/decision     — a staged effect is approved,
+//                                                refused or reverted (T2+)
+//   POST /api/autonomy/promotions/:id/decide   — a promotion request is approved
+//                                                (and applied) or refused (Phase 20)
 
 import { autonomyConfig } from "../autonomy/config.js";
 import { scopeHashes, authorizationCovers, isTightening } from "../autonomy/authorize.js";
 import { decideEffect, revertEffect, shadowCorpus } from "../autonomy/outbox.js";
+import { decidePromotion } from "../autonomy/promote.js";
 import { describeSkills } from "../skills/index.js";
 import { publicNotice, NOTICE_TEMPLATE_IDS } from "../autonomy/notice.js";
 import { runTick } from "../autonomy/tick.js";
@@ -34,11 +37,12 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
   app.get("/api/autonomy/status", wrap(async (req, res) => {
     const cfg = config();
     const ws = await db.Workspace.ensureDefault();
-    const [agents, active, parked, awaiting] = await Promise.all([
+    const [agents, active, parked, awaiting, openPromos] = await Promise.all([
       db.AutonomyAgent.list(ws.id, 100),
       db.query(`SELECT COUNT(*)::int AS n FROM autonomy_goals WHERE workspace_id=$1 AND status='active'`, [ws.id]),
       db.query(`SELECT COUNT(*)::int AS n FROM autonomy_goals WHERE workspace_id=$1 AND status='parked'`, [ws.id]),
-      db.query(`SELECT COUNT(*)::int AS n FROM autonomy_outbox WHERE workspace_id=$1 AND status='staged'`, [ws.id])
+      db.query(`SELECT COUNT(*)::int AS n FROM autonomy_outbox WHERE workspace_id=$1 AND status='staged'`, [ws.id]),
+      db.query(`SELECT COUNT(*)::int AS n FROM note_promotions WHERE workspace_id=$1 AND status='requested'`, [ws.id])
     ]);
     res.json({
       enabled: cfg.enabled,
@@ -52,7 +56,8 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
         residents: (agents || []).length,
         activeGoals: Number(active[0]?.n || 0),
         parkedGoals: Number(parked[0]?.n || 0),
-        stagedEffects: Number(awaiting[0]?.n || 0)
+        stagedEffects: Number(awaiting[0]?.n || 0),
+        openPromotions: Number(openPromos[0]?.n || 0)
       },
       ceilings: cfg.ceiling,
       shadowGate: cfg.shadow,
@@ -176,14 +181,16 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     if (!goal || goal.workspace_id !== ws.id) {
       return res.status(404).json({ error: "Goal not found in this workspace" });
     }
-    const [events, steps, notes, approvals, outbox] = await Promise.all([
+    const [events, steps, notes, approvals, outbox, subagents, promotions] = await Promise.all([
       db.GoalEvent.list(goal.id, 300),
       db.GoalStep.list(goal.id, 300),
       db.GoalNote.list(goal.id, 300),
       db.GoalAuthorization.list(goal.id),
-      db.AutonomyOutbox.list(ws.id, { goalId: goal.id, limit: 100 })
+      db.AutonomyOutbox.list(ws.id, { goalId: goal.id, limit: 100 }),
+      db.GoalSubagent.list(goal.id, 100),
+      db.NotePromotion.list(ws.id, { goalId: goal.id, limit: 100 })
     ]);
-    res.json({ goal, events, steps, notes, approvals, outbox });
+    res.json({ goal, events, steps, notes, approvals, outbox, subagents, promotions });
   }));
 
   app.post("/api/autonomy/goals", wrap(async (req, res) => {
@@ -387,6 +394,66 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
   }));
 
   // --- Ticks ----------------------------------------------------------------
+  // --- Promotions (Phase 20): the human-confirm half of the promotion path --
+  // Listing is always visible; deciding needs autonomy on, because an approval
+  // applies a knowledge write the moment it lands.
+  app.get("/api/autonomy/promotions", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const status = typeof req.query?.status === "string" && req.query.status ? req.query.status : null;
+    const goalId = typeof req.query?.goalId === "string" && req.query.goalId ? req.query.goalId : null;
+    const rows = await db.NotePromotion.list(ws.id, { status, goalId, limit: 100 });
+    // Join the note and goal each request points at, so the queue renders
+    // without N+1. A secret-refused row shows its reason but never its body:
+    // the row's whole point is that the text must not move.
+    const out = [];
+    for (const row of rows || []) {
+      const [goal, notes] = await Promise.all([
+        db.AutonomyGoal.get(row.goal_id),
+        db.GoalNote.list(row.goal_id, 500)
+      ]);
+      const note = (notes || []).find(n => n.id === row.note_id) || null;
+      const secretRefused = row.status === "refused" && String(row.reason || "").startsWith("secret");
+      out.push({
+        ...row,
+        goal_title: goal?.title || null,
+        note_ordinal: note?.ordinal ?? null,
+        note_kind: note?.kind || null,
+        note_body: note && !secretRefused ? String(note.body || "").slice(0, 2000) : null,
+        redacted: secretRefused
+      });
+    }
+    res.json(out);
+  }));
+
+  app.post("/api/autonomy/promotions/:id/decide", wrap(async (req, res) => {
+    if (config().enabled !== true) {
+      return res.status(409).json({ error: "Autonomy is disabled (COGNOS_AUTONOMY_ENABLED)." });
+    }
+    const ws = await db.Workspace.ensureDefault();
+    const row = await db.NotePromotion.get(req.params.id);
+    if (!row || row.workspace_id !== ws.id) {
+      return res.status(404).json({ error: "Promotion not found in this workspace" });
+    }
+    const decision = String(req.body?.decision || "").trim().toLowerCase();
+    if (!["approve", "refuse"].includes(decision)) {
+      return res.status(400).json({ error: "decision must be approve or refuse" });
+    }
+    const outcome = await decidePromotion({
+      db, promotionId: row.id, decision,
+      reason: safe(req.body?.reason, 300) || null, actor: "app"
+    });
+    if (!outcome.ok) {
+      return res.status(409).json({ error: outcome.error, status: outcome.status || row.status });
+    }
+    await db.GoalEvent.append({
+      goal_id: row.goal_id, event_type: "promotion_decided",
+      detail: { promotionId: row.id, decision, target: row.target, status: outcome.status,
+        memoryId: outcome.memoryId || null, beliefId: outcome.beliefId || null }
+    });
+    res.json({ promotion: await db.NotePromotion.get(row.id), status: outcome.status,
+      memoryId: outcome.memoryId || null, beliefId: outcome.beliefId || null });
+  }));
+
   app.get("/api/autonomy/ticks", wrap(async (req, res) => {
     const ws = await db.Workspace.ensureDefault();
     res.json(await db.AutonomyTick.list(ws.id, req.query.limit));

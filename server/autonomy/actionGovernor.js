@@ -8,6 +8,11 @@
 // argued with. The difference is only what it judges — an effect rather than a
 // sentence.
 //
+// Phase 20 extends it with T3 destination rules: a fetch URL is checked
+// structurally (shape, literal IP, credentials) and against the goal's
+// urlAllowlist, and the staged scope binding refuses an effect approved after
+// its scope changed.
+//
 // The two properties that make the barrier real rather than decorative:
 //   * STAGING IS NOT ACTING. A step may stage freely; nothing happens to the
 //     world until a release succeeds. A buggy planner can fill the outbox; it
@@ -18,6 +23,8 @@
 import { getSkill, TIERS } from "../skills/index.js";
 import { SECRET_PATTERNS } from "../meta/policy.js";
 import { tierAllowed, budgetLineExhausted } from "./config.js";
+import { authorizationCovers } from "./authorize.js";
+import { urlAllowedByScope } from "./scopeUrl.js";
 
 /** Every rule, so a refusal names what fired instead of just "no". */
 export const RULES = Object.freeze({
@@ -65,6 +72,29 @@ async function goalEffectsToday(db, goalId, nowMs) {
     [goalId, start.toISOString()]
   );
   return Number(rows[0]?.n || 0);
+}
+
+/**
+ * A hostname that is already an address. WHATWG URL parsing normalizes exotic
+ * IPv4 spellings (hex, octal, short, single-integer) before we see them, so a
+ * dotted-quad test on the PARSED hostname plus the bracketed-v6 test covers
+ * every literal spelling. DNS-resolved names are safeFetch's problem at
+ * perform time; literals never get that far.
+ */
+function isLiteralIpHost(hostname) {
+  const host = String(hostname || "");
+  if (!host || host.includes(":")) return host.includes(":");
+  const parts = host.split(".");
+  if (parts.length === 4 && parts.every(segment => /^\d{1,3}$/.test(segment) && Number(segment) <= 255)) return true;
+  return /^\d+$/.test(host);
+}
+
+function describeUnsafeUrl(href, parsed, literalIp) {
+  if (!parsed) return "the fetch URL does not parse";
+  if (parsed.username || parsed.password) return "the fetch URL carries credentials";
+  if (!["http:", "https:"].includes(parsed.protocol)) return `the fetch URL uses ${parsed.protocol} instead of http(s)`;
+  if (literalIp) return "the fetch URL names a literal IP address";
+  return `the fetch URL is rejected: ${String(href).slice(0, 120)}`;
 }
 
 /**
@@ -131,6 +161,53 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
   if (tier === "T2" && notices.misconfigured) {
     fail("NOTICES_DISABLED", "phase19.autonomy_default_off",
       "notices are set to webhook but no COGNOS_AUTONOMY_NOTICE_WEBHOOK is configured");
+  }
+
+  // --- T3 destinations (Phase 20) -------------------------------------------
+  // The model names the URL, so the URL is judged structurally AND against the
+  // authorized scope. Search has no destination (the provider is code-owned),
+  // so only fetches walk this path; a pasted credential in a query still
+  // refuses below under SECRET_IN_PAYLOAD.
+  if (effect.effect_type === "external_read" && payload.scopeSha256
+      && authorization?.scope_sha256 && payload.scopeSha256 !== authorization.scope_sha256) {
+    fail("EFFECT_NOT_IN_SCOPE", "pin.goal_scope_immutable",
+      "staged under a different scope than the current authorization");
+  }
+  // The allowlist below is read from the live goal row — which is only the
+  // AUTHORIZED scope if its hashes still cover it. Same check the outbox
+  // decision route runs, because the tick path never passes that route.
+  if (effect.effect_type === "external_read" && authorization
+      && !authorizationCovers(authorization, { goalId: goal?.id, scope, budget: goal?.budget || {}, nowMs })) {
+    fail("EFFECT_NOT_IN_SCOPE", "pin.goal_scope_immutable",
+      "the goal's scope or budget no longer matches the authorization");
+  }
+  if (effect.effect_type === "external_read" && payload.op === "fetch") {
+    const href = typeof payload.url === "string" ? payload.url : "";
+    let parsed = null;
+    try {
+      parsed = new URL(href);
+    } catch {
+      parsed = null;
+    }
+    const literalIp = parsed ? isLiteralIpHost(parsed.hostname) : false;
+    if (!parsed || !["http:", "https:"].includes(parsed?.protocol) || literalIp || parsed.username || parsed.password) {
+      fail("UNSAFE_URL", "pin.effect_staged", describeUnsafeUrl(href, parsed, literalIp));
+    } else {
+      passed.push("fetch URL passes the structural SSRF boundary (DNS pinning re-checks at perform time)");
+    }
+    // The authorization row carries hashes, not the scope itself — so the
+    // allowlist is read from the live goal row, and the covers check above
+    // refuses anything staged or judged after a scope change. Scope is
+    // immutable after creation (pin.goal_scope_immutable); the binding is the
+    // seatbelt, not the steering.
+    const entries = Array.isArray(scope.urlAllowlist) ? scope.urlAllowlist : [];
+    const grant = parsed ? urlAllowedByScope(href, entries) : null;
+    if (parsed && !grant.allowed) {
+      fail("DESTINATION_NOT_IN_SCOPE", "pin.goal_scope_immutable",
+        `the fetch URL is not in the goal's urlAllowlist (${grant.reason})`);
+    } else if (parsed) {
+      passed.push(`fetch URL is granted by allowlist entry (${grant.reason})`);
+    }
   }
 
   // --- authorization -------------------------------------------------------

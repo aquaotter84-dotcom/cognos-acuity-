@@ -176,7 +176,10 @@ export async function ingestLink(db, {
   conversationId = null,
   projectId = null,
   url,
-  signal = null
+  signal = null,
+  // Phase 20 — T3 reads attribute their snapshots: { produced_by, goal_id,
+  // tick_id, effect_id }. Browser uploads pass nothing and are unchanged.
+  attribution = null
 }) {
   throwIfAborted(signal);
   const canonicalUrl = normalizePublicUrl(url).href;
@@ -218,7 +221,11 @@ export async function ingestLink(db, {
       ...extracted.extraction,
       description: extracted.description || null,
       redirects: response.redirects,
-      chunks: chunkSections(extracted.sections).length
+      chunks: chunkSections(extracted.sections).length,
+      // Phase 20 — T3 attribution rides in the immutable extraction record, so
+      // a snapshot fetched by a goal carries its provenance (goal, tick,
+      // effect) forever. Browser uploads pass no attribution and are unchanged.
+      ...(attribution && typeof attribution === "object" ? attribution : null)
     },
     risk_flags: riskFlags,
     fetched_at: new Date().toISOString()

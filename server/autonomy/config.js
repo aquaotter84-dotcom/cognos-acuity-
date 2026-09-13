@@ -130,6 +130,10 @@ export function autonomyConfig() {
     // Rung switches. Each rung needs its own explicit flag AND its evidence.
     rung: {
       residents: envFlag("COGNOS_AUTONOMY_RESIDENTS", false),
+      // Rung 3, second half: T3 web.search. Distinct from residents because a
+      // query goes to a third-party provider (a data flow to the outside),
+      // while web.fetch stays governed by the per-goal URL allowlist.
+      search: envFlag("COGNOS_AUTONOMY_SEARCH", false),
       externalWrites: envFlag("COGNOS_AUTONOMY_EXTERNAL_WRITES", false),
       irreversible: envFlag("COGNOS_AUTONOMY_IRREVERSIBLE", false),
       inbound: envFlag("COGNOS_INBOUND_ENABLED", false)
@@ -175,9 +179,22 @@ export function autonomyConfig() {
       maxCostPerMonthUsd: WORKSPACE_CEILING.maxMonthlyUsd },
     shadow: SHADOW_GATE,
 
-    // Tiers available in this build. T3–T5 are declared but not built; the
-    // skill registry refuses them and the Action Governor refuses them too.
-    builtTiers: Object.freeze(["T0", "T1", "T2"])
+    // Tiers available in this build. Phase 20 adds T3 (external READ): the
+    // model-chosen URL must be in the goal's allowlist, the Governor judges
+    // every fetch, and shadow mode fetches nothing. T4–T5 stay declared but
+    // unbuilt; the registry refuses them and the Action Governor refuses them
+    // too. Reading is not writing, and nothing here can write externally.
+    builtTiers: Object.freeze(["T0", "T1", "T2", "T3"]),
+
+    // Phase 20 — sub-agent bounds. The planner proposes its sub-budget in the
+    // spawn arguments; these ceilings clamp it. A planner can ask for less
+    // than these, never more — proposing bounds is not granting them.
+    subagent: Object.freeze({
+      maxSteps: envNum("COGNOS_SUBAGENT_MAX_STEPS", 5, 1, 10),
+      maxModelCalls: envNum("COGNOS_SUBAGENT_MAX_MODEL_CALLS", 8, 1, 12),
+      maxCostUsd: envNum("COGNOS_SUBAGENT_MAX_COST_USD", 0.10, 0.01, 0.25),
+      maxTokensIn: envNum("COGNOS_SUBAGENT_MAX_TOKENS_IN", 200_000, 10_000, 1_000_000)
+    })
   });
 }
 

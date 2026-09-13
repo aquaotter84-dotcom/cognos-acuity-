@@ -32,6 +32,7 @@ import { isClientAbort, throwIfAborted } from "./shared/cancellation.js";
 import { releaseApprovedText } from "./shared/approvedStream.js";
 import { prepareAgentTurn } from "./agent/runner.js";
 import { buildEvidencePack } from "./sources/index.js";
+import { buildGoalEvidence, formatGoalEvidence } from "./autonomy/goalEvidence.js";
 
 const rootLogger = createLogger("chatOrchestrate");
 
@@ -44,7 +45,7 @@ const SOVEREIGNTY_REFUSAL =
 // Clause 3 (enforcement): the flags that send a draft back to the Synthesizer
 // once, and — if it still fails — release the fixed epistemic refusal below.
 // Same rule as the leak refusal: fixed text, never model-generated.
-const EPISTEMIC_FLAGS = new Set(["minimum_cause_without_floor", "authority_citation_unverifiable", "source_citation_unverifiable"]);
+const EPISTEMIC_FLAGS = new Set(["minimum_cause_without_floor", "authority_citation_unverifiable", "source_citation_unverifiable", "goal_note_citation_unverifiable"]);
 const isEpistemicFlag = (f) => EPISTEMIC_FLAGS.has(f);
 
 const EPISTEMIC_REFUSAL =
@@ -369,6 +370,33 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
       // research record is folded into the council's evidence context as one
       // more untrusted, bounded, deterministic block. The six operators do not
       // change shape; they simply see it beside the source excerpts.
+      // Phase 20 — asking ABOUT a goal loads its working notes as citable
+      // evidence with locators. Degrades safe: if the goal is gone, nothing
+      // loads, and the Governor audits citations against the empty set — a
+      // citation of an unloaded note is a finding, never a silent pass.
+      const goalId = message.content.goalId || null;
+      let goalContext = null;
+      let goalEvidence = null;
+      if (goalId) {
+        try {
+          const built = await buildGoalEvidence(ctx.db, goalId);
+          if (built.goal) {
+            goalContext = formatGoalEvidence(built.goal, built.notes);
+            goalEvidence = {
+              goalId,
+              title: built.goal.title || null,
+              status: built.goal.status || null,
+              notesLoaded: built.notes.length,
+              truncated: built.truncated,
+              locators: built.notes.map(n => n.locator)
+            };
+          } else {
+            goalEvidence = { goalId, missing: true, notesLoaded: 0, truncated: false, locators: [] };
+          }
+        } catch {
+          goalEvidence = { goalId, failed: true, notesLoaded: 0, truncated: false, locators: [] };
+        }
+      }
       const researchContext = buildResearchContext({
         agent: message.content.agent || null,
         researchRecord: message.content.researchRecord || null
@@ -387,8 +415,9 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
         memoriesPromise,
         workspace,
         councilRecord,
-        sourceContext: [evidence.sourceContext, researchContext].filter(Boolean).join("\n\n") || null,
+        sourceContext: [evidence.sourceContext, researchContext, goalContext].filter(Boolean).join("\n\n") || null,
         sources: evidence.sources,
+        goalEvidence,
         sourceEvidence: {
           chunksIncluded: evidence.chunksIncluded || 0,
           charactersIncluded: evidence.charactersIncluded || 0,
@@ -542,7 +571,8 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
     webSearch: !!webSearch,
     agentMode,
     researchRunId: body.researchRunId || null,
-    researchRecord: body.researchRecord || null
+    researchRecord: body.researchRecord || null,
+    goalId: body.goalId || null
   };
   const sourceAttachments = baseTurnContent.attachments.filter(attachment => attachment?.source_id);
   let agentResult = {
@@ -767,7 +797,9 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
       ? contextResult.sources.map(source => ({ id: source.id, name: source.name, sha256: source.content_sha256 }))
       : [],
     sourceCitationLabels: contextResult.sourceEvidence?.citationLabels || [],
-    councilRecord: contextResult.councilRecord || null
+    councilRecord: contextResult.councilRecord || null,
+    goalId: contextResult.goalEvidence?.goalId || null,
+    goalNoteLocators: contextResult.goalEvidence?.locators || []
   };
   const buildGovernorMsg = (responseText, coherence) => createMessage({
     type: "council.govern",
@@ -1022,6 +1054,8 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
       strategy: { id: selection.strategyId, mode: selection.mode, reason: selection.reason, switched: false },
       // Phase 18 — governed research: proposal or executed-run provenance.
       research: contextResult.research || null,
+      // Phase 20 — the goal evidence this turn reasoned over, if any.
+      goal: contextResult.goalEvidence || null,
       // Phase 17 — bounded tool preparation and immutable evidence provenance.
       agent: contextResult.agent ? {
         mode: contextResult.agent.mode,

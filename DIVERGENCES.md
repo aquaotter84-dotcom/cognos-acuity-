@@ -886,3 +886,77 @@ explicit "Untrusted findings" heading, never as COGNOS speaking, and the only
 way to turn them into an answer is the "Ask COGNOS about this" turn that opens
 the resident's conversation. When autonomy is frozen the page says so first and
 disables creation, because frozen is the resting state, not a degraded one.
+
+## Phase 20 — Sub-agents, promotion, the Goal Card, T3 evidence fetch — BUILT, default off
+
+Phase 19 split autonomy into work and authority. Phase 20 spends that split:
+goals can now delegate bounded slices of work to narrow sub-agents, ask for a
+finding to be promoted into memory, fetch evidence from the web under a
+per-goal allowlist — and the user can watch and veto all of it from inside
+chat. Authority still never leaves the human/Governor pair: workers cannot
+widen anything, promotions land `inferred` with origin tags, and every T3 read
+is staged, Governor-judged, and replay-deduped before its digest exists.
+
+**Workers are evidence with provenance, not authority.** `subagent.spawn` takes
+a declared skill subset and sub-budget and the code clamps both: unknown or
+ungranted skills fail the spawn loudly (a dropped skill is an error, never a
+silent narrowing), the sub-budget clamps to `COGNOS_SUBAGENT_*` ceilings, and a
+worker that reaches outside its subset is stopped with a recorded row. Nesting
+refuses. A worker's findings enter the parent goal's notes carrying the
+worker's id in their origin tag, so `pin.subagent_untrusted` is checkable per
+row rather than merely stated.
+
+**Promotion is a request, never a write.** The skill records a row; the note
+applies only through a human confirm or a Governor-approved answer that cites
+the finding's locator. Either way it lands `evidence_level: "inferred"` with
+`autonomy_goal:<id>` origin tags — the answer-carried path re-reads the note at
+apply time, so tampering with the quoted text cannot launder a paraphrase into
+memory, and an uncited or unrequested finding never moves. The queue withholds
+secret-bearing bodies instead of displaying them, and secret notes refuse at
+every gate including the direct route.
+
+**The Goal Card answers who/what/why inside chat.** `?goal=<id>` deep-links
+from the Autonomy page into the goal's home conversation (a goal born in a
+thread stays in that thread — asking from elsewhere 409s rather than leaking).
+The card shows the birth barrier (authorize/decline over the exact scope and
+budget the hash will record), findings with their `[goal_<tail>:nN]` locators,
+narrow workers with carved budgets, open promotions with approve/refuse, and a
+banner when the last answer carried findings into memory. The Autonomy page
+grew a Promotions tab with the same queue, including `decision_source` so an
+`answer_carried:<message>` application is distinguishable from a human confirm.
+
+**T3 reads respect the scope they were authorized under.** `web.fetch` is
+gated by the goal's URL allowlist (exact URLs or host+prefix, never wider)
+plus structural SSRF rules that refuse literal IPs even when named; `web.search`
+additionally needs the rung flag, because a query is a data flow outward.
+Fetches are staged once per URL and replayed to later steps, bodies are
+digest-only, secrets in a response refuse rather than persist — and with no
+network path the skill fails closed. The Action Governor judges the goal's
+*live* scope and then checks the authorization row's hashes still cover it
+(`authorizationCovers`), so a scope that changed after consent refuses as stale
+rather than executing under words nobody approved.
+
+**Citations are a grammar, not a courtesy.** The Governor audits every
+`[goal_<tail>:nN]` in an answer against the locators the turn actually loaded;
+a guessed ordinal, another goal's note, or a paraphrase dressed as a locator is
+unverifiable and the answer is refused (`pin.cite_loaded_notes`).
+
+Four defects were found by building the tests, all the same shape as Phase
+19's — a guard that could not fire. The Governor judged a live scope no
+authorization row had ever named, so consent and judgement could silently
+disagree (now bound by `authorizationCovers` plus a stale-scope rule); repeated
+secret promotions wrote a fresh refused row each time, so the queue filled with
+duplicates (requests are now idempotent per note+target); `.env.example`
+documented `COGNOS_SKILL_NOTE_PROMOTE_REQUEST`, a switch nothing reads, while
+the wired `COGNOS_SKILL_NOTE_PROMOTE` went undocumented — an operator flipping
+the documented switch would have changed nothing (the suite now asserts every
+registry kill switch appears in `.env.example` under its wired name); and the
+test run itself hung on its first all-green pass because the harness server was
+never stopped (success, it turns out, was the one path never exercised).
+
+Per the §10 rhythm: migration `0007`, laws `1.5.0` (`pin.promotion_inferred`,
+`pin.cite_loaded_notes`), identity `1.4.0` (the autonomy boundary now states
+the promotion path instead of claiming read-only), `test/phase20.mjs` (22),
+and this section. Rung 3 stays default off behind `COGNOS_AUTONOMY_RESIDENTS`
+(workers, promotion) and `COGNOS_AUTONOMY_SEARCH` (web search); Rung 4 stays
+behind its shadow corpus, and Rungs 5–6 remain designed but unbuilt.

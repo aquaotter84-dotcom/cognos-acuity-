@@ -92,7 +92,7 @@ try {
     assert.equal(health.json.research.approvalGate, true);
     assert.equal(health.json.projects, true);
     const identity = await h.raw("/api/identity");
-    assert.equal(identity.json.version, "1.3.0");
+    assert.equal(identity.json.version, "1.4.0"); // Phase 20 restated the autonomy boundary (promotion path)
     assert.equal(identity.json.operators.length, 6);
     const runtime = identity.json.runtime || {};
     assert.equal(runtime.unsupported.imageSourceIngestion, undefined);

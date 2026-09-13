@@ -7,7 +7,18 @@
 // was authorized under.
 
 import { createHash } from "node:crypto";
-import { canonicalize } from "./outbox.js";
+
+/**
+ * Stable hash: key order in a payload must not change the key. A pure text
+ * function, kept in this leaf module so the Governor and the outbox can both
+ * use it without an import cycle.
+ */
+export function canonicalize(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map(k => `${JSON.stringify(k)}:${canonicalize(value[k])}`).join(",")}}`;
+}
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 

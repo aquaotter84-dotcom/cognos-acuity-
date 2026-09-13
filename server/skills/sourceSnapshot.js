@@ -8,7 +8,7 @@
 import { createHash } from "node:crypto";
 import { cleanText } from "../sources/extract.js";
 
-export async function snapshotSource({ db, goal, args, tickId }) {
+export async function snapshotSource({ db, goal, args, tickId, subAgentId = null }) {
   const text = cleanText(String(args.text || ""));
   if (!text) return { ok: false, error: "text is required" };
 
@@ -28,7 +28,8 @@ export async function snapshotSource({ db, goal, args, tickId }) {
     byte_size: Buffer.byteLength(text, "utf8"),
     content_sha256: sha256,
     extracted_text: text.slice(0, 60_000),
-    extraction: { produced_by: "autonomy", goal_id: goal.id, tick_id: tickId || null },
+    extraction: { produced_by: "autonomy", goal_id: goal.id, tick_id: tickId || null,
+      ...(subAgentId ? { sub_agent_id: subAgentId } : {}) },
     risk_flags: [],
     fetched_at: new Date().toISOString()
   });

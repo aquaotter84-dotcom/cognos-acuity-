@@ -20,8 +20,9 @@ try {
     // approval-gated research decision route (1).
     // Phase 19 added 15: status (1), residents (4), goals (4), notices (2),
     // outbox (2) and ticks (2).
-    assert.equal(nonStatic.length, 73);
-    if (!process.env.VERCEL) assert.equal(routes.length, 74);
+    // Phase 20 added 2: the promotion queue and its decision point.
+    assert.equal(nonStatic.length, 75);
+    if (!process.env.VERCEL) assert.equal(routes.length, 76);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",
@@ -49,7 +50,9 @@ try {
       "get:/api/autonomy/outbox",
       "post:/api/autonomy/outbox/:id/decision",
       "get:/api/autonomy/ticks",
-      "post:/api/autonomy/tick"
+      "post:/api/autonomy/tick",
+      "get:/api/autonomy/promotions",
+      "post:/api/autonomy/promotions/:id/decide"
     ]) assert.ok(routes.includes(route), `missing ${route}`);
   });
 

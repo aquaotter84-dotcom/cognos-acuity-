@@ -118,8 +118,10 @@ check("runtime feature switches are reflected in the compact prompt", () => {
 });
 
 check("the law layer pins truthful identity and policy refuses runtime rewrites", () => {
-  assert.equal(LAW_LAYER_VERSION, "1.4.0"); // Phase 19 added the autonomy pins
+  assert.equal(LAW_LAYER_VERSION, "1.5.0"); // Phase 20 added the promotion + citation pins
   assert.ok(lawById("pin.truthful_self_model"));
+  assert.ok(lawById("pin.promotion_inferred"));
+  assert.ok(lawById("pin.cite_loaded_notes"));
   const result = evaluateAdaptation({
     action: "modify_identity",
     target: "rename to Cognito",

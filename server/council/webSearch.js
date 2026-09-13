@@ -61,6 +61,22 @@ async function runSearch(ctx, query) {
   return { raw: await searchDuckDuckGo(query, ctx.signal), provider: "duckduckgo" };
 }
 
+// Phase 20 — the same retrieval, callable from the autonomy web.search skill.
+// The council path above is untouched; this wrapper only lets a bounded worker
+// ask the same providers the same way, with its own timeout signal.
+export async function searchWeb({ query, provider = null, signal = null } = {}) {
+  const q = String(query || "").trim().slice(0, 500);
+  if (!q) throw new Error("query is required");
+  const tavilyKey = process.env.TAVILY_API_KEY;
+  const effective = provider
+    || process.env.COGNOS_SEARCH_PROVIDER
+    || (tavilyKey ? "tavily" : "duckduckgo");
+  if (effective === "tavily" && tavilyKey) {
+    return { raw: await searchTavily(q, tavilyKey, signal), provider: "tavily" };
+  }
+  return { raw: await searchDuckDuckGo(q, signal), provider: "duckduckgo" };
+}
+
 export const webSearchAgent = defineAgent({
   name: "webSearch",
   type: "stage",

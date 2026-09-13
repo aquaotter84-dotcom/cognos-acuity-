@@ -6,6 +6,8 @@ import { runCouncilTurn } from "../chatOrchestrate.js";
 import { isClientAbort, throwIfAborted } from "../shared/cancellation.js";
 import { beginRequestTiming, elapsedMs, monotonicNow, timed } from "../shared/performance.js";
 import { normalizeAgentMode } from "../agent/runner.js";
+import { autonomyConfig } from "../autonomy/config.js";
+import { applyAnswerCarriedPromotions } from "../autonomy/promote.js";
 
 export function registerChatRoute(app, { wrap, db, logger }) {
   // --- THE SEND PATH -----------------------------------------------------------
@@ -22,6 +24,7 @@ export function registerChatRoute(app, { wrap, db, logger }) {
     const requestTiming = beginRequestTiming();
     const setupStarted = monotonicNow();
     const { userMessage, style, attachments: requestedAttachments, webSearch } = req.body || {};
+    const requestedGoalId = typeof req.body?.goalId === "string" ? req.body.goalId : null;
     if (typeof userMessage !== "string" || !userMessage.trim()) {
       return res.status(400).json({ error: "userMessage is required" });
     }
@@ -64,6 +67,21 @@ export function registerChatRoute(app, { wrap, db, logger }) {
     // belong to this workspace and conversation and must have been approved and
     // executed (completed or partial); nothing else is eligible. The record is
     // read here so the council never reasons over a half-loaded provenance.
+    // Phase 20 — asking ABOUT a goal: its working notes load as citable
+    // evidence for this turn. The goal must live here, and a goal born in
+    // another thread stays in that thread.
+    let goalId = null;
+    if (requestedGoalId) {
+      const goal = await db.AutonomyGoal.get(requestedGoalId);
+      if (!goal || goal.workspace_id !== workspace.id) {
+        return res.status(404).json({ error: "Goal not found in this workspace" });
+      }
+      if (goal.conversation_id && goal.conversation_id !== conversationId) {
+        return res.status(409).json({ error: "That goal belongs to another conversation" });
+      }
+      goalId = goal.id;
+    }
+
     let researchRecord = null;
     if (req.body?.researchRunId) {
       const researchRun = await db.AgentRun.get(req.body.researchRunId);
@@ -163,7 +181,7 @@ export function registerChatRoute(app, { wrap, db, logger }) {
       // not over pixel streams or private endpoints.
       const councilAttachments = attachments.map(({ file_url, ...rest }) => rest);
       const result = await runCouncilTurn(
-        { conversationId, workspaceId: workspace.id, userMessage, style, attachments: councilAttachments, webSearch, agentMode, researchRunId: researchRecord?.run?.id || null, researchRecord },
+        { conversationId, workspaceId: workspace.id, userMessage, style, attachments: councilAttachments, webSearch, agentMode, researchRunId: researchRecord?.run?.id || null, researchRecord, goalId },
         {
           runId,
           signal: turnAbort.signal,
@@ -228,17 +246,40 @@ export function registerChatRoute(app, { wrap, db, logger }) {
         return msg;
       });
 
+      // Phase 20 — answer-carried promotion. A Governor-approved answer that
+      // cites a finding's locator carries that finding into memory — but only
+      // when the worker had already requested it (two signals, not one). The
+      // message is persisted BEFORE this runs, so the carrier always exists.
+      // A promotion failure is recorded, never fatal: the answer already
+      // shipped, and chat must not convert a success into an error bubble.
+      let goalPromotions = null;
+      if (goalId && result.council?.governor?.approved !== false) {
+        try {
+          const carried = await applyAnswerCarriedPromotions({
+            db, goalId, runId, messageId: assistantMsg.id,
+            answerText: result.response, workspaceId: workspace.id,
+            config: autonomyConfig()
+          });
+          goalPromotions = { applied: carried.applied, cited: carried.cited };
+        } catch (error) {
+          logger.warn("answer-carried promotion failed", { error: String(error), runId, goalId });
+          goalPromotions = { error: String(error?.message || error).slice(0, 200) };
+        }
+      }
+
       // Final payload — the exact shape the client consumes.
       send("done", {
         conversationId,
         runId,
+        goalId,
         message: assistantMsg,
         response: result.response,
         taskType: result.taskType,
         modelUsed: result.modelUsed,
         latencyMs: result.latencyMs,
         summary: result.summary,
-        council: { ...result.council, modelUsed: result.modelUsed, taskType: result.taskType, latencyMs: result.latencyMs }
+        council: { ...result.council, modelUsed: result.modelUsed, taskType: result.taskType, latencyMs: result.latencyMs },
+        goalPromotions
       });
     } catch (error) {
       if (isClientAbort(error, turnAbort.signal)) {
