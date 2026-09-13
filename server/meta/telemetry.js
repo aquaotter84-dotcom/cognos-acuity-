@@ -179,7 +179,10 @@ export function createRunRecorder({
         chars_out: obs.charsOut == null ? null : int(obs.charsOut, null),
         cost_usd: priced.usd,
         error_class: status === "success" ? null : classifyFailure(obs),
-        error_message: obs.errorMessage ? String(obs.errorMessage).slice(0, 500) : null,
+        // Room for a bounded diagnostic, not just a one-line message: a
+        // malformed-structured-output attempt carries a redacted sample of
+        // the raw output plus the provider's metadata (see server/llm.js).
+        error_message: obs.errorMessage ? String(obs.errorMessage).slice(0, 1_000) : null,
         request_id: obs.requestId ? String(obs.requestId).slice(0, 80) : null,
         attempt: int(obs.attempt, 1),
         response_headers_ms: obs.responseHeadersMs == null ? null : int(obs.responseHeadersMs, null),

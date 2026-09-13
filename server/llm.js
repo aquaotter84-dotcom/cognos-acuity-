@@ -97,6 +97,43 @@ function withAttachments(messages, fileUrls) {
   return out;
 }
 
+// A structured-output parse failure must explain itself. The parse_error
+// attempt used to record only charsOut — the raw output was dropped on the
+// floor, so every recurrence of "malformed structured output" was as
+// invisible as the last. The diagnostic below keeps a bounded, redacted
+// sample of what the provider actually returned (or an explicit empty
+// marker) plus the provider's own metadata, inside the same parse_error
+// attempt row that /api/meta/model-calls already serves.
+const MAX_MALFORMED_SAMPLE_CHARS = 500;
+
+function redactOutputSample(text) {
+  return String(text ?? "")
+    // A proxy HTML page can arrive as "structured output"; the markup is
+    // noise, and error messages in this system never carry tags.
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\bBearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}/g, "[redacted]")
+    .replace(/postgres(?:ql)?:\/\/[^\s"']+/gi, "[redacted-database-url]");
+}
+
+/** Bounded, redacted diagnostic text for a structured-output parse failure. */
+export function malformedStructuredOutputDetail({ content = "", parseError = null, data = null } = {}) {
+  const raw = typeof content === "string" ? content : String(content ?? "");
+  // Redact a generous window BEFORE truncating so a credential that starts
+  // inside the sample cannot survive by running over its edge.
+  const sample = raw.length
+    ? redactOutputSample(raw.slice(0, 2_000)).slice(0, MAX_MALFORMED_SAMPLE_CHARS)
+    : "[empty content]";
+  return [
+    "The model provider returned malformed structured output.",
+    `parse error: ${String(parseError?.message || parseError || "unknown").slice(0, 140)}`,
+    `finish_reason=${data?.choices?.[0]?.finish_reason ?? "unknown"}`,
+    `response_id=${String(data?.id ?? "unknown").slice(0, 80)}`,
+    `response_model=${String(data?.model ?? "unknown").slice(0, 60)}`,
+    `raw_sample[${raw.length} chars]: ${sample}`
+  ].join(" | ").slice(0, 990);
+}
+
 function schemaEnvelope(responseJsonSchema) {
   // OpenAI requires a named strict schema envelope; the council supplies bare
   // JSON Schema objects, so it is wrapped here.
@@ -458,13 +495,17 @@ export async function callLLM(ctx, { messages, responseJsonSchema = null, model 
           const parsed = JSON.parse(content);
           reportAttempt({ status: "success", usage, charsOut: content.length, recoveredFromAttempts: attempt - 1 });
           return parsed;
-        } catch {
+        } catch (parseError) {
           const malformed = new Error("The model provider returned malformed structured output.");
           reportAttempt({
             status: "parse_error",
             errorClass: "malformed_json",
             usage,
-            errorMessage: malformed.message,
+            // The failure explains itself: what the parser saw (a redacted
+            // sample, or an explicit empty marker), the JSON.parse error,
+            // and the provider's own finish reason and ids — readable at
+            // /api/meta/model-calls. Malformed output is still not retried.
+            errorMessage: malformedStructuredOutputDetail({ content, parseError, data }),
             charsOut: content.length
           });
           throw malformed;
