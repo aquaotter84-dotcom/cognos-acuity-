@@ -243,8 +243,8 @@ function clampBudget(proposed, adjustments) {
       continue;
     }
     const ceiling = Number(DEFAULT_GOAL_BUDGET[key]);
-    // Every budget line is a ceiling. Zero is the only floor that means
-    // anything — a negative proposal is nonsense, not a special case for cost.
+    // Every budget line is a ceiling, so zero is the only floor that makes
+    // sense: a negative ceiling would be an immediate exhaustion.
     const wanted = Math.max(0, requested);
     const clamped = Math.min(wanted, ceiling);
     out[key] = clamped;
@@ -465,11 +465,15 @@ function skillCatalogue(probe) {
   return SKILL_IDS.map(id => {
     const skill = SKILL_REGISTRY[id];
     const runnable = isSkillEnabled(id, probe);
-    const rung = skill.requiresRung
-      ? (runnable
-        ? ` [${skill.requiresRung} rung is on]`
-        : ` [needs the ${skill.requiresRung} rung, which is off here]`)
-      : "";
+    // Annotate the rung only when it is what is MISSING. Saying "needs the
+    // search rung — NOT available here" on a deployment that enabled
+    // COGNOS_AUTONOMY_SEARCH would tell the model a capability it does have is
+    // out of reach, and the model would then refuse to propose a legitimate
+    // design. isSkillEnabled already asked the rung question; repeat its answer,
+    // do not second-guess it.
+    const rung = skill.requiresRung && !runnable
+      ? ` [needs the ${skill.requiresRung} rung, which is off here]`
+      : skill.requiresRung ? ` [${skill.requiresRung} rung is on]` : "";
     return `- ${id} (${skill.tier} ${TIERS[skill.tier] || ""})${runnable ? "" : " [NOT executable in this deployment]"}${rung}: ${skill.summary}`;
   }).join("\n");
 }
@@ -607,10 +611,10 @@ export async function designTurn({ config, messages = [], draft = null, signal =
   }
 
   const current = draft && typeof draft === "object" ? draft : emptyDraft();
-  // The ceilings quoted to the model are the same constants clampBudget()
-  // enforces. Reading cfg.goalBudget would be fine today (autonomyConfig
-  // returns DEFAULT_GOAL_BUDGET under that name) and wrong the day a
-  // deployment override appears that the clamp does not honour.
+  // The ceilings quoted to the model are exactly the ones clampBudget() enforces.
+  // A per-goal budget can only ever be LOWER than these, so DEFAULT_GOAL_BUDGET
+  // is the right thing to state — and reading a deployment override that does not
+  // exist would make the prompt and the clamp disagree about the maximum.
   const budget = DEFAULT_GOAL_BUDGET;
 
   const system = [

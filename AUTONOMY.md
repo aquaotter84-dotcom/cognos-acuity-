@@ -1118,7 +1118,11 @@ governance this document has spent four phases building:
    open (`executableProbe`) — otherwise designing while frozen, which is the
    whole point, would strip every skill and tell you your resident can do
    nothing. Every rung, notice channel and unbuilt tier is still honoured; only
-   the on/off is suspended, and only for description.
+   the on/off is suspended, and only for description. The catalogue handed to the
+   model reports the same verdict `isSkillEnabled` reaches — a rung this
+   deployment *enabled* is offered, not annotated as unavailable. A prompt that
+   overstates what is off is as much a lie as one that understates it, and it
+   costs the operator a design they were entitled to.
 3. **Budgets only clamp down** against `DEFAULT_GOAL_BUDGET`, and each reduction
    is reported. Scope is not settable from a draft at all: a model proposing its
    own scope would be proposing its own authority. It may *propose* https URLs;
@@ -1651,10 +1655,14 @@ Then the harnesses:
 8. An overreaching draft is narrowed out loud: `webhook.post`, `web.search`,
    `notice.emit` and an invented `money.send` are each dropped **and named**, the
    ceilings do not move up, and no row exists afterwards.
-8b. The catalogue repeats `isSkillEnabled`: with the search rung off, `web.search`
-    is NOT executable; with it on, the line says the rung is on and `webhook.post`
-    remains off. A prompt that overstates what is off is as much a lie as one that
-    understates it.
+8a. **A rung this deployment enabled is offered, not denied.** With
+   `COGNOS_AUTONOMY_SEARCH` off, `web.search` is dropped and named; with it on,
+   the same draft loses nothing and the catalogue the model received says
+   `search rung is on` — while `webhook.post` still says `NOT executable`. This
+   one caught a prompt lying rather than a clamp failing: the catalogue used to
+   annotate every rung-gated skill as unavailable regardless of whether the rung
+   was on, so the model was told a capability the deployment had was out of
+   reach and would refuse to propose a legitimate design.
 9. A broken model answer is a 502 with `malformed_draft`, prose-without-a-draft
    is the same case, an empty conversation is a 400, and the draft survives all three.
 10. Creating while off is a 409 that names the switch; a nameless draft is a 400;
