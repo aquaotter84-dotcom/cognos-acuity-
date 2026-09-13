@@ -1192,6 +1192,254 @@ try {
     assert.match(prompts, /untrusted/i, "and warns that what it reads is evidence, not instruction");
   });
 
+  // ------------------------------------------------- malformed structured output
+  // The incident: every step-planner call failed with "malformed structured
+  // output" — deterministic, fail-closed, and invisible by construction. These
+  // tests inject the failure at the parser seam (the mock returns raw content
+  // instead of clean JSON) and pin that the NEXT such failure explains itself.
+
+  await test("a malformed planner response explains itself in the parse_error attempt", async () => {
+    const agent = await makeResident("worker-malformed", ["note.append"]);
+    const goalId = await makeGoal(agent.id, "Malformed output");
+    await onlyThisGoal(goalId);
+
+    // The production symptom, injected where the parser meets the wire: the
+    // model's structured answer arrives truncated mid-token.
+    h.model.state.malformed = {
+      roles: ["autonomyStep"],
+      content: '{"thought":"check the feed","skill":"note.append","args":',
+      finishReason: "length"
+    };
+    const tick = await h.raw("/api/autonomy/tick", { method: "POST" });
+    assert.equal(tick.status, 200, JSON.stringify(tick.json));
+    assert.equal(resultFor(tick, goalId).stepsExecuted, 0, "nothing executed — still fail-closed");
+
+    // The step row carries the user-visible failure...
+    const steps = await h.sql(`SELECT status, error_message FROM goal_steps WHERE goal_id=$1`, [goalId]);
+    assert.equal(steps.length, 1);
+    assert.equal(steps[0].status, "failed");
+    assert.match(steps[0].error_message, /malformed structured output/);
+
+    // ...and the parse_error attempt at /api/meta/model-calls now explains it:
+    // the parse error, finish reason, response/model ids, and a redacted
+    // sample of the raw output.
+    const runId = `goal:${goalId}:tick:${tick.json.tickId}`;
+    const calls = await h.raw("/api/meta/model-calls?limit=100");
+    const attempt = calls.json.calls.find(c => c.run_id === runId);
+    assert.ok(attempt, `the parse_error attempt is readable at /api/meta/model-calls for ${runId}`);
+    assert.equal(attempt.status, "parse_error");
+    assert.equal(attempt.error_class, "malformed_json");
+    assert.match(attempt.error_message, /parse error:/, "names the JSON.parse error");
+    assert.match(attempt.error_message, /finish_reason=length/, "names the finish reason");
+    assert.match(attempt.error_message, /response_id=/, "names the response id");
+    assert.match(attempt.error_message, /response_model=/, "names the response model");
+    assert.match(attempt.error_message, /"thought":"check the feed"/, "retains a sample of the raw output");
+    assert.equal(attempt.chars_out, 57, "and still reports how much came back");
+
+    // Malformed output is deliberately NOT retried: one physical attempt only.
+    assert.equal(attempt.attempt, 1);
+    assert.equal(calls.json.calls.filter(c => c.run_id === runId).length, 1);
+
+    // A credential (or proxy markup) inside a malformed sample is redacted,
+    // not retained.
+    h.model.state.malformed = {
+      roles: ["autonomyStep"],
+      content: '{"thought":"x","key":"sk-ABCDEFGHIJKLMNOP1234","page":"<html><body>gateway page</body></html>",',
+      finishReason: "stop"
+    };
+    await dueNow(goalId);
+    const tick2 = await h.raw("/api/autonomy/tick", { method: "POST" });
+    const attempt2 = (await h.raw("/api/meta/model-calls?limit=100")).json.calls
+      .find(c => c.run_id === `goal:${goalId}:tick:${tick2.json.tickId}`);
+    assert.ok(attempt2, "the second failure is readable too");
+    assert.equal(attempt2.error_message.includes("sk-ABCDEFGHIJKLMNOP1234"), false, "secrets are redacted");
+    assert.match(attempt2.error_message, /\[redacted\]/);
+    assert.equal(/<html|<body/i.test(attempt2.error_message), false, "markup is stripped from the sample");
+    h.model.state.malformed = null;
+  });
+
+  await test("an empty planner response is named empty, not just malformed", async () => {
+    const agent = await makeResident("worker-empty", ["note.append"]);
+    const goalId = await makeGoal(agent.id, "Empty output");
+    await onlyThisGoal(goalId);
+
+    // The other half of the incident: a small model facing an unenforceable
+    // schema answers with nothing at all.
+    h.model.state.malformed = { roles: ["autonomyStep"], content: "", finishReason: "stop" };
+    const tick = await h.raw("/api/autonomy/tick", { method: "POST" });
+    assert.equal(resultFor(tick, goalId).stepsExecuted, 0);
+
+    const attempt = (await h.raw("/api/meta/model-calls?limit=100")).json.calls
+      .find(c => c.run_id === `goal:${goalId}:tick:${tick.json.tickId}`);
+    assert.ok(attempt, "the empty-output failure reaches /api/meta/model-calls");
+    assert.equal(attempt.status, "parse_error");
+    assert.equal(attempt.error_class, "malformed_json");
+    assert.match(attempt.error_message, /\[empty content\]/, "an empty answer is said to be empty");
+    assert.equal(attempt.chars_out, 0);
+    h.model.state.malformed = null;
+  });
+
+  await test("a failed planner call counts as a call and as spend in goal accounting", async () => {
+    const agent = await makeResident("worker-accounting", ["note.append"]);
+    const goalId = await makeGoal(agent.id, "Failed call accounting");
+    await onlyThisGoal(goalId);
+
+    h.model.state.malformed = { roles: ["autonomyStep"], content: "{oops", finishReason: "stop" };
+    const tick = await h.raw("/api/autonomy/tick", { method: "POST" });
+    const result = resultFor(tick, goalId);
+
+    // The tick counters see the call a failure used to hide.
+    assert.equal(tick.json.modelCalls, 1, "the tick counts the failed call");
+    assert.ok(tick.json.tokensTotal > 0, "and its tokens");
+    assert.ok(tick.json.costUsd > 0, "and its spend");
+    assert.equal(result.modelCalls, 1);
+
+    // The goal ledger and the tick row agree: a failing goal now exhausts its
+    // maxModelCalls / maxCostUsd lines instead of running against them forever.
+    const goal = (await h.sql(`SELECT spent FROM autonomy_goals WHERE id=$1`, [goalId]))[0];
+    assert.equal(Number(goal.spent.modelCalls || 0), 1, "the goal ledger counts the failed call");
+    assert.ok(Number(goal.spent.costUsd || 0) > 0, "and its spend");
+    assert.ok(Number(goal.spent.tokensIn || 0) > 0, "and its tokens");
+    const tickRow = (await h.sql(`SELECT model_calls, cost_usd FROM autonomy_ticks WHERE id=$1`, [tick.json.tickId]))[0];
+    assert.equal(Number(tickRow.model_calls), 1, "the tick row counts it too");
+    assert.ok(Number(tickRow.cost_usd) > 0);
+    h.model.state.malformed = null;
+  });
+
+  await test("goal runs reach telemetry, finalized with their failures on record", async () => {
+    const agent = await makeResident("worker-telemetry", ["note.append"]);
+    const goalId = await makeGoal(agent.id, "Telemetry reach");
+    await onlyThisGoal(goalId);
+
+    h.model.state.malformed = { roles: ["autonomyStep"], content: "", finishReason: "stop" };
+    const tick = await h.raw("/api/autonomy/tick", { method: "POST" });
+    h.model.state.malformed = null;
+
+    const runId = `goal:${goalId}:tick:${tick.json.tickId}`;
+    const runs = await h.sql(`SELECT id, status, model_calls, failure_count, failures FROM telemetry_runs WHERE id=$1`, [runId]);
+    assert.equal(runs.length, 1, `the goal run ${runId} was finalized into telemetry_runs`);
+    assert.equal(runs[0].status, "error");
+    assert.equal(Number(runs[0].model_calls), 1);
+    assert.ok(Number(runs[0].failure_count) >= 1);
+    assert.match(JSON.stringify(runs[0].failures), /malformed_json/);
+
+    // The run's call rows ride with it, and the detail endpoint serves them.
+    const callRows = await h.sql(`SELECT status, error_class FROM telemetry_model_calls WHERE run_id=$1`, [runId]);
+    assert.equal(callRows.length, 1);
+    assert.equal(callRows[0].status, "parse_error");
+    assert.equal(callRows[0].error_class, "malformed_json");
+    const detail = await h.raw(`/api/meta/telemetry/${encodeURIComponent(runId)}`);
+    assert.equal(detail.status, 200, "the goal run is readable at /api/meta/telemetry/:runId");
+    assert.equal(detail.json.calls.length, 1);
+
+    // A clean step finalizes a success run, so the record is not failure-only.
+    await dueNow(goalId);
+    h.model.state.autonomyStep = { thought: "done", skill: null, args: {}, done: true };
+    const cleanTick = await h.raw("/api/autonomy/tick", { method: "POST" });
+    const cleanRun = (await h.sql(`SELECT status FROM telemetry_runs WHERE id=$1`,
+      [`goal:${goalId}:tick:${cleanTick.json.tickId}`]))[0];
+    assert.ok(cleanRun, "a clean goal run is finalized too");
+    assert.equal(cleanRun.status, "success");
+  });
+
+  await test("a deterministically malformed planner still parks the goal — fail-closed, now visible", async () => {
+    const agent = await makeResident("worker-park", ["note.append"]);
+    const goalId = await makeGoal(agent.id, "Park on malformed");
+    await onlyThisGoal(goalId);
+
+    h.model.state.malformed = { roles: ["autonomyStep"], content: "", finishReason: "stop" };
+    for (let i = 0; i < 4; i++) {
+      await dueNow(goalId);
+      await h.raw("/api/autonomy/tick", { method: "POST" });
+    }
+    h.model.state.malformed = null;
+
+    // The failure brake still fires exactly as before: malformed output is not
+    // retried, and consecutive failures park the goal.
+    const row = (await h.sql(`SELECT status, park_reason FROM autonomy_goals WHERE id=$1`, [goalId]))[0];
+    assert.equal(row.status, "parked");
+    assert.equal(row.park_reason, "error_backoff");
+    const spent = (await h.sql(`SELECT spent FROM autonomy_goals WHERE id=$1`, [goalId]))[0].spent;
+    assert.equal(Number(spent.steps || 0), 0, "no step ever executed");
+    assert.equal(Number(spent.modelCalls || 0), 3, "but all three failed calls were metered");
+
+    // ...and this time the park is explainable: the parked goal's runs sit in
+    // telemetry with the parse failures on record.
+    const failedRuns = await h.sql(
+      `SELECT count(*)::int AS n FROM telemetry_runs WHERE id LIKE $1 AND status='error' AND failure_count > 0`,
+      [`goal:${goalId}:tick:%`]);
+    assert.ok(failedRuns[0].n >= 3, "every failed slice left a telemetry record");
+  });
+
+  // ------------------------------------------------------------- schema shape
+  await test("the step planner declares args explicitly, optional, and a done plan parses without it", async () => {
+    const agent = await makeResident("worker-schema", ["note.append"]);
+    const goalId = await makeGoal(agent.id, "Schema shape");
+    await onlyThisGoal(goalId);
+
+    // done=true with NO args key at all: what the schema change permits.
+    h.model.state.autonomyStep = { thought: "finished", skill: null, done: true };
+    const tick = await h.raw("/api/autonomy/tick", { method: "POST" });
+    assert.equal(tick.status, 200, JSON.stringify(tick.json));
+    const row = (await h.sql(`SELECT status FROM autonomy_goals WHERE id=$1`, [goalId]))[0];
+    assert.equal(row.status, "completed", "a plan with no args parses and completes the goal");
+
+    const request = h.model.requests.filter(r => r.role === "autonomyStep").pop();
+    const schema = request.responseFormat?.json_schema?.schema;
+    assert.ok(schema, "the planner call sends a json_schema response_format");
+    assert.equal(schema.properties.args.type, "object");
+    assert.equal(schema.properties.args.additionalProperties, true, "args is a declared open object");
+    assert.ok(String(schema.properties.args.description).length > 10, "args is described");
+    assert.equal(schema.required.includes("args"), false, "args is not required — done=true needs none");
+    assert.deepEqual(schema.required, ["thought", "skill", "done"]);
+    assert.equal(schema.additionalProperties, false, "the top level stays closed");
+  });
+
+  await test("the sub-agent planner's schema carries the same fix", async () => {
+    const previousRung = process.env.COGNOS_AUTONOMY_RESIDENTS;
+    process.env.COGNOS_AUTONOMY_RESIDENTS = "true";
+    try {
+      const agent = await makeResident("worker-sub-schema", ["note.append", "subagent.spawn"]);
+      const goalId = await makeGoal(agent.id, "Sub schema shape");
+      await onlyThisGoal(goalId);
+
+      let plannerCalls = 0;
+      h.model.state.autonomyStep = (payload) => {
+        const system = String(payload.messages?.find(m => m.role === "system")?.content || "");
+        // The sub-agent answers done with no args key at all.
+        if (system.includes("SUB-AGENT")) return { thought: "narrow task done", skill: null, done: true };
+        plannerCalls++;
+        if (plannerCalls === 1) {
+          return { thought: "delegate", skill: "subagent.spawn",
+            args: { objective: "Check the meter.", skills: ["note.append"], maxSteps: 1 }, done: false };
+        }
+        return { thought: "done", skill: null, done: true };
+      };
+
+      await h.raw("/api/autonomy/tick", { method: "POST" });   // spawn + sub-run
+      await dueNow(goalId);
+      await h.raw("/api/autonomy/tick", { method: "POST" });   // parent finishes
+
+      const workers = await h.sql(`SELECT status FROM goal_subagents WHERE goal_id=$1`, [goalId]);
+      assert.equal(workers.length, 1);
+      assert.equal(workers[0].status, "completed", "the sub-run completed on an args-less done plan");
+
+      const subRequest = h.model.requests
+        .filter(r => r.role === "autonomyStep" && /SUB-AGENT/.test(r.content))
+        .pop();
+      assert.ok(subRequest, "the sub-agent planner call was observed");
+      const schema = subRequest.responseFormat?.json_schema?.schema;
+      assert.equal(schema.properties.args.type, "object");
+      assert.equal(schema.properties.args.additionalProperties, true);
+      assert.ok(String(schema.properties.args.description).length > 10);
+      assert.equal(schema.required.includes("args"), false);
+      assert.deepEqual(schema.required, ["thought", "skill", "done"]);
+    } finally {
+      if (previousRung === undefined) delete process.env.COGNOS_AUTONOMY_RESIDENTS;
+      else process.env.COGNOS_AUTONOMY_RESIDENTS = previousRung;
+    }
+  });
+
 } finally {
   if (previousStepCap === undefined) delete process.env.COGNOS_AUTONOMY_MAX_STEPS_PER_TICK;
   else process.env.COGNOS_AUTONOMY_MAX_STEPS_PER_TICK = previousStepCap;

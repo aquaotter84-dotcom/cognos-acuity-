@@ -30,13 +30,21 @@ const rootLogger = createLogger("autonomy.subagent");
 
 // Mirrors the tick planner contract (server/autonomy/tick.js): one structured
 // call choosing the single next skill, or done/blocked. The sub-agent answers
-// to a narrower allowlist, enforced below — not in this schema.
+// to a narrower allowlist, enforced below — not in this schema. args is a
+// shaped, described, OPTIONAL object here for the same reason it is in
+// STEP_SCHEMA: a bare unshaped object that is required even when done=true
+// cannot be enforced by a gateway, and small models answer such a schema
+// short or empty — which surfaces as malformed structured output.
 const SUB_STEP_SCHEMA = {
   type: "object",
   properties: {
     thought: { type: "string" },
     skill: { type: "string" },
-    args: { type: "object" },
+    args: {
+      type: "object",
+      additionalProperties: true,
+      description: "Arguments object for the chosen skill, matching that skill's declared schema. Omit it (or pass an empty object) when done=true or when the skill takes no arguments."
+    },
     done: { type: "boolean" },
     blocked: { type: "string" },
     noteEntries: {
@@ -51,7 +59,7 @@ const SUB_STEP_SCHEMA = {
       }
     }
   },
-  required: ["thought", "skill", "args", "done"],
+  required: ["thought", "skill", "done"],
   additionalProperties: false
 };
 
@@ -214,6 +222,7 @@ export async function runSubagent({
     });
 
     let plan = null;
+    let planError = null;
     try {
       const ctx = { signal, logger, telemetry: recorder, config: cfg, db };
       plan = await callLLM(ctx, {
@@ -243,13 +252,13 @@ export async function runSubagent({
         ]
       });
     } catch (error) {
-      consecutiveFailures++;
-      if (consecutiveFailures >= 2) {
-        return await finish("failed", { error: `planner failed twice: ${String(error?.message || error).slice(0, 200)}` });
-      }
-      continue;
+      planError = error;
     }
 
+    // The planner call happened whether or not its output parsed, and it cost
+    // money either way: meter it against BOTH budgets on every path (a failing
+    // worker used to run free until it failed twice), and give the call its
+    // telemetry record either way — same shape as the tick planner.
     const snap = recorder.snapshot ? recorder.snapshot() : null;
     const callTokens = Number(snap?.tokens_total || 0);
     const callCost = Number(snap?.cost_usd || 0);
@@ -259,6 +268,15 @@ export async function runSubagent({
     await db.AutonomyGoal.bumpSpent(goal.id, {
       modelCalls: 1, tokensIn: callTokens, costUsd: callCost, subagentSteps: 0
     });
+    await recorder.finalize({ status: planError ? "error" : "success", error: planError });
+
+    if (planError) {
+      consecutiveFailures++;
+      if (consecutiveFailures >= 2) {
+        return await finish("failed", { error: `planner failed twice: ${String(planError?.message || planError).slice(0, 200)}` });
+      }
+      continue;
+    }
 
     if (plan?.blocked) {
       return await finish("completed", { output: { blocked: String(plan.blocked).slice(0, 300) } });

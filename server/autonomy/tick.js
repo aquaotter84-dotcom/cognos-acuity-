@@ -27,12 +27,24 @@ import { createLogger } from "../shared/logging.js";
 
 const rootLogger = createLogger("autonomy.tick");
 
+// args is declared explicitly — a shaped, described, optional object — and is
+// NOT in `required`. It used to be a bare `{ type: "object" }` (no declared
+// properties) that was required even when done=true: the only unshaped object
+// schema on the box. A gateway cannot enforce an unconstrained object in
+// structured output, and a small model answers such a schema short or empty —
+// which surfaced as deterministic "malformed structured output" failures at the
+// parser in server/llm.js. A finished step needs no args, and every consumer
+// of `plan.args` already defaults a missing one to {}.
 const STEP_SCHEMA = {
   type: "object",
   properties: {
     thought: { type: "string" },
     skill: { type: "string" },
-    args: { type: "object" },
+    args: {
+      type: "object",
+      additionalProperties: true,
+      description: "Arguments object for the chosen skill, matching that skill's declared schema. Omit it (or pass an empty object) when done=true or when the skill takes no arguments."
+    },
     done: { type: "boolean" },
     blocked: { type: "string" },
     noteEntries: {
@@ -47,7 +59,7 @@ const STEP_SCHEMA = {
       }
     }
   },
-  required: ["thought", "skill", "args", "done"],
+  required: ["thought", "skill", "done"],
   additionalProperties: false
 };
 
@@ -384,8 +396,36 @@ async function advanceGoal({ db, cfg, goal, workspaceId, workerId, deadline, tic
  * early return somebody adds is accounted for by construction.
  */
 async function runStep(args) {
-  const { db, goal } = args;
-  const out = await runStepInner(args);
+  const { db, goal, workspaceId, tickId, logger } = args;
+  // One telemetry record per goal step, finalized on EVERY path. The recorder
+  // used to be created inside runStepInner and never finalized — finalize
+  // existed only in chatOrchestrate — so goal runs never reached
+  // telemetry_runs or telemetry_model_calls: the planner's model call (and
+  // any parse failure on it) was invisible at /api/meta/model-calls. Run ids
+  // are goal:<goalId>:tick:<tickId>, so an operator can jump from a park
+  // straight to the record of the slice that caused it; the telemetry write
+  // upserts on the run id, so several steps in one slice share one run row
+  // while every call keeps its own row.
+  const recorder = createRunRecorder({
+    runId: `goal:${goal.id}:tick:${tickId}`,
+    workspaceId,
+    conversationId: goal.conversation_id || null,
+    userMessage: null,
+    config: { telemetry: { enabled: true } },
+    logger: logger?.child?.("telemetry") || null
+  });
+  const out = await runStepInner({ ...args, recorder });
+  try {
+    // pin.telemetry_side_effect: an observation that cannot be written must
+    // never fail the step it observes. finalize() is idempotent and catches
+    // its own database errors; this guard is the second layer.
+    await recorder.finalize({
+      status: out.failed ? "error" : "success",
+      error: out.failed && out.error ? new Error(String(out.error).slice(0, 400)) : null
+    });
+  } catch (error) {
+    logger?.warn?.("telemetry finalize failed", { runId: recorder.runId, error: String(error) });
+  }
   try {
     await db.AutonomyGoal.bumpSpent(goal.id, {
       // `spent.steps` counts PROGRESS, not cost, and stays that way: the
@@ -414,7 +454,7 @@ async function runStep(args) {
   return out;
 }
 
-async function runStepInner({ db, cfg, goal, agent, authorization, workspaceId, workerId, tickId, ordinal, logger, signal }) {
+async function runStepInner({ db, cfg, goal, agent, authorization, workspaceId, workerId, tickId, ordinal, logger, signal, recorder }) {
   const out = {
     executed: false, failed: false, done: false, blocked: null, error: null,
     rules: null, shadowed: 0, spendExtra: null,
@@ -423,20 +463,11 @@ async function runStepInner({ db, cfg, goal, agent, authorization, workspaceId, 
     effectsDecided: 0, externalEffectsDecided: 0
   };
 
-  const runId = `goal:${goal.id}:tick:${tickId}`;
-  const recorder = createRunRecorder({
-    runId,
-    workspaceId,
-    conversationId: goal.conversation_id || null,
-    userMessage: null,
-    config: { telemetry: { enabled: true } },
-    logger: logger?.child?.("telemetry") || null
-  });
-
   const notes = await db.GoalNote.digest(goal.id, 12);
   const allowlist = Array.isArray(agent?.skill_allowlist) ? agent.skill_allowlist : [];
 
   let plan = null;
+  let planError = null;
   try {
     const ctx = { signal, logger, telemetry: recorder, config: cfg, db };
     plan = await callLLM(ctx, {
@@ -475,10 +506,24 @@ async function runStepInner({ db, cfg, goal, agent, authorization, workspaceId, 
         }
       ]
     });
-    out.modelCalls = 1;
   } catch (error) {
+    planError = error;
+  }
+
+  // The planner call happened whether or not its output parsed, and it cost
+  // money either way: goal accounting counts the call, its tokens and its
+  // spend on BOTH paths. A failed call used to count as zero calls and zero
+  // spend, so a deterministically failing goal could never exhaust its
+  // maxModelCalls/maxCostUsd lines — the same under-counting shape the wrapper
+  // docstring above calls out for refusals.
+  out.modelCalls = 1;
+  const summary = recorder.snapshot ? recorder.snapshot() : null;
+  out.tokensTotal = Number(summary?.tokens_total || 0);
+  out.costUsd = Number(summary?.cost_usd || 0);
+
+  if (planError) {
     out.failed = true;
-    out.error = String(error?.message || error).slice(0, 400);
+    out.error = String(planError?.message || planError).slice(0, 400);
     await db.GoalStep.create({
       goal_id: goal.id, agent_id: agent?.id || null, tick_id: tickId, ordinal,
       skill_id: "step.plan", tier: "T0", status: "failed",
@@ -491,10 +536,6 @@ async function runStepInner({ db, cfg, goal, agent, authorization, workspaceId, 
     });
     return out;
   }
-
-  const summary = recorder.snapshot ? recorder.snapshot() : null;
-  out.tokensTotal = Number(summary?.tokens_total || 0);
-  out.costUsd = Number(summary?.cost_usd || 0);
 
   if (plan?.blocked) { out.blocked = String(plan.blocked).slice(0, 300); return out; }
   if (plan?.done === true) { out.done = true; return out; }

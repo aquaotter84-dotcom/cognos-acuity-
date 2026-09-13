@@ -53,6 +53,14 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
     // The plan the bounded worker returns. A function lets a test script a
     // sequence: escalate to a write skill, emit prose, try to widen scope.
     autonomyStep: { thought: "nothing useful to add", skill: null, args: {}, done: true },
+    // The parser seam: when set, json_schema calls for the named roles answer
+    // with RAW content exactly as given (no JSON.stringify round-trip), so a
+    // test can inject the truncated/empty output a small model produces and
+    // exercise the parse_error path in server/llm.js. Shape:
+    //   { roles: ["autonomyStep"], content: "..." | (payload) => "...",
+    //     finishReason: "length" }
+    // `content` may be "" — the empty-output symptom.
+    malformed: null,
     hang: false,              // never respond -> exercises the AbortController
     failStatus: null,         // e.g. 500 / 504 -> upstream HTTP failure
     failRoles: null,          // null = every role, else a Set of roles to fail
@@ -70,6 +78,7 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
       memories: [{ content: "The user prefers Python for data work.", memory_type: "semantic", importance: 7, evidence_level: "direct", volatility: "medium" }],
       coherence: null, observer: { ...state.observer }, critic: { ...state.critic },
       imageDesk: { ...state.imageDesk }, researchPlan: { ...state.researchPlan },
+      malformed: null,
       hang: false, failStatus: null, failRoles: null, failCount: null,
       failBody: null, failContentType: null
     }, patch);
@@ -90,6 +99,7 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
         stream: !!payload.stream,
         serviceTier: payload.service_tier || null,
         promptCacheKey: payload.prompt_cache_key || null,
+        responseFormat: payload.response_format || null,
         at: Date.now(),
         content: (payload.messages || [])
           .map(m => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)))
@@ -129,6 +139,27 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
       };
 
       if (payload.response_format?.type === "json_schema") {
+        // The parser seam: answer with raw content, exactly as scripted.
+        if (state.malformed && (!state.malformed.roles || state.malformed.roles.includes(role))) {
+          const content = typeof state.malformed.content === "function"
+            ? state.malformed.content(payload)
+            : state.malformed.content;
+          res.writeHead(200, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({
+            id: `chatcmpl-malformed-${Date.now()}`,
+            model: payload.model,
+            choices: [{
+              message: { content: String(content ?? "") },
+              finish_reason: state.malformed.finishReason || "stop"
+            }],
+            usage: {
+              prompt_tokens: (payload.messages || []).reduce((n, m) => n + approxTokens(m.content), 0),
+              completion_tokens: approxTokens(content),
+              total_tokens: (payload.messages || []).reduce((n, m) => n + approxTokens(m.content), 0) + approxTokens(content),
+              prompt_tokens_details: { cached_tokens: state.cachedTokens }
+            }
+          }));
+        }
         if (role === "observer") return json(state.observer);
         if (role === "strategist") return json({ sub_tasks: [] });
         if (role === "critic") return json(state.critic);
