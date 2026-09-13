@@ -1038,6 +1038,42 @@ CREATE INDEX IF NOT EXISTS workspace_audit_user_idx ON workspace_audit (user_id,
 CREATE INDEX IF NOT EXISTS workspace_audit_action_idx ON workspace_audit (action, ts_ms DESC);
 `;
 
+// ---------------------------------------------------------------------------
+// Phase 25 — the delegated autonomy switch (hybrid enablement).
+//
+// One row per workspace holding the value an operator handed to the UI. It is
+// a SETTING, not authority:
+//
+//   * `COGNOS_AUTONOMY_ENABLED=true` in the environment is a PIN and outranks
+//     this row completely. A row can never turn a pinned deployment off, and
+//     the route that would try answers 409 rather than lying about it.
+//   * The row is only consulted when `COGNOS_AUTONOMY_UI_CONTROL=true`. Without
+//     that delegation the table is inert: the environment decides, exactly as
+//     it did before this migration.
+//   * A row can only ever hold the global on/off. No rung, no ceiling, no
+//     skill and no budget is settable here — those stay in code and in the
+//     environment (phase19.autonomy_default_off, pin.autonomy_attributable).
+//
+// Absence of a row is OFF, never a default-on: the resting state of this
+// system is frozen, and a fresh deployment with UI control delegated starts
+// frozen with a switch the operator can use.
+//
+// Flips are recorded in workspace_audit as action 'autonomy.enabled' with the
+// previous and next value in `detail`, so "who turned it on, and when" stays
+// answerable without adding a second log table.
+// ---------------------------------------------------------------------------
+export const PHASE25_SCHEMA = `
+CREATE TABLE IF NOT EXISTS autonomy_settings (
+  workspace_id TEXT PRIMARY KEY,
+  enabled      BOOLEAN NOT NULL DEFAULT FALSE,
+  source       TEXT NOT NULL DEFAULT 'ui',
+  updated_by   TEXT,
+  updated_ms   BIGINT NOT NULL,
+  created_date TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+`;
+
 export const PHASE_SCHEMAS = [
   { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
   { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
@@ -1049,5 +1085,6 @@ export const PHASE_SCHEMAS = [
   { id: "0008", phase: 21, name: "phase21_webhook_effects", sql: PHASE21_SCHEMA },
   { id: "0009", phase: 22, name: "phase22_context_and_structured_memory", sql: PHASE22_SCHEMA },
   { id: "0010", phase: 23, name: "phase23_trust_annotated_graph", sql: PHASE23_SCHEMA },
-  { id: "0011", phase: 24, name: "phase24_accounts_and_workspaces", sql: PHASE24_SCHEMA }
+  { id: "0011", phase: 24, name: "phase24_accounts_and_workspaces", sql: PHASE24_SCHEMA },
+  { id: "0012", phase: 25, name: "phase25_autonomy_settings", sql: PHASE25_SCHEMA }
 ];

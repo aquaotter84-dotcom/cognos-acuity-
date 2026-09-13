@@ -18,6 +18,7 @@ import app from "./index.js";
 import db, { isConfigured, closeDatabase } from "./db.js";
 import { getSystemConfig } from "./config.js";
 import { autonomyConfig } from "./autonomy/config.js";
+import { refreshSettings } from "./autonomy/settings.js";
 import { startHeartbeat } from "./autonomy/heartbeat.js";
 import { createLogger } from "./shared/logging.js";
 
@@ -38,11 +39,23 @@ const server = app.listen(port, "0.0.0.0", () => {
 // Only started when autonomy is enabled. The tick is resumable, so a host that
 // never runs this still works through POST /api/autonomy/tick — more slowly,
 // but identically.
+//
+// Phase 25 changes one thing: with COGNOS_AUTONOMY_UI_CONTROL the switch can be
+// flipped at runtime, so a deployment that boots frozen may become enabled
+// later. The heartbeat is therefore started when the switch is delegated too —
+// beat() re-reads the config every time and returns { frozen: true } without
+// touching the database loop while autonomy is off, so an idle timer costs one
+// no-op read per interval and nothing else. Without either the pin or the
+// delegation there is still no timer at all.
 let heartbeat = null;
+await refreshSettings(db).catch(() => {});   // read the delegated switch before deciding
 const autonomy = autonomyConfig();
-if (autonomy.enabled === true) {
+if (autonomy.enabled === true || autonomy.uiControl === true) {
   heartbeat = startHeartbeat({ db, logger: logger.child("heartbeat") });
-  logger.info("autonomy heartbeat started", {
+  logger.info(autonomy.enabled ? "autonomy heartbeat started" : "autonomy heartbeat armed (frozen, UI switch delegated)", {
+    enabled: autonomy.enabled,
+    enabledSource: autonomy.enabledSource,
+    uiControl: autonomy.uiControl,
     intervalMs: heartbeat.intervalMs,
     outboxMode: autonomy.outboxMode,
     builtTiers: autonomy.builtTiers
@@ -50,7 +63,8 @@ if (autonomy.enabled === true) {
 } else {
   logger.info("autonomy disabled", {
     requested: autonomy.requestedEnabled,
-    note: "phase19.autonomy_default_off — set COGNOS_AUTONOMY_ENABLED=true to enable a rung"
+    note: "phase19.autonomy_default_off — set COGNOS_AUTONOMY_ENABLED=true to enable a rung, "
+      + "or COGNOS_AUTONOMY_UI_CONTROL=true to hand the switch to the UI"
   });
 }
 

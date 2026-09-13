@@ -1,4 +1,4 @@
-// Autonomy configuration — Phase 19.
+// Autonomy configuration — Phase 19, with Phase 25's hybrid enablement.
 //
 // Every number is an EDITABLE CONSTANT here, following the convention in
 // server/config.js: pricing and policy belong in code a reviewer can diff, not
@@ -9,28 +9,20 @@
 // should be ANNOYING, not harmful. The first thing that happens when a limit is
 // reached is a parked goal and a templated notice — no loop continues, nothing
 // is silently queued, and resuming takes a new authorization.
+//
+// The ONE exception to "no database row decides policy" is `enabled`, and it is
+// bounded: Phase 25 lets an operator delegate the on/off switch to the UI
+// (COGNOS_AUTONOMY_UI_CONTROL) and that delegation stores a boolean. It cannot
+// store a rung, a ceiling, a skill or a budget — settings.js resolves the
+// precedence and this file only reads the answer.
+
+// Phase 25 — the enablement decision lives in settings.js so the pin, the
+// delegation and the stored switch are resolved in exactly one place. envFlag
+// is imported from there as well: two copies of "what counts as true" is how a
+// kill switch and a feature flag end up disagreeing about the same variable.
+import { envFlag, describeSettings } from "./settings.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-/**
- * Read a capability switch from the environment — ALLOW-LIST semantics.
- *
- * The obvious implementation (`value !== "false"`) is wrong for a switch that
- * grants a capability: it means every unrecognised value ENABLES, including the
- * empty string. An operator who types `COGNOS_AUTONOMY_ENABLED=` on a host —
- * the most likely misconfiguration there is — would turn durable autonomy on.
- *
- * So only explicit affirmatives enable. Anything else (`""`, "0", "maybe",
- * "TRUE-ish", "yes" in an unexpected case) is OFF, and `requestedEnabled` in
- * the config reports what was actually asked for so the mismatch is visible
- * rather than silent.
- */
-const TRUTHY = new Set(["1", "true", "yes", "on", "enabled"]);
-const envFlag = (name, fallback) => {
-  const raw = process.env[name];
-  if (raw === undefined) return fallback;
-  return TRUTHY.has(String(raw).trim().toLowerCase());
-};
 
 const envNum = (name, fallback, min, max) => {
   const n = Number(process.env[name]);
@@ -117,7 +109,13 @@ export function budgetLineExhausted(spent = {}, budget = {}, nowMs = Date.now())
 }
 
 export function autonomyConfig() {
-  const enabled = envFlag("COGNOS_AUTONOMY_ENABLED", false);   // default OFF
+  // Phase 25 — `enabled` is the EFFECTIVE switch: an operator pin, or the
+  // delegated value the UI stored, or false. `pinned` and `uiControl` are
+  // reported alongside it because "is it on?" and "who decided?" are different
+  // questions, and a status surface that only answers the first one cannot tell
+  // an operator why the toggle in front of them is disabled.
+  const settings = describeSettings();
+  const enabled = settings.enabled;
   return Object.freeze({
     // phase19.autonomy_default_off: building a rung is not the same as enabling one.
     // `defaultOff` is a constant, not a reading — the system's resting state is
@@ -126,6 +124,13 @@ export function autonomyConfig() {
     defaultOff: true,
     requestedEnabled: process.env.COGNOS_AUTONOMY_ENABLED || "(unset → off)",
     enabledForcedOff: enabled === false,
+    // How the current value came about: 'env-pin' | 'ui' | 'default-off'.
+    enabledSource: settings.source,
+    pinned: settings.pinned,
+    uiControl: settings.uiControl,
+    canToggleFromUi: settings.canToggle,
+    toggleRefusal: settings.refusal,
+    settings,
 
     // Rung switches. Each rung needs its own explicit flag AND its evidence.
     rung: {

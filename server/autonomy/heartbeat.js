@@ -16,6 +16,7 @@
 
 import { runTick } from "./tick.js";
 import { autonomyConfig } from "./config.js";
+import { refreshSettings } from "./settings.js";
 import { createLogger } from "../shared/logging.js";
 
 export function startHeartbeat({ db, logger = createLogger("autonomy.heartbeat"), intervalMs = null } = {}) {
@@ -32,6 +33,11 @@ export function startHeartbeat({ db, logger = createLogger("autonomy.heartbeat")
     if (running || stopping) return;      // never overlap; one slice at a time
     running = true;
     try {
+      // Phase 25 — re-read the delegated switch BEFORE reading the config, so a
+      // flip made in the UI takes effect on the next beat without a restart.
+      // A failed read keeps the previous value (and marks the snapshot stale)
+      // rather than freezing a running system on a database blip.
+      await refreshSettings(db);
       const config = autonomyConfig();    // re-read, so the kill switch takes effect without a restart
       if (config.enabled !== true) { lastResult = { frozen: true }; return; }
       lastResult = await runTick({ db, config, workerId: `heartbeat:${process.pid}` });

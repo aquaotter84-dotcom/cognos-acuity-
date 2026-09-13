@@ -145,6 +145,18 @@ adapter exists and is judged end to end, but this deployment has no corpus, so
 `rungEvidenceStatus` reports `justifiedNow: false` and a live verdict refuses
 with `EVIDENCE_GATE_UNMET`.
 
+Phase 25 delivered the operator surface the earlier phases assumed but never
+built: **hybrid enablement**, the **conversational resident designer**, and
+**plain language** across the page. Autonomy is still off by default; what
+changed is that an operator can now decide *who* decides. `COGNOS_AUTONOMY_ENABLED=true`
+is a pin the UI cannot override (and the UI says so rather than silently failing);
+`COGNOS_AUTONOMY_UI_CONTROL=true` delegates the on/off switch to the Autonomy
+page, where a flip takes effect on the next heartbeat without a restart and is
+appended to `workspace_audit`. Neither variable being set is no longer a dead
+end — the page hands over copyable setup steps. §4.11.1 has the design and the
+four rules that make the designer safe; `test/autonomy-ux.mjs` (16 checks across
+three harnesses: delegated, not delegated, pinned) pins all of it.
+
 **Autonomy is off by default.** `COGNOS_AUTONOMY_ENABLED` unset means the loop is
 frozen: no goal wakes, no notice is written, no tick row is recorded.
 
@@ -1012,6 +1024,11 @@ GET  /api/autonomy/outbox                 staged / refused / released / shadowed
 POST /api/autonomy/outbox/:id/decision    approve | refuse | revert   (T4/T5)
 GET  /api/autonomy/ticks                  tick history: duration, goals, spend, failures
 POST /api/autonomy/tick                   run one slice (ops / cron fallback)
+GET  /api/autonomy/settings               Phase 25: the delegated switch — value, pin, may-the-UI-use-it
+POST /api/autonomy/settings               Phase 25: flip it (409 against a pin, or with no delegation)
+GET  /api/autonomy/attention              Phase 25: what is waiting on a human, grouped, each with its tab
+POST /api/autonomy/designer               Phase 25: one designer turn → a clamped draft (creates nothing)
+POST /api/autonomy/designer/create        Phase 25: THE explicit click — re-clamps, then creates
 GET  /api/agent/tools                     ← extended with the skill registry + tiers
 ```
 
@@ -1025,10 +1042,101 @@ UI:
 - **Chat** gains a **Goal Card** (authorize/decline) beside `ResearchDecisionCard`,
   templated notice banners, and "Ask COGNOS about this goal."
 - **`/system`** gains an Autonomy tab: ticks, spend, refusals, kill-switch state.
+- **Phase 25 adds to the same page, and changes no decision above:** the switch
+  itself when it has been delegated; a *Needs your attention* panel that collects
+  everything waiting on a human and links each group to the tab that resolves it;
+  plain-language status labels with the machine vocabulary demoted into a
+  *Technical details* disclosure; a glossary behind the **?** button; and the
+  designer drawer, reachable from here and from the chat header.
 - **`/about` + `/api/identity`** change only in that `autonomousBackgroundTasks` and
   `consequentialAgentWrites` move from *unsupported* to *runtime-switch* — reported
   as **off** until a rung is actually enabled. `pin.truthful_self_model` demands
   exactly this: state limits plainly, distinguish built-in from available.
+
+### 4.11.1 Phase 25 — hybrid enablement, the designer, and plain language
+
+**The problem.** §4.10 made the resting state frozen and made enabling an
+operator decision. Both were right. What it left behind is an operator standing
+in front of a page that says "autonomy is frozen" and offers the name of an
+environment variable they cannot set from a browser. A safety property that can
+only be explained is a safety property that will be worked around.
+
+**Hybrid enablement.** Two variables, one row, one precedence order resolved in
+exactly one place (`server/autonomy/settings.js`, which `autonomyConfig()` asks):
+
+```
+COGNOS_AUTONOMY_ENABLED=true      a PIN. Operator-only. Outranks everything;
+                                  the UI gets a 409 that explains itself.
+COGNOS_AUTONOMY_UI_CONTROL=true   a DELEGATION. Hands the on/off switch to the
+                                  UI. It does not turn anything on.
+autonomy_settings.enabled         the delegated value, read ONLY when delegation
+                                  is set and there is no pin.
+```
+
+Delegation is what makes a toggle real; the pin is what keeps an operator's
+explicit decision final. The stored row can hold **only** the global on/off —
+migration `0012` gives it no column for a rung, a ceiling, a skill or a budget,
+so the one place a database row influences policy cannot widen policy. Both
+variables are allow-lists, for the reason §4.10 already learned the hard way:
+`COGNOS_AUTONOMY_ENABLED=` must be off, not on.
+
+`autonomyConfig()` is synchronous and is called from the tick, the Governor and
+the skill registry, so the row is cached in-process and refreshed at boot, on
+every heartbeat beat, on the switch routes, and before any tick — always
+re-read where the system *acts* on it, ensured-loaded where it merely reports it.
+An unloaded cache reads `false` (an unread setting is not a permission); a failed
+re-read keeps the last known value and marks itself `stale`, because a database
+blip must not silently enable a system, and should not silently freeze a running
+one either. Every flip is appended to `workspace_audit` as `autonomy.enabled`
+with its from/to values, so "who turned it on and when" stays answerable without
+a second log table.
+
+**The designer.** A resident is a name, a versioned brief, a narrow allowlist, an
+interval and a budget — which is exactly the shape of a thing a person can
+describe in a sentence and a model can draft. So: describe it, refine it by
+conversation, then create it with one click. Four rules keep that inside the
+governance this document has spent four phases building:
+
+1. **A turn creates nothing.** `POST /api/autonomy/designer` returns a draft.
+   Creation is `POST /api/autonomy/designer/create`, which **re-clamps what the
+   browser sent** rather than trusting it, because a draft could have been edited
+   between turns — and then writes through the same stores the manual form uses.
+   A first goal is created in `awaiting_authorization`, so the barrier in §4.2 is
+   still the barrier.
+2. **Skills are intersected, and every omission is named.** The draft's allowlist
+   meets the code-owned registry *and* what this deployment can execute. A skill
+   that does not exist, whose rung is off, whose notice channel is unset, or
+   whose kill switch is closed is dropped **with the reason shown**. A silently
+   shortened allowlist is how an operator authorizes something other than what
+   they read. The executability question is asked with the global switch held
+   open (`executableProbe`) — otherwise designing while frozen, which is the
+   whole point, would strip every skill and tell you your resident can do
+   nothing. Every rung, notice channel and unbuilt tier is still honoured; only
+   the on/off is suspended, and only for description.
+3. **Budgets only clamp down** against `DEFAULT_GOAL_BUDGET`, and each reduction
+   is reported. Scope is not settable from a draft at all: a model proposing its
+   own scope would be proposing its own authority.
+4. **Failures are sentences.** No API key, unreachable provider, unparseable
+   output — each becomes a bounded, secret-free message plus a code (503/502,
+   never a 500 carrying raw configuration text), and the previous draft survives,
+   so a failed turn costs nothing.
+
+The designer is the one autonomy route that asks a model for text, and it is
+deliberately not an answer path: its prose is a short design note about rows it
+is proposing, bounded to `DESIGNER_LIMITS.replyChars`, never carrying a goal's
+findings. `POST /api/chat` — through the council and the Governor — remains the
+only route that composes an answer, and `test/integrity.mjs` still counts exactly
+one such route.
+
+**Plain language.** Statuses read as sentences (*Waiting for you*, *Paused with a
+reason*, *Ran out of budget*) in the page and in the chat Goal Card, from one
+shared table (`src/lib/autonomyLabels.js`) so the same status cannot read one way
+here and another way in chat. The jargon is **demoted, not deleted**: tier
+letters, skill ids, kill switches and lease timings sit behind a *Technical
+details* disclosure, and a glossary behind the **?** button pairs every plain
+term with the machine name it replaces. Whoever reads the logs needs the same
+tokens the code and the audit trail use — `pin.truthful_self_model` applies to
+the words on the screen as much as to `/api/identity`.
 
 ### 4.12 Inbound messaging and the headless turn (Rung 5)
 
@@ -1495,6 +1603,66 @@ that made them possible: `test/phase21.mjs` §8.10a–f. What is still owed is
 itself the credential.
 
 ---
+
+### 8b. Phase 25 tests — `test/autonomy-ux.mjs`
+
+Sixteen checks, three harnesses in one process. The harness boundaries are the
+interesting part: `server/autonomy/settings.js` caches the stored switch at
+module scope and `process.env` survives `bootHarness`, so each boundary resets
+**both**. Forgetting either leaks a switch from one harness into the next, and
+every assertion after it becomes fiction — which is exactly how it failed the
+first time it was written.
+
+Pure units first (no database, no HTTP):
+
+1. Both switches are allow-lists. `""`, `"0"`, `"maybe"` and `"TRUE-ish"` are off;
+   delegation alone enables nothing; a pin is on whatever the cache says and
+   makes the toggle unusable with a `pinned_by_operator` refusal.
+2. The clamp only narrows: bounded lengths, control characters out, budgets down
+   to the deployment ceiling (lower proposals kept), unknown budget lines named,
+   duplicates collapsed, `scope` and `tier` reported as ignored, and every
+   dropped skill carrying a reason in words — including a **T1** skill
+   (`note.promote.request`) dropped for want of the residents rung, because an
+   internal write is not automatically safe.
+3. A draft survives the round trip through a browser: re-clamping the clamped
+   shape is idempotent, so the wake-up interval and the first goal reach the row
+   instead of being replaced by defaults nobody read.
+4. The executability probe holds the global switch open and **nothing else** —
+   every rung, notice channel and unbuilt tier still refuses.
+5. Designer failures are sentences: seven thrown errors map to seven codes, none
+   carrying markup, and a key in the message is redacted.
+
+Then the harnesses:
+
+6. **Delegated** (`COGNOS_AUTONOMY_UI_CONTROL=true`, no pin): status reports off /
+   delegated / usable; the toggle turns it on with **no restart** and the tick
+   stops reporting `frozen`; every flip appends a from/to audit row and the
+   switch surface can show its own history; off again means off again.
+7. The designer drafts a whole resident and creates **nothing** — and the prompt
+   it received is asserted, so the clamps are not the only guard.
+8. An overreaching draft is narrowed out loud: `webhook.post`, `web.search`,
+   `notice.emit` and an invented `money.send` are each dropped **and named**, the
+   ceilings do not move up, and no row exists afterwards.
+9. A broken model answer is a 502 with `malformed_draft`, prose-without-a-draft
+   is the same case, an empty conversation is a 400, and the draft survives all three.
+10. Creating while off is a 409 that names the switch; a nameless draft is a 400;
+    neither writes a row.
+11. The explicit click creates the resident with the allowlist and ceilings
+    **re-clamped server-side** (a `webhook.post` in the request never reaches the
+    row, and the operator is told), gives it a conversation, records
+    `origin: "designer"` on the goal event, and leaves the first goal in
+    `awaiting_authorization` — a tick then executes zero steps against it.
+12. The attention panel answers "what does autonomy want from me?" in one bounded
+    query, names the tab per group, and empties when the item is resolved.
+13. **Not delegated**: the toggle is refused with the setup in the message, a
+    refused flip writes no row, the frozen-creation refusal names both variables
+    (the old dead-end message is asserted gone), and the designer still works.
+14. **Pinned**: on whatever the stored row says — including a row written behind
+    the route's back — the UI cannot turn it off, the refusal reports the truth,
+    and the loop genuinely runs.
+
+`test/integrity.mjs` carries the route census (124 → **129** non-static routes)
+and still counts exactly one POST route that composes an answer.
 
 ## 9. Railway deployment notes
 

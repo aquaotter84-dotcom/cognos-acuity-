@@ -844,6 +844,46 @@ export function createAutonomyStore(run) {
     }
   };
 
+  // -------------------------------------------------------------------------
+  // Phase 25 — the delegated switch. One row per workspace, holding ONLY the
+  // global on/off an operator handed to the UI. There is deliberately no
+  // accessor here for a rung, a ceiling, a skill or a budget: this row cannot
+  // widen anything, because the table has no column that could hold one.
+  //
+  // The row is also not authority. COGNOS_AUTONOMY_ENABLED=true in the
+  // environment pins autonomy on and outranks it; server/autonomy/settings.js
+  // is what applies that precedence, so the store stays a plain read/write.
+  // -------------------------------------------------------------------------
+  const AutonomySettings = {
+    /** The stored row, or null. Null means "nobody has used the switch yet". */
+    async get(workspaceId) {
+      const rows = await run(
+        `SELECT * FROM autonomy_settings WHERE workspace_id = $1`, [workspaceId]
+      );
+      return rows[0] || null;
+    },
+
+    /**
+     * Upsert the delegated value. `updated_ms` comes from the caller so the row
+     * lines up with the workspace_audit row written for the same flip.
+     */
+    async set({ workspace_id, enabled, source = "ui", updated_by = null, updated_ms = null }) {
+      const atMs = Number(updated_ms) || Date.now();
+      const rows = await run(
+        `INSERT INTO autonomy_settings (workspace_id, enabled, source, updated_by, updated_ms)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (workspace_id) DO UPDATE
+           SET enabled = EXCLUDED.enabled, source = EXCLUDED.source,
+               updated_by = EXCLUDED.updated_by, updated_ms = EXCLUDED.updated_ms,
+               updated_date = now()
+         RETURNING *`,
+        [workspace_id, enabled === true, String(source).slice(0, 40),
+         updated_by ? String(updated_by).slice(0, 120) : null, atMs]
+      );
+      return rows[0] || null;
+    }
+  };
+
   return {
     AutonomyAgent,
     AutonomyGoal,
@@ -857,6 +897,7 @@ export function createAutonomyStore(run) {
     AutonomyTick,
     GoalSubagent,
     NotePromotion,
-    RungEvidence
+    RungEvidence,
+    AutonomySettings
   };
 }

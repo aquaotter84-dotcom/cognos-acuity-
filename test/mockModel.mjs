@@ -21,7 +21,10 @@ const ROLES = [
   ["Coherence Monitor", "coherence"],
   ["COGNOS Image Desk", "imageDesk"],
   ["COGNOS Research Planner", "researchPlanner"],
-  ["You are a bounded autonomous worker", "autonomyStep"]
+  ["You are a bounded autonomous worker", "autonomyStep"],
+  // Phase 25 — the conversational resident designer. Its system prompt starts
+  // with the needle in server/autonomy/designer.js (DESIGNER_NEEDLE).
+  ["You are the COGNOS Resident Designer", "residentDesigner"]
 ];
 
 function roleOf(payload) {
@@ -31,6 +34,31 @@ function roleOf(payload) {
 }
 
 const approxTokens = (s) => Math.max(1, Math.ceil(String(s || "").length / 4));
+
+/**
+ * Phase 25 — the draft the designer role returns unless a test scripts another.
+ * A factory, not a shared object: reset() must restore a pristine copy, and a
+ * test that mutates state.residentDraft.resident must not leak into the next one.
+ */
+function defaultResidentDraft() {
+  return {
+    reply: "Here is a first draft: a resident that reads one allowlisted page each morning and writes a note when something changed.",
+    questions: ["Which page should it watch?"],
+    resident: {
+      name: "Agenda Watcher",
+      slug: "agenda-watcher",
+      purpose: "Watch one page each morning and report what changed.",
+      brief: "Each morning, fetch the allowlisted agenda page, compare it with the last snapshot, and append a finding when a hearing is added. Never fetch a URL that is not in the goal's allowlist.",
+      skills: ["web.fetch", "note.append"],
+      heartbeat_minutes: 1440,
+      budget: { maxSteps: 200, maxCostUsd: 0.5 },
+      first_goal: {
+        title: "Watch this week's agenda",
+        objective: "Read the allowlisted agenda page each morning and record what changed."
+      }
+    }
+  };
+}
 
 export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs = 3 } = {}) {
   const state = {
@@ -50,6 +78,10 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
       ]
     },
     researchPlan: { plan: [], note: "No further research proposed." },
+    // Phase 25 — the resident draft the designer returns. A function lets a test
+    // script a sequence (a first draft, then a refinement, then a draft that
+    // tries to widen a budget or name a skill that does not exist).
+    residentDraft: defaultResidentDraft(),
     // The plan the bounded worker returns. A function lets a test script a
     // sequence: escalate to a write skill, emit prose, try to widen scope.
     autonomyStep: { thought: "nothing useful to add", skill: null, args: {}, done: true },
@@ -78,6 +110,7 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
       memories: [{ content: "The user prefers Python for data work.", memory_type: "semantic", importance: 7, evidence_level: "direct", volatility: "medium" }],
       coherence: null, observer: { ...state.observer }, critic: { ...state.critic },
       imageDesk: { ...state.imageDesk }, researchPlan: { ...state.researchPlan },
+      residentDraft: defaultResidentDraft(),
       malformed: null,
       hang: false, failStatus: null, failRoles: null, failCount: null,
       failBody: null, failContentType: null
@@ -172,6 +205,11 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
         }
         if (role === "imageDesk") return json(typeof state.imageDesk === "function" ? state.imageDesk(payload) : state.imageDesk);
         if (role === "researchPlanner") return json(typeof state.researchPlan === "function" ? state.researchPlan(payload) : state.researchPlan);
+        if (role === "residentDesigner") {
+          const draft = typeof state.residentDraft === "function"
+            ? state.residentDraft(payload) : state.residentDraft;
+          return json(draft);
+        }
         if (role === "autonomyStep") {
           const step = typeof state.autonomyStep === "function" ? state.autonomyStep(payload) : state.autonomyStep;
           return json(step);

@@ -30,8 +30,12 @@ try {
     // Google sign-in routes), workspaces (10: overview; nodes list/create/
     // detail/retire; edges list/create; query; verify; audit) and groups
     // (6: create/list/detail/add-member/flag-member/remove-member).
-    assert.equal(nonStatic.length, 124);
-    if (!process.env.VERCEL) assert.equal(routes.length, 125);
+    // Phase 25 added 5: the delegated switch (read + flip), the attention
+    // queue, and the designer's two routes (one turn, and the explicit create).
+    // The designer adds NO second answer route: it drafts rows, and the only
+    // POST that composes an answer is still /api/chat.
+    assert.equal(nonStatic.length, 129);
+    if (!process.env.VERCEL) assert.equal(routes.length, 130);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",
@@ -64,6 +68,11 @@ try {
       "post:/api/autonomy/promotions/:id/decide",
       "get:/api/autonomy/rungs",
       "post:/api/autonomy/rungs/:rung/evidence",
+      "get:/api/autonomy/settings",
+      "post:/api/autonomy/settings",
+      "get:/api/autonomy/attention",
+      "post:/api/autonomy/designer",
+      "post:/api/autonomy/designer/create",
       "get:/api/graph/overview",
       "get:/api/graph/nodes",
       "post:/api/graph/nodes",
