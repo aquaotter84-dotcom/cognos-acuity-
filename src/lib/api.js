@@ -139,6 +139,18 @@ export const api = {
   /** Run one bounded slice now. No-op (frozen) when autonomy is disabled. */
   runTick: (body = {}) => req("/api/autonomy/tick", { method: "POST", body }),
 
+  // --- Phase 21: rungs and the evidence that earns them ---------------------
+  // A rung flag says an operator switched it on. An evidence row says the
+  // shadow corpus justified it. A live external write needs both.
+  /** Every rung: built, flag, recorded evidence, and the corpus measured now. */
+  listRungs: () => req("/api/autonomy/rungs"),
+  /**
+   * Measure the shadow corpus and record it as an evidence row. Append-only:
+   * an insufficient measurement is recorded too, as the history of having asked.
+   */
+  recordRungEvidence: (rung, body = {}) =>
+    req(`/api/autonomy/rungs/${encodeURIComponent(rung)}/evidence`, { method: "POST", body }),
+
   // --- Phase 14: the knowledge layer (read-only) ---------------------------
   knowledgeEvents: (params = {}) => req(`/api/knowledge/events${qs(params)}`),
   knowledgeOverview: () => req("/api/knowledge/overview"),

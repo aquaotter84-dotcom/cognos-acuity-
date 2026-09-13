@@ -79,3 +79,52 @@ export function urlAllowedByScope(candidate, allowlist) {
   }
   return { allowed: false, entry: null, reason: "no allowlist entry covers this URL" };
 }
+
+// ---------------------------------------------------------------------------
+// Phase 21 — destinations for an external WRITE.
+//
+// A read allowlist (scope.urlAllowlist) answers "where may this goal look?".
+// A write destination answers a sharper question: "where may this goal ACT?".
+// So a write destination is never inferred from the read allowlist, never
+// free-form, and never a bare effect-type string: it is an explicit entry
+// naming the skill and the destinations granted to it at authorization time.
+//
+//   scope.effectsAllowed: [
+//     "external_read",                                        // a class grant
+//     { effect: "webhook.post", destinations: ["https://hooks.example.com/cognos"] }
+//   ]
+//
+// Both spellings of `effect` are accepted — the effect TYPE ("external_write")
+// and the SKILL id ("webhook.post") — because AUTONOMY.md §4.7.1 writes the
+// gate in terms of the skill and the existing Governor check reads the type.
+// A class grant with no destinations grants nothing to write to: closed by
+// default, opened destination by destination.
+// ---------------------------------------------------------------------------
+
+/** The scope entry granting a skill/effect, or null. */
+export function scopeEntryFor(scope, { effectType = null, skillId = null } = {}) {
+  const list = Array.isArray(scope?.effectsAllowed) ? scope.effectsAllowed : [];
+  for (const entry of list) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const names = [entry.effect, entry.skill, entry.effectType, entry.skillId]
+      .filter(v => typeof v === "string");
+    if ((effectType && names.includes(effectType)) || (skillId && names.includes(skillId))) return entry;
+  }
+  return null;
+}
+
+/** Destinations granted to a write skill. Never falls back to the read allowlist. */
+export function destinationsForScope(scope, { effectType = null, skillId = null } = {}) {
+  const entry = scopeEntryFor(scope, { effectType, skillId });
+  const list = Array.isArray(entry?.destinations) ? entry.destinations : [];
+  return list.filter(d => typeof d === "string" && d.trim().length > 0);
+}
+
+/**
+ * Is a write destination granted? Same matcher as reads — exact URL, or host
+ * plus path prefix on a segment boundary — because widening rules for writes
+ * would be exactly backwards. An empty grant list matches nothing.
+ */
+export function destinationAllowed(candidate, destinations) {
+  return urlAllowedByScope(candidate, destinations);
+}

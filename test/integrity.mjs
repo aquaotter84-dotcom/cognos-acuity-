@@ -21,8 +21,9 @@ try {
     // Phase 19 added 15: status (1), residents (4), goals (4), notices (2),
     // outbox (2) and ticks (2).
     // Phase 20 added 2: the promotion queue and its decision point.
-    assert.equal(nonStatic.length, 75);
-    if (!process.env.VERCEL) assert.equal(routes.length, 76);
+    // Phase 21 added 2: the rung/evidence read and the evidence-recording write.
+    assert.equal(nonStatic.length, 77);
+    if (!process.env.VERCEL) assert.equal(routes.length, 78);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",
@@ -52,7 +53,9 @@ try {
       "get:/api/autonomy/ticks",
       "post:/api/autonomy/tick",
       "get:/api/autonomy/promotions",
-      "post:/api/autonomy/promotions/:id/decide"
+      "post:/api/autonomy/promotions/:id/decide",
+      "get:/api/autonomy/rungs",
+      "post:/api/autonomy/rungs/:rung/evidence"
     ]) assert.ok(routes.includes(route), `missing ${route}`);
   });
 

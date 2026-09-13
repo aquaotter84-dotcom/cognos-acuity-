@@ -781,6 +781,44 @@ CREATE INDEX IF NOT EXISTS note_promotions_goal_idx ON note_promotions (goal_id,
 CREATE INDEX IF NOT EXISTS note_promotions_note_idx ON note_promotions (note_id, target);
 `;
 
+// ---------------------------------------------------------------------------
+// Phase 21 — Rung 4 groundwork: the webhook effect, the shadow evidence gate,
+// and destination-level accounting.
+//
+//   * `autonomy_outbox.destination` lifts the one field an operator actually
+//     approves — WHERE an external write goes — out of a payload that can be
+//     32 KiB of body text, so the outbox can be listed, grouped and audited by
+//     destination without expanding a payload. Nullable: every pre-Phase-21 row
+//     keeps its meaning, and an internal effect has no destination.
+//   * `autonomy_rung_evidence` is the row that earns a rung. AUTONOMY.md §5 makes
+//     a shadow corpus the ENTRY CRITERION for Rung 4; this table is where that
+//     corpus is measured and recorded, with the gate it was measured against.
+//     Append-only: re-measuring writes a new row, so "what did we know when we
+//     turned this on" stays answerable (pin.ledger_append_only).
+// ---------------------------------------------------------------------------
+export const PHASE21_SCHEMA = `
+ALTER TABLE autonomy_outbox ADD COLUMN IF NOT EXISTS destination TEXT;
+CREATE INDEX IF NOT EXISTS autonomy_outbox_destination_idx
+  ON autonomy_outbox (destination, created_date DESC);
+
+CREATE TABLE IF NOT EXISTS autonomy_rung_evidence (
+  id                    TEXT PRIMARY KEY,
+  workspace_id          TEXT NOT NULL,
+  rung                  TEXT NOT NULL,
+  tier                  TEXT,
+  decision              TEXT NOT NULL,
+  gate                  JSONB NOT NULL DEFAULT '{}'::jsonb,
+  metrics               JSONB NOT NULL DEFAULT '{}'::jsonb,
+  metrics_sha256        TEXT NOT NULL,
+  reason                TEXT,
+  decided_by            TEXT,
+  decided_ms            BIGINT NOT NULL,
+  created_date          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS autonomy_rung_evidence_ws_idx
+  ON autonomy_rung_evidence (workspace_id, rung, decided_ms DESC);
+`;
+
 export const PHASE_SCHEMAS = [
   { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
   { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
@@ -788,5 +826,6 @@ export const PHASE_SCHEMAS = [
   { id: "0004", phase: 17, name: "phase17_sources_and_agents", sql: PHASE17_SCHEMA },
   { id: "0005", phase: 18, name: "phase18_research_projects_images", sql: PHASE18_SCHEMA },
   { id: "0006", phase: 19, name: "phase19_autonomy", sql: PHASE19_SCHEMA },
-  { id: "0007", phase: 20, name: "phase20_subagents_promotion", sql: PHASE20_SCHEMA }
+  { id: "0007", phase: 20, name: "phase20_subagents_promotion", sql: PHASE20_SCHEMA },
+  { id: "0008", phase: 21, name: "phase21_webhook_effects", sql: PHASE21_SCHEMA }
 ];

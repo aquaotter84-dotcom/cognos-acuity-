@@ -28,7 +28,15 @@ import { stageEffect, decideEffect } from "./outbox.js";
 const EXCERPT_CHARS = 4000;
 
 function rulesOf(verdict) {
-  return (verdict?.failed || []).map(f => f.rule).filter(Boolean).join(", ") || "refused";
+  return rulesList(verdict).join(", ") || "refused";
+}
+
+/**
+ * The rule ids that fired, as a list. The tick reads this to tell a ceiling
+ * (park now) from an obstacle (retry, then park on the failure brake).
+ */
+function rulesList(verdict) {
+  return (verdict?.failed || []).map(f => f.rule).filter(Boolean);
 }
 
 /**
@@ -90,12 +98,14 @@ export async function requestExternalRead({
         output: { shadow: true, note: "shadow mode: judged, recorded, not performed" } };
     }
     effects.refused += 1;
-    return { ok: false, error: `read refused on replay: ${rulesOf(decision.verdict)}`, effectId: row.id, effects };
+    return { ok: false, error: `read refused on replay: ${rulesOf(decision.verdict)}`,
+      rules: rulesList(decision.verdict), effectId: row.id, effects };
   }
 
   if (decision.verdict?.decision === "refuse") {
     effects.refused += 1;
-    return { ok: false, error: `read refused: ${rulesOf(decision.verdict)}`, effectId: row.id, effects };
+    return { ok: false, error: `read refused: ${rulesOf(decision.verdict)}`,
+      rules: rulesList(decision.verdict), effectId: row.id, effects };
   }
   if (decision.wouldRelease) {
     effects.shadowed += 1;

@@ -37,20 +37,39 @@ await test("skills are code, not data: the registry is frozen and tiers are decl
     // intersected against this registry before anything runs.
     assert.ok(skill.idempotencyRule, `${id} states how replay is detected`);
   }
-  // Phase 20 builds T0-T3 only. A T4+ skill appearing here means a rung was
-  // crossed without a shadow corpus. T3 reads; it cannot write externally.
+  // Phase 21 builds T0-T4. T4 is ONE adapter and it is off; a T5 skill here
+  // would mean an irreversible act shipped without the Phase 22 approval
+  // surface, which is the boundary this assertion actually guards.
   const tiers = SKILL_IDS.map(id => getSkill(id).tier);
-  assert.ok(tiers.every(t => ["T0", "T1", "T2", "T3"].includes(t)),
-    `Phase 20 must not ship an externally-writing skill, got ${tiers.join(",")}`);
+  assert.ok(tiers.every(t => ["T0", "T1", "T2", "T3", "T4"].includes(t)),
+    `no tier above T4 may exist yet, got ${tiers.join(",")}`);
   assert.ok(tiers.includes("T3"), "Phase 20 builds T3 (external read)");
+  assert.ok(tiers.includes("T4"), "Phase 21 builds T4 (external write)");
 });
 
-await test("no externally-writing skill exists in Phase 20 — T3 reads, T4+ stay refused", async () => {
+await test("exactly one externally-writing skill exists, and it is off", async () => {
+  // Phase 21's whole external-write surface is one adapter. A second entry here
+  // means a new way to touch the world shipped without its own review.
   const writeTiers = SKILL_IDS.filter(id => Number(getSkill(id).tier.slice(1)) >= 4);
-  assert.deepEqual(writeTiers, []);
+  assert.deepEqual(writeTiers, ["webhook.post"]);
+  assert.equal(getSkill("webhook.post").tier, "T4");
   assert.equal(tierAllowed("T3", autonomyConfig()), true);
+  // Built is not enabled: the tier is refused until the rung flag is set, and
+  // T5 stays refused whatever anyone sets.
   assert.equal(tierAllowed("T4", autonomyConfig()), false);
   assert.equal(tierAllowed("T5", autonomyConfig()), false);
+  {
+    const previous = process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES;
+    try {
+      process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES = "true";
+      assert.equal(tierAllowed("T4", autonomyConfig()), true, "the rung flag is what opens T4");
+      assert.equal(tierAllowed("T5", autonomyConfig()), false, "and it does not open T5");
+      assert.equal(autonomyConfig().builtTiers.includes("T4"), true);
+    } finally {
+      if (previous === undefined) delete process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES;
+      else process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES = previous;
+    }
+  }
 
   // T2 depends on the notice channel, whose default is "record only".
   const previousMode = process.env.COGNOS_AUTONOMY_NOTICE_MODE;
@@ -349,17 +368,28 @@ try {
 
     const a = tools.json.autonomy;
     assert.equal(a.defaultOff, true);
-    assert.deepEqual(a.builtTiers, ["T0", "T1", "T2", "T3"]);
-    assert.deepEqual(a.unbuiltTiers, ["T4", "T5"],
+    assert.deepEqual(a.builtTiers, ["T0", "T1", "T2", "T3", "T4"]);
+    assert.deepEqual(a.unbuiltTiers, ["T5"],
       "the unbuilt tiers are named, not omitted — the boundary is visible");
+    // The external-write boundary is reported as three separate facts, because
+    // "built", "rung on" and "delivers now" are three different questions.
+    assert.equal(a.externalWrites.built, true);
+    assert.equal(a.externalWrites.rungEnabled, false);
+    assert.equal(a.externalWrites.deliversNow, false);
+    assert.equal(a.externalWrites.requiresEvidenceRow, true);
     assert.equal(a.skills.length, SKILL_IDS.length);
     for (const skill of a.skills) {
       assert.ok(SKILL_IDS.includes(skill.id), `${skill.id} is a registered skill`);
       assert.ok(skill.tierName, `${skill.id} names its tier in words`);
       assert.ok(skill.killSwitch, `${skill.id} names a kill switch`);
       assert.ok(skill.idempotencyRule, `${skill.id} states how replay is detected`);
-      // Tiers this build will not execute are refused even if listed.
-      assert.ok(!["T4", "T5"].includes(skill.tier));
+      // T5 is not built, so no skill may claim it. A T4 skill may exist and
+      // still be disabled — which is asserted per skill below.
+      assert.ok(skill.tier !== "T5", `${skill.id} claims an unbuilt tier`);
+      if (skill.tier === "T4") {
+        assert.equal(skill.enabled, false, "T4 is off unless the rung flag is set");
+        assert.equal(skill.requiresRung, "externalWrites");
+      }
       assert.ok("requiresRung" in skill, `${skill.id} declares its rung gate (or null)`);
     }
     // The tiers are described, so "T2" is never an unexplained string.
@@ -392,7 +422,10 @@ try {
     assert.equal(health.json.autonomy.defaultOff, true);
     assert.ok(Array.isArray(health.json.autonomy.builtTiers));
     assert.equal(health.json.autonomy.builtTiers.includes("T3"), true);
-    assert.equal(health.json.autonomy.builtTiers.includes("T4"), false);
+    // Phase 21 builds T4. Health must say so, and must also say that building
+    // it did not enable it — a truthful "off" beats a reassuring omission.
+    assert.equal(health.json.autonomy.builtTiers.includes("T4"), true);
+    assert.equal(health.json.autonomy.builtTiers.includes("T5"), false);
   });
 
   await test("a resident can be created and its brief change is a new version, not an edit", async () => {

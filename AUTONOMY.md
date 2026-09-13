@@ -65,12 +65,12 @@ Two things the Archivist immediately revealed:
 
 ---
 
-## Status — Phases 19–20 are built
+## Status — Phases 19–21 are built
 
-This document is the design. As of this revision, Phases 19–20 of it are
+This document is the design. As of this revision, Phases 19–21 of it are
 **implemented and green**: `npm test` runs `test/autonomy.mjs` plus
-`test/phase20.mjs` (22 checks) alongside the existing suites, and everything
-passes.
+`test/phase20.mjs` (22 checks) and `test/phase21.mjs` (35 checks) alongside the
+existing suites, and everything passes.
 
 Phase 20 delivered the §10 row in full: narrow sub-agents with carved
 sub-budgets; the promotion path (human confirm + narrow answer-carried,
@@ -91,17 +91,59 @@ the suite now asserts every registry switch appears under its wired name); and
 the suite hung on its first all-green pass because the harness was never
 stopped. All four are pinned by regressions. Details in `DIVERGENCES.md`.
 
+Phase 21 delivered the §10 row in full: `webhook.post`, the first T4 external
+write — one adapter, judged harder than a read of the same URL. Destinations
+come from scope rows granted at authorization and a read allowlist never widens
+into one; the URL is re-checked structurally and re-resolved against DNS on
+every hop including every redirect; argument headers are allowlisted with
+`Authorization` refused outright; signing is by `secret_ref`, an environment
+variable NAME resolved at send time and stored nowhere; receipts are metadata
+only, so a receiver that echoes a credential back cannot write it into the
+ledger; one attempt plus one bounded retry with the idempotency key on the
+wire; and a reversal that records `unsendable: true` rather than pretending a
+trigger can be un-fired. Rung 4 is **built and off** behind
+`COGNOS_AUTONOMY_EXTERNAL_WRITES`, and even with the flag on a live release
+needs a recorded evidence row showing the shadow corpus was neither too loose
+nor too tight. Nothing delivers in this revision: the outbox still defaults to
+`shadow`.
+
+Building Phase 21 found six more guards that could not fire, five of them the
+same shape as Phase 19's and Phase 20's. `spent.effects` and
+`spent.externalEffects` were declared as budget lines in Phase 19 and nothing
+incremented them, so both ceilings were inert; spend was then recorded only on
+the step's success path, so six of `runStep`'s seven exits — including every
+refusal — burned a planner call and its tokens without accounting for either,
+which made a failing goal the one kind of goal that could never exhaust a
+budget; `maxNoticesPerDay` counted delivered `autonomy_notices` rows, so in
+shadow (the only mode anybody runs before earning live) the notice cap could
+not be reached; a notice was counted as an effect against `maxEffectsPerDay`,
+so a goal that hit its effect cap was refused the notice reporting the cap —
+silence by construction, in the one design that says a goal which cannot report
+fails silently; a refused step stored the model's raw arguments, so a refused
+`Authorization: Bearer …` survived in `goal_steps.input` *because* the effect
+was refused (`redactSecrets` now keeps the record's shape and drops its
+secrets); and `test/phase18.mjs` hardcoded identity version `1.4.0`, so an
+honest version bump broke a suite about images — a test that fails on truthful
+change trains the next reader to edit assertions instead of reading them. All
+six are pinned by regressions. Details in `DIVERGENCES.md`.
+
 **What exists:** residents with versioned briefs; goals that do no work until an
 authorization row records consent with scope and budget hashes; a resumable,
-lease-guarded tick; append-only notes; a code-owned skill registry (T0–T2, four
-plus three skills); an outbox that stages and never acts; an Action Governor that
-refuses with a named rule; templated notices; an in-process heartbeat started only
-by `server/serve.js`; and graceful shutdown that stops the heartbeat, lets an
-in-flight tick park, then closes the pool.
+lease-guarded tick; append-only notes; a code-owned skill registry (T0–T4,
+eleven skills: four T0, three T1, one T2, two T3, one T4); an outbox that
+stages, judges in shadow or dry-run, and performs only on a live verdict; an
+Action Governor that refuses with a named rule and a cited law; templated
+notices; narrow sub-agents; the promotion path; a rung-evidence gate that
+measures the corpus and records what it found; an in-process heartbeat started
+only by `server/serve.js`; and graceful shutdown that stops the heartbeat, lets
+an in-flight tick park, then closes the pool.
 
-**What is deliberately not built:** T3–T5, the webhook adapter, sub-agents, the
-promotion path, and inbound messaging. Those are Phases 20–23 and each one
-needs its own evidence before it goes live.
+**What is deliberately not built:** T5 (irreversible acts, per-effect human
+approval), inbound messaging, and any live delivery of anything. Those are
+Phases 22–23 and each one needs its own evidence before it goes live. Rung 4's
+adapter exists and is judged end to end, but this deployment has no corpus, so
+`rungEvidenceStatus` reports `justifiedNow: false` and a live verdict refuses
+with `EVIDENCE_GATE_UNMET`.
 
 **Autonomy is off by default.** `COGNOS_AUTONOMY_ENABLED` unset means the loop is
 frozen: no goal wakes, no notice is written, no tick row is recorded.
@@ -1360,18 +1402,57 @@ Real app + PGlite + scriptable mock model via `test/harness.mjs`, with an
 9. T5 without a human approval row naming that exact outbox id → refused.
 10. Shadow mode produces verdicts and rows and **delivers nothing**.
 10a. **Webhook gates:** a URL off the destination allowlist → refused.
+     **Covered by `test/phase21.mjs` §8.10a:** an off-list destination is refused
+     through a real tick with `DESTINATION_NOT_IN_SCOPE` in the verdict, the
+     destination lifted into its own column, no receipt, and — because a refused
+     probe that leaves no row is a probe nobody can count — the attempt is still
+     a row. A class grant with no destinations grants nothing, and a Phase 20
+     read allowlist for the same host is asserted *not* to widen into one.
 10b. **Outbound SSRF:** `http://169.254.169.254/`, `http://10.0.0.5/`,
      `http://localhost:8080/` and a public URL that 302s to a private address are all
      refused, with the rule id recorded.
+     **Covered by `test/phase21.mjs` §8.10b and the adapter tests:** the metadata
+     IP, a literal private IP, `http://` on a granted host, a `:8443` port,
+     credentials in the URL, and `.local`/`.internal`/`.invalid` hostnames all
+     refuse with `UNSAFE_URL` before a resolver is asked; a 302 to
+     `http://169.254.169.254/` never makes its second hop; a 302 to an https host
+     whose DNS answers `10.0.0.5` refuses on re-resolution without disclosing the
+     address it found; one private record in a round-robin set is enough; and a
+     redirect loop stops at the count. Three probes in one slice park the goal.
 10c. **Secrets:** a payload containing `secret_ref` stores the *name* only; the mock
      env value appears in no outbox row, receipt, ledger event or telemetry record.
      A header named `Authorization` supplied in args → refused.
+     **Covered by `test/phase21.mjs` §8.10c:** the name is stored, the value is
+     scanned out of eight tables after a signed live delivery, a refused
+     `Authorization` header is refused *before* staging so its value never reaches
+     a payload column, and the refused step's own `input` is redacted rather than
+     holding the credential the refusal was about. A credential inside a body
+     refuses with `SECRET_IN_PAYLOAD`.
 10d. **Idempotency:** the same `webhook.post` replayed after a crash produces one
      delivery, not two; the sink records a single `X-COGNOS-Idempotency-Key`.
+     **Covered by `test/phase21.mjs` §8.10d–e:** identity is `(goal, url, body)`,
+     so a reworded `reason`, a changed header, or a different `secret_ref` all
+     dedupe to the same row while a different body does not; a replayed `released`
+     row returns its prior receipt and the sink's request count stays at one; and
+     the key is on the wire as `X-COGNOS-Idempotency-Key` so a receiver can dedupe
+     too.
 10e. **Receipt:** a sink that echoes a secret in its response body stores only a
      digest — the secret is absent from every row.
+     **Covered by `test/phase21.mjs` §8.10e:** the sink echoes the signing secret
+     *and* an instruction; the receipt has no body field at all, carries
+     `responseBodyDigest`/`responseBytes`/`sentHeaderNames`, and neither the
+     secret nor the instruction reaches the outbox row, the ledger event, the
+     goal's event log, or the evidence table. The echoed instruction does not
+     produce a second delivery.
 10f. **Rate:** `maxPerDay` reached → refused; the goal parks rather than queueing
      silently.
+     **Covered by `test/phase21.mjs` §8.10f:** the cap is read from the effect
+     ledger (an operator approval decides an effect without bumping `spent`, so
+     spend alone would under-count), the refusal carries `RATE_LIMIT`, the goal
+     parks in the same slice with `park_reason: budget_exhausted` and the rule in
+     the event detail, and the fourth step is never planned. The spend-based brake
+     is asserted separately, as is the fact that the notice reporting an exhausted
+     cap is not itself refused by it.
 11. Sub-agent output enters as evidence with provenance and cannot widen scope or
     budget. **Covered by `test/phase20.mjs` §8.11a–c:** worker findings carry
     the worker id in their origin tag; subset widening and nesting refuse;
@@ -1400,14 +1481,18 @@ coverage is visible rather than assumed.
 
 | Fear | Guarding tests | Verdict |
 |---|---|---|
-| **Runaway spend** | 3 (slice budget), 4 (exhaustion parks), 5 (kill switch), 14 (cost parks), 15 (workspace ceiling), 10f (effect rate) | **Well covered** — six independent brakes, each asserted to *stop* rather than log. |
-| **A secret leaving in a webhook payload** | 10c (`secret_ref` stores the name only; `Authorization` in args refused), 10e (receipt is digest-only), 10b (outbound SSRF), Phase 20 secret-in-note | **Closed by Phase 20** — `test/phase20.mjs` plants a key in a fixture source, runs a goal over it, and asserts the credential appears in no memory, belief, outbox, receipt, ledger, or telemetry row, and that the queue withholds the body. |
+| **Runaway spend** | 3 (slice budget), 4 (exhaustion parks), 5 (kill switch), 14 (cost parks), 15 (workspace ceiling), 10f (effect rate) | **Well covered** — six independent brakes, each asserted to *stop* rather than log. Phase 21 made three of them able to fire at all: `spent.effects`/`spent.externalEffects` were declared in Phase 19 and never incremented, spend was recorded only on a step's success path (so every refusal was free), and `maxNoticesPerDay` counted delivered rows, which in shadow is always zero. |
+| **A secret leaving in a webhook payload** | 10c (`secret_ref` stores the name only; `Authorization` in args refused), 10e (receipt is digest-only), 10b (outbound SSRF), Phase 20 secret-in-note | **Closed by Phase 20 for reads, and by Phase 21 for writes** — `test/phase20.mjs` plants a key in a fixture source, runs a goal over it, and asserts the credential appears in no memory, belief, outbox, receipt, ledger, or telemetry row, and that the queue withholds the body. `test/phase21.mjs` does the same for the outbound direction: signing is by reference, a credential header is refused before it can be staged, the refused step's stored arguments are redacted, and a receiver that echoes the secret back leaves no copy of it in any table. |
 | **A wrong fact promoted to memory** | 13 (promotion is `inferred` + `origin`, never `direct`), 11 (sub-agent output is evidence), Phase 20 false-promotion | **Closed by Phase 20** — `test/phase20.mjs` has the mock model assert a falsehood confidently and route it through approval and the answer-carried path; every landing still carries `evidence_level: "inferred"` and the goal id, and uncited/unrequested findings never apply. |
 | **Ungoverned prose reaching the user** | 12 (notice determinism), 18 (chat is the only token-emitting route), §4.12.9 (headless-turn equivalence, veto on headless) | **Thinnest of the four** — because the inbound tests live in a separate file that does not exist yet. **They need their own suite: `test/inbound.mjs`.** |
 
 Two gaps and one thin spot, named rather than papered over. The three extra tests
 (secret-in-note, false-promotion, and the whole inbound suite) should be written in
-the phase that introduces the risk — not discovered afterwards.
+the phase that introduces the risk — not discovered afterwards. Two of the three now
+exist, and Phase 21 added the outbound-write analogues in the same pass as the code
+that made them possible: `test/phase21.mjs` §8.10a–f. What is still owed is
+`test/inbound.mjs`, which belongs to Phase 23 — the phase that makes the channel
+itself the credential.
 
 ---
 
@@ -1436,7 +1521,7 @@ One migration, one law bump, one test file, one identity bump, one
 |---|---|---|
 | **19** | **BUILT.** Residents, goals, tick + lease, notes, budgets, outbox for T0–T2, Action Governor, heartbeat + graceful shutdown, the Autonomy page, laws 1.4.0, `test/autonomy.mjs` (40) | **Rung 1–2**, default off |
 | **20** | **BUILT.** Sub-agents, promotion path, Goal Card in chat, T3 evidence fetch, `[goal_…:nN]` locators + Governor extension; `test/phase20.mjs` (22); laws 1.5.0, identity 1.4.0, migration `0007` | **Rung 3**, default off |
-| **21** | `webhook.post` (§4.7.1) + delivery adapter, destination allowlists, outbound-SSRF gate, `secret_ref` signing, Action Governor in **shadow**, receipts, reversal | shadow corpus; still not live |
+| **21** | **BUILT.** `webhook.post` (§4.7.1) + delivery adapter (DNS-pinned, per-hop re-validation, one bounded retry), destination grants in scope rows, outbound-SSRF gate, `secret_ref` signing, quiet hours, Action Governor T4 rules in **shadow**, digest-only receipts, reversal that admits it cannot un-send, the rung-evidence gate + its two routes and Autonomy panel; `test/phase21.mjs` (35); laws 1.6.0, identity 1.5.0, migration `0008` | **Rung 4**, default off; a shadow corpus can now be earned but nothing delivers until `live` |
 | **22** | Outbox → `live` based on the shadow evidence record; T5 with per-effect human approval | **Rung 4–5**, default off, separate security review |
 | **23** | Inbound messaging (§4.12): channels, HMAC verification, replay defence, headless turn, pairing tokens, shadow-mode replies | **Rung 5**, default off; requires accepting that the channel is the credential |
 

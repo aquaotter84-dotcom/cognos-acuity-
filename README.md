@@ -143,6 +143,51 @@ never deletes them. Within a project, natural chat, uploads, links, image
 analysis, and approved research all work exactly as outside, with the project
 boundary recorded on every row.
 
+## Durable autonomy (off by default)
+
+`AUTONOMY.md` is the design; Phases 19–21 of it are built and **green**, and the
+subsystem is off until an operator switches it on. A *resident* is a job with a
+versioned brief and a narrow skill allowlist. A *goal* does no work until an
+authorization row records consent against hashes of the exact scope and budget
+granted. A lease-guarded tick runs bounded slices, appends typed notes, and
+reports through templated notices — never through model prose.
+
+Everything a goal wants to do to the world goes through an outbox and an Action
+Governor that refuses with a named rule and a cited law. Skills are tiered by
+consequence:
+
+| Tier | Means | Skills | Status |
+|---|---|---|---|
+| T0 | observe — nothing leaves the system | `note.append`, `evidence.read`, `memory.search`, `belief.search` | built |
+| T1 | internal write — reversible as a transition | `source.snapshot`, `note.promote.request`, `subagent.spawn` | built (`subagent.spawn` rung-gated) |
+| T2 | notify — templated, deterministic content only | `notice.emit` | built |
+| T3 | external read | `web.fetch`, `web.search` | built (`web.fetch` by the goal's URL allowlist, `web.search` additionally rung-gated) |
+| T4 | **external write** | `webhook.post` | **built in Phase 21, off** |
+| T5 | irreversible — payment, publish, delete | — | designed, not built (Phase 22) |
+
+Rung 4 is what Phase 21 added, and it is the sharpest edge in the system: the
+first time COGNOS can act on something rather than look at it. One adapter, POST
+to an https destination **granted row by row in the goal's scope** — a read allowlist never
+widens into a write destination, and a grant naming no destination grants
+nothing. The URL is re-checked structurally and re-resolved against DNS on every
+hop including every redirect; argument headers are allowlisted with
+`Authorization` refused outright; signing is by `secret_ref`, an environment
+variable *name* resolved at send time and stored nowhere; receipts are ids,
+counts and digests, so a receiver that echoes a credential back cannot write it
+into the ledger; and reversing a delivered write records `unsendable: true`
+rather than pretending a trigger can be un-fired.
+
+Three facts are reported separately everywhere — `/api/autonomy/status`,
+`/api/agent/tools`, `/api/identity`, and the Autonomy page: T4 is **built**;
+`COGNOS_AUTONOMY_EXTERNAL_WRITES` says whether the rung is **on**; and
+`live` plus a recorded evidence row say whether anything **delivers**. The outbox
+defaults to `shadow`, where verdicts are recorded and nothing is performed. A
+live release additionally refuses with `EVIDENCE_GATE_UNMET` until
+`POST /api/autonomy/rungs/:rung/evidence` has recorded a corpus of at least
+`COGNOS_AUTONOMY_MIN_SHADOW_SAMPLES` same-tier samples with **zero** false
+releases, at least one release and at least one refusal in it. Raising the floor
+afterwards invalidates an old justification instead of grandfathering it.
+
 ## Model-gateway resilience
 
 A model call has one cancellation-aware deadline across all physical attempts.
@@ -207,6 +252,23 @@ npm run dev
 | `COGNOS_RESEARCH_ENABLED` | no | Default `true`; hides research mode from the agent vocabulary when false. |
 | `COGNOS_RESEARCH_MAX_STEPS` | no | Research plan size, clamped to 1–5 steps; default 3. Approving a plan consents only to the listed exact URLs. |
 | `COGNOS_AGENT_ENABLED` | no | Default `true`; disables non-off agent modes when false. Agent writes remain unavailable regardless. |
+| `COGNOS_AUTONOMY_ENABLED` | no | **Unset = the loop is frozen.** No goal wakes, no notice is written, no tick row is recorded. |
+| `COGNOS_AUTONOMY_OUTBOX_MODE` | no | `shadow` (default) records verdicts and performs nothing; `dry_run` also records the exact request it declined to send; `live` performs. |
+| `COGNOS_AUTONOMY_NOTICE_MODE` | no | `none`, `internal` (default), or `webhook` with `COGNOS_AUTONOMY_NOTICE_WEBHOOK`. Notices are templates with declared fields. |
+| `COGNOS_AUTONOMY_RESIDENTS` | no | Rung 3: sub-agents, promotion, and `web.search`. Default off. |
+| `COGNOS_AUTONOMY_EXTERNAL_WRITES` | no | **Rung 4.** Default off. On its own it still delivers nothing: the outbox mode and a recorded evidence row also apply. |
+| `COGNOS_AUTONOMY_MIN_SHADOW_SAMPLES` | no | Same-tier samples a corpus needs before a rung can be recorded as justified. Default 25; zero false releases is not configurable. |
+| `COGNOS_AUTONOMY_QUIET_HOURS` | no | `22-7` refuses external deliveries inside the window (a wrapping window is a window). Notices are exempt; unset or malformed is never active. |
+| `COGNOS_WEBHOOK_MAX_BODY_BYTES` | no | Webhook body cap in **bytes**, clamped to ≤ 32768; default 32768. |
+| `COGNOS_WEBHOOK_TIMEOUT_MS` | no | Per-delivery deadline, clamped 500–30000; default 8000. |
+| `COGNOS_WEBHOOK_MAX_REDIRECTS` | no | Clamped 0–2; default 2. Every hop is re-validated and re-resolved. |
+| `COGNOS_WEBHOOK_MAX_RETRY_DELAY_MS` | no | Cap on the single retry's wait, honouring `Retry-After`; default 2000. |
+| `COGNOS_WEBHOOK_MAX_RESPONSE_BYTES` | no | How much of a response is even read before it is digested and discarded; default 65536. |
+| `COGNOS_SKILL_<NAME>` | no | Per-skill kill switch, one per registry entry (`COGNOS_SKILL_WEBHOOK_POST`, `COGNOS_SKILL_WEB_FETCH`, …). `.env.example` lists every wired name; the suite asserts the two cannot drift. |
+
+The autonomy subsystem has more knobs than this table (tick cadence, slice and
+lease bounds, budgets, workspace ceilings, sub-agent limits). `.env.example` is
+the complete list and every name in it is one the code actually reads.
 
 The database initializes lazily — the build and a cold boot both succeed with no
 database reachable. The schema is created on the first query that needs it.
@@ -234,6 +296,8 @@ server/
     meta.js             Phase 15 read-only routes + Policy gate
     sources.js          immutable uploads (docs/links/images) + agent runs,
                         image bytes, and the research decision route
+    autonomy.js         residents, goals + the authorization barrier, the outbox
+                        and its decision route, rungs/evidence, promotions, ticks
   serve.js              local/self-hosted listener (Vercel does not use this)
   mock-openai.js        local OpenAI-compatible mock (development aid)
   mock-latency.js       local latency injector (development aid)
@@ -253,8 +317,19 @@ server/
   shared/               orchestrator, registry, protocol, runtime, eventBus,
                         errors, logging, cooperative cancellation, and the
                         single governance-approved answer release point
+  autonomy/             Phases 19–21: the loop and everything that bounds it
+    tick.js             lease-guarded slice: plan, gate, execute, park, report
+    outbox.js           stage / judge / perform, idempotency, reversal, corpus
+    actionGovernor.js   the verdict: named rules, cited laws, tier gates
+    config.js           rung flags, budgets, ceilings, webhook bounds, quiet hours
+    authorize.js        scope+budget hashes and authorizationCovers
+    scopeUrl.js         read allowlists and granted write destinations
+    webhookPost.js      Phase 21 adapter: shape, DNS pinning, signing, delivery
+    externalRead.js  externalWrite.js  evidenceGate.js  store.js  notice.js
+    promote.js  subagent.js  goalEvidence.js  heartbeat.js
+  skills/               the code-owned registry (11 skills, T0–T4) + validateArgs
   db/
-    schema.js           additive Phase 14–18 schemas (source of truth)
+    schema.js           additive Phase 14–21 schemas (source of truth)
     util.js             newId/num/int/clamp01/nowMs (leaf helpers, no cycles)
   knowledge/            Phase 14
     events.js           ledger vocabulary, append, list, count, foldState
@@ -277,14 +352,16 @@ server/
     latency.js          p50/p95 analysis + evidence gate for an outbox
     policy.js           the Policy Engine
     store.js            createMetaStore(run): telemetry, strategies, ledger
-migrations/             additive SQL (0001 phase 14 through 0005 projects/images)
+migrations/             additive SQL (0001 phase 14 through 0008 webhook effects)
 scripts/
   generate-migrations.mjs  migrations/*.sql from server/db/schema.js
   migrate.mjs              apply them (refuses non-additive SQL)
   latency-report.mjs       read-only p50/p95 latency report
   evaluate-strategies.mjs  run the offline harness (operator-invoked)
 src/
-  pages/                Chat, Projects, Memory, Activity, System, Settings
+  pages/                Chat, Projects, Memory, Activity, System, Settings,
+                        Autonomy (residents, goals, outbox + Rung 4, promotions),
+                        Identity
   components/chat/      ChatMessage, ChatInput, CouncilTrace, LiveCouncil,
                         Sidebar, MobileNav, WelcomeScreen, SourceComposer,
                         ResearchDecisionCard
@@ -301,6 +378,11 @@ test/                   harness only — not part of the app
   performance.mjs       latency measurement and transport-integrity regressions
   sources-agent.mjs     extraction, SSRF, injection, citations + bounded-agent tests
   phase18.mjs           projects, image ingestion, research-approval regressions
+  autonomy.mjs          Phase 19: residents, goals, the barrier, tick, outbox (42)
+  phase20.mjs           Phase 20: sub-agents, promotion, T3 reads, locators (22)
+  phase21.mjs           Phase 21: webhook gates, SSRF, receipts, the evidence
+                        gate — with a loopback sink receiving real bytes (35)
+  identity.mjs          the immutable self-model, its prompt, and its API
   integrity.mjs         governed-stream, cancellation, structured-error regressions
   smoke.mjs             the Phase 14/15 acceptance run (170 assertions)
   demo.mjs              prints the artifacts: ledger rows, telemetry, replay
@@ -383,16 +465,36 @@ GET  /api/sources/:id                 snapshot + exact citable chunks
 GET  /api/agent/tools                 bounded mode/tool capability declaration
 GET  /api/agent/runs                  recent attributable agent runs
 GET  /api/agent/runs/:id              run + steps + append-only events/approvals
+
+GET  /api/autonomy/status             built / rung-on / delivers-now, per tier
+GET  /api/autonomy/rungs              rung flags + the shadow-corpus measurement
+POST /api/autonomy/rungs/:rung/evidence  record it (append-only; `insufficient` too)
+GET  /api/autonomy/agents             residents, with brief versions
+POST /api/autonomy/agents             create one (allowlist is code-owned)
+GET  /api/autonomy/goals              goals + counters
+GET  /api/autonomy/goals/:id          events, steps, notes, outbox, workers, queue
+POST /api/autonomy/goals              propose a goal (awaiting_authorization)
+POST /api/autonomy/goals/:id/decision THE BARRIER: authorize or decline, by hash
+GET  /api/autonomy/outbox             effects + the corpus distribution
+POST /api/autonomy/outbox/:id/decision   approve / refuse / revert one effect
+GET  /api/autonomy/promotions         the memory-promotion queue
+POST /api/autonomy/promotions/:id/decide human confirm (lands `inferred`)
+GET  /api/autonomy/notices            templated reports
+POST /api/autonomy/tick               run one slice (the heartbeat calls this)
 ```
 
 ```bash
-npm test               # voice + performance + sources/agent + integrity + smoke
+npm test               # every suite: voice, performance, sources/agent, phase18,
+                       # autonomy, phase20, phase21, identity, integrity, smoke
 npm run voice          # speech normalization and chunking regressions
 npm run performance    # latency instrumentation and no-prompt-change regressions
 npm run sources-agent  # extraction, SSRF, prompt injection, citation, agent tests
 npm run identity       # immutable self-model, prompt, policy, API, and send-path checks
 npm run latency -- --limit=200 --days=7  # read-only p50/p95 production report
 npm run integrity      # governed stream, cancellation, structured API errors
+npm run autonomy       # Phase 19: the loop, the barrier, the outbox (42 checks)
+npm run phase20        # Phase 20: sub-agents, promotion, T3 reads (22 checks)
+npm run phase21        # Phase 21: webhook gates, SSRF, receipts, evidence (35)
 npm run smoke          # 170 assertions across the Phase 14/15 success criteria
 npm run demo           # print the artifacts: ledger rows, telemetry, replay, veto
 npm run migrate        # apply migrations/*.sql (refuses non-additive SQL)

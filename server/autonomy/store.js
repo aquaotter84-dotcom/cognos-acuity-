@@ -490,15 +490,16 @@ export function createAutonomyStore(run) {
       const rows = await run(
         `INSERT INTO autonomy_outbox
           (id, workspace_id, agent_id, goal_id, tick_id, step_id, skill_id,
-           effect_type, tier, payload, idempotency_key, status, mode, scope_sha256)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+           effect_type, tier, payload, idempotency_key, status, mode, scope_sha256,
+           destination)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
          ON CONFLICT (idempotency_key) DO NOTHING
          RETURNING *`,
         [id, data.workspace_id, data.agent_id || null, data.goal_id || null,
          data.tick_id || null, data.step_id || null, data.skill_id,
          data.effect_type, data.tier || "T0", json(data.payload, {}),
          data.idempotency_key, "staged", data.mode || "shadow",
-         data.scope_sha256 || null]
+         data.scope_sha256 || null, data.destination || null]
       );
       return rows[0] || null;
     },
@@ -520,16 +521,76 @@ export function createAutonomyStore(run) {
       );
       return rows[0] || null;
     },
-    async list(workspaceId, { goalId = null, status = null, limit = 100 } = {}) {
+    async list(workspaceId, { goalId = null, status = null, tier = null,
+      effectType = null, destination = null, limit = 100 } = {}) {
       const safeLimit = Math.max(1, Math.min(200, Number(limit) || 100));
       const where = ["workspace_id=$1"];
       const params = [workspaceId];
       if (goalId) { params.push(goalId); where.push(`goal_id=$${params.length}`); }
       if (status) { params.push(status); where.push(`status=$${params.length}`); }
+      if (tier) { params.push(tier); where.push(`tier=$${params.length}`); }
+      if (effectType) { params.push(effectType); where.push(`effect_type=$${params.length}`); }
+      if (destination) { params.push(destination); where.push(`destination=$${params.length}`); }
       params.push(safeLimit);
       return run(
         `SELECT * FROM autonomy_outbox WHERE ${where.join(" AND ")}
          ORDER BY created_date DESC LIMIT $${params.length}`, params
+      );
+    },
+
+    /** Destination breakdown for the shadow corpus (Phase 21). */
+    async countByDestination(workspaceId) {
+      return run(
+        `SELECT COALESCE(destination, '(internal)') AS destination, status, COUNT(*)::int AS n
+           FROM autonomy_outbox WHERE workspace_id=$1
+          GROUP BY destination, status ORDER BY n DESC LIMIT 100`,
+        [workspaceId]
+      );
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Rung evidence — Phase 21. The row that earns a rung.
+  //
+  // APPEND ONLY: there is no update or delete accessor. Re-measuring a corpus
+  // writes a new row, so the record always shows what was known at the moment
+  // a rung was considered (pin.ledger_append_only, and AUTONOMY.md §5's entry
+  // criterion for Rung 4).
+  // -------------------------------------------------------------------------
+  const RungEvidence = {
+    async append(data) {
+      const id = data.id || newId("rev");
+      const rows = await run(
+        `INSERT INTO autonomy_rung_evidence
+          (id, workspace_id, rung, tier, decision, gate, metrics, metrics_sha256,
+           reason, decided_by, decided_ms)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+        [id, data.workspace_id, data.rung, data.tier || null, data.decision,
+         json(data.gate, {}), json(data.metrics, {}), data.metrics_sha256,
+         data.reason || null, data.decided_by || "operator",
+         num(data.decided_ms, Date.now())]
+      );
+      return rows[0] || null;
+    },
+    /** The most recent `justified` row for a rung, or null. */
+    async currentJustified(workspaceId, rung) {
+      const rows = await run(
+        `SELECT * FROM autonomy_rung_evidence
+          WHERE workspace_id=$1 AND rung=$2 AND decision='justified'
+          ORDER BY decided_ms DESC LIMIT 1`,
+        [workspaceId, rung]
+      );
+      return rows[0] || null;
+    },
+    async list(workspaceId, { rung = null, limit = 50 } = {}) {
+      const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+      const where = ["workspace_id=$1"];
+      const params = [workspaceId];
+      if (rung) { params.push(rung); where.push(`rung=$${params.length}`); }
+      params.push(safeLimit);
+      return run(
+        `SELECT * FROM autonomy_rung_evidence WHERE ${where.join(" AND ")}
+         ORDER BY decided_ms DESC LIMIT $${params.length}`, params
       );
     }
   };
@@ -795,6 +856,7 @@ export function createAutonomyStore(run) {
     AutonomyNotice,
     AutonomyTick,
     GoalSubagent,
-    NotePromotion
+    NotePromotion,
+    RungEvidence
   };
 }

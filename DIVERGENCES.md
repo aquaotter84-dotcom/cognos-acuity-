@@ -960,3 +960,169 @@ the promotion path instead of claiming read-only), `test/phase20.mjs` (22),
 and this section. Rung 3 stays default off behind `COGNOS_AUTONOMY_RESIDENTS`
 (workers, promotion) and `COGNOS_AUTONOMY_SEARCH` (web search); Rung 4 stays
 behind its shadow corpus, and Rungs 5–6 remain designed but unbuilt.
+
+## Phase 21 — The first external write (Rung 4, T4, `webhook.post`) — BUILT, default off
+
+Phase 20 let a goal read the world under an allowlist. Phase 21 lets it act on
+the world, and the entire design of the phase is that acting is not reading with
+a different verb: one adapter, `webhook.post`, judged harder than a fetch of the
+same URL, staged and Governor-judged like every other effect, and delivered
+nowhere. This revision ships Rung 4 **built and off**. `COGNOS_AUTONOMY_EXTERNAL_WRITES`
+is unset by default, the outbox still defaults to `shadow`, and a live verdict
+additionally refuses with `EVIDENCE_GATE_UNMET` until a recorded corpus earns it.
+The distance between "the code exists" and "COGNOS posted to the internet" is
+three separate facts, reported separately everywhere they are asked about.
+
+**A webhook is a trigger, not a message.** That is why it is T4 while a fetch of
+the same URL is T3: the same POST that reports a build can deploy one, unlock a
+door, move money, or post publicly. One adapter buys most of the external-write
+surface (Slack, Discord, n8n, Zapier, Make, Home Assistant, any custom endpoint
+are all "POST a body to an https URL"), so §4.7.1's four risks each get their own
+code path rather than a shared hope. Outbound SSRF: `checkWebhookUrl` refuses
+anything that is not https on 443 with no credentials, no literal IP, and no
+local or reserved hostname, then `resolvePublicHosts` requires *every* DNS answer
+to be public, then the transport is pinned to those addresses and every redirect
+is re-validated and re-resolved per hop — a public URL that 302s to
+`http://169.254.169.254/` never makes its second hop, and a refusal never names
+the private address it found, because that is the reconnaissance the probe was
+for. Downstream harm: destinations come from scope rows granted at authorization.
+Credential leakage: signing is by `secret_ref`, an environment variable NAME
+resolved at send time, used to HMAC the body, and stored nowhere. Amplification:
+one attempt plus one bounded retry on a retryable status only, `Retry-After`
+honoured under a cap, the idempotency key on the wire so a receiver can dedupe
+too, and per-goal/per-day caps judged by the Governor rather than trusted to the
+loop.
+
+**Destinations are granted, never chosen — and a read grant is not a write
+grant.** `destinationsForScope` returns the entries the goal was authorized for
+and nothing else; a class-only grant (`"external_write"` with no destination
+list) grants *nothing*, because "you may write" is not "you may write here", and
+"here" is the only part an operator can revoke. Phase 20's `urlAllowlist` never
+widens into a write destination, so looking somewhere and acting there stay
+different authorities. Wiring this found a contract mismatch between two sections
+of the design: §4.7.1 writes the gate in terms of the skill (`webhook.post`) and
+§7 writes it in terms of the effect class (`external_write`). Matching only the
+class would have refused every correctly granted destination with
+`EFFECT_NOT_IN_SCOPE`; matching only the skill would have refused every scope
+written the other way. Both spellings grant, and the destination check runs
+separately either way. An unshaped URL is *staged* and refused by the Governor
+rather than rejected in the skill, because a refused SSRF probe that leaves no
+row is a probe nobody can count — and the count is what earns the rung. Argument
+headers are the one input refused before staging, for the opposite reason: a
+refused `Authorization: Bearer …` that was staged first would put the credential
+in a payload column.
+
+**Earned, not enabled.** `GET /api/autonomy/rungs` and
+`POST /api/autonomy/rungs/:rung/evidence` are the phase's two routes, and the
+Autonomy page's Outbox tab grew a Rung 4 panel that reports the flag, the outbox
+mode, whether anything delivers now, per-rule refusal counts, the destination
+distribution, and the recorded evidence rows. `measureRung` reads the corpus and
+answers four questions, all of which must be yes: are there at least
+`minShadowSamples` samples *of this tier* (twenty-five notices say nothing about
+whether a webhook gate is too loose), are there zero false releases under
+`auditRelease`'s re-audit, does the corpus contain at least one release verdict
+(a gate that never releases has proven nothing), and at least one refusal (a gate
+that never refuses has not been exercised). A measurement that fails is recorded
+too, as `insufficient` — refusing to write down a failed gate would leave no
+history of having asked. And the recorded metrics must satisfy the gate *as it is
+configured now*: raising `minShadowSamples` after the fact invalidates an old
+justification instead of grandfathering it, because the alternative is a ratchet
+that only turns one way.
+
+**The record is metadata, and reversal admits what it cannot do.** A receipt
+holds ids, statuses, counts, timestamps, header NAMES and content digests. The
+response body is read, digested and discarded inside the adapter, so a receiver
+that echoes the signing secret back — or an instruction — has nowhere to put it:
+`test/phase21.mjs` points a live delivery at a sink that does exactly that and
+then scans eight tables for the value. Ledger events carry a minimized receipt
+(`url`, `status`, `attempts`, `accepted`, `signed`) rather than a copy of it.
+Reversing a delivered external write sets `reversal.unsendable: true` with
+wording that cannot be read as an un-send ("the delivery already happened; this
+row records the reversal, not an undo"), preserves the original receipt, and
+appends to both the outbox event log and the goal's own history; reversing a
+shadow row says the opposite thing, because nothing was delivered and the
+transition is the whole reversal.
+
+**Model prose now leaves the deployment, and that is stated rather than buried.**
+A webhook body is composed by the planner, so Phase 21 is the first phase in
+which text a model wrote goes somewhere outside it. That does not breach
+`pin.single_send_path` or `pin.notice_deterministic` — a webhook is not an answer
+and not a notice, and the suite asserts it creates no message row, emits no SSE
+token, and reaches no template — but it is a real change in kind, and the bounds
+are the reason it is acceptable: the destination is granted row by row and
+revocable with the rung, every send is judged individually against eleven rules,
+the body is byte-capped, the whole thing is shadow-judged until a corpus earns
+live, and the receiver's answer is digested and labelled untrusted. The
+`reason` argument is model prose too, and it is stored truncated beside the
+destination it argued for — operator-facing evidence in the same class as a goal
+note, reaching no notice and no stream.
+
+**Quiet hours brake deliveries, not records.** `COGNOS_AUTONOMY_QUIET_HOURS=22-7`
+refuses external deliveries inside the window with `QUIET_HOURS`, honouring a
+window that wraps midnight, and treating an unset, malformed, or empty window as
+never active — a brake an operator asks for, not one the system invents. Notices
+are exempt on purpose: a notice is how an operator learns a goal parked, so
+suppressing it at 3am would hide the thing it exists to report.
+
+Seven defects were found by building this, five of them the same shape Phase 19
+and Phase 20 kept finding — a guard that could not fire. `spent.effects` and
+`spent.externalEffects` were declared as budget lines in Phase 19 and nothing
+incremented them, so both ceilings were inert. Spend was then recorded only on
+the step's success path: six of `runStep`'s seven exits returned early — a
+blocked plan, a done plan, a plan naming no skill, a planning failure, a refusal,
+a failed skill — and every one of them had already paid for a planner call and
+its tokens, so a failing goal was the one kind of goal that could never exhaust
+a budget (the bump now lives in a wrapper, which makes the next early return
+somebody adds accounted for by construction; `spent.steps` still counts progress
+only, because the planner prompt reads it as "steps used"). `maxNoticesPerDay`
+counted rows in `autonomy_notices`, which only exist once a notice is delivered —
+so in shadow, the only mode anybody runs before earning live, the notice cap
+could not be reached; it now counts judged notify effects from the ledger. A
+notice was also counted as an effect against `maxEffectsPerDay`, so a goal that
+hit its effect cap was refused the notice reporting the cap: silence by
+construction, in the one design that says a goal which cannot report fails
+silently. Notices now answer to their own line and are exempt from the two
+effect-count lines, with the ledger-based notice cap keeping that exemption from
+becoming an unbounded channel. A refused step stored the model's raw arguments,
+so a refused `Authorization` header value survived in `goal_steps.input`
+*because* the effect was refused; `redactSecrets` now keeps the record's shape
+and drops its secrets, including credential-keyed values no pattern would
+recognise, while deliberately preserving `secret_ref` — a reference is a name,
+and the name is what the ledger is supposed to keep. Approving an already-judged
+outbox row answered 200 with the unchanged row, so an operator clicking approve
+on a shadow-judged Rung 4 effect got a success response for a delivery that did
+not happen; it now answers 409 naming the row's state and the mode that would
+make an approval mean something, while a replayed `released` row still returns
+its receipt, because that answer is idempotent and correct. And
+`test/phase18.mjs` hardcoded identity version `1.4.0`, so this phase's honest
+version bump broke a suite about images — a test that fails on truthful change
+trains the next reader to edit assertions instead of reading them, so it now
+compares against the code-owned constant.
+
+Laws are `1.6.0` with three new pins: `pin.external_write_earned` (a live write
+needs a recorded corpus, and a shadow release is not a delivery),
+`pin.destination_granted` (destinations are granted entry by entry, re-checked
+per hop, and credentials travel by reference), and `pin.receipt_metadata_only`
+(the record of an effect is ids, counts and digests). The Policy Engine gained
+two gated actions, `enable_outbound_channel` and `set_autonomy_rung`, so a
+runtime proposal to open a channel or raise a rung is refused *with a law* rather
+than falling through to "unknown action" — a vocabulary gap and a boundary are
+different refusals, and only one of them is enforceable. Identity is `1.5.0`:
+thirteen capabilities and thirteen subsystems, with `external_effects` and
+`action_governor` named, and the runtime block reporting the rung flags, the
+outbox mode, the built tiers, and the evidence rows truthfully rather than
+asserting a boundary in prose. `unsupported` was restructured to name what is
+still true — no T5, no inbound messaging, no writes from a chat turn.
+
+Per the §10 rhythm: migration `0008_phase21_webhook_effects` (the rung-evidence
+table plus `autonomy_outbox.destination`), laws `1.6.0`, identity `1.5.0`,
+`test/phase21.mjs` (35 checks, including a loopback sink that receives real bytes
+through the injected transport seam), and this section. New environment
+variables: `COGNOS_AUTONOMY_EXTERNAL_WRITES`, `COGNOS_AUTONOMY_QUIET_HOURS`,
+`COGNOS_WEBHOOK_MAX_BODY_BYTES`, `COGNOS_WEBHOOK_TIMEOUT_MS`,
+`COGNOS_WEBHOOK_MAX_REDIRECTS`, `COGNOS_WEBHOOK_MAX_RETRY_DELAY_MS`,
+`COGNOS_WEBHOOK_MAX_RESPONSE_BYTES`, and the registry's
+`COGNOS_SKILL_WEBHOOK_POST`. Rung 4 stays default off; Rungs 5–6 remain designed
+but unbuilt. Phase 22 is what turns an earned corpus into deliveries, and it
+should not start until this one has been running in shadow long enough to have
+something to measure.

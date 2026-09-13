@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   BookOpenCheck, Bot, Boxes, BrainCircuit, CheckCircle2, ChevronRight,
   CircleSlash2, Cpu, FileSearch, Gauge, GitBranch, Menu, Mic2,
-  Network, RefreshCw, Scale, Search, ShieldCheck, Volume2
+  Network, RefreshCw, Scale, Search, ShieldCheck, Send, Volume2
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
@@ -22,6 +22,10 @@ const capabilityIcons = {
   memory: BookOpenCheck,
   bounded_agent: Bot,
   knowledge_observability: Gauge,
+  research_projects: Boxes,
+  image_analysis: FileSearch,
+  durable_autonomy: GitBranch,
+  external_effects: Send,
 };
 
 const subsystemIcons = {
@@ -35,6 +39,7 @@ const subsystemIcons = {
   governed_stream: ShieldCheck,
   persistence: Boxes,
   voice_layer: Volume2,
+  action_governor: ShieldCheck,
 };
 
 function bytes(value) {
@@ -70,6 +75,28 @@ function statusFor(capability, runtime) {
       return runtime?.knowledge?.ledgerEnabled || runtime?.knowledge?.telemetryEnabled
         ? { label: 'enabled', tone: 'ok' }
         : { label: 'observation disabled', tone: 'muted' };
+    case 'research_projects':
+      return runtime?.projects?.enabled === false
+        ? { label: 'disabled at runtime', tone: 'muted' }
+        : { label: 'enabled', tone: 'ok' };
+    case 'image_analysis':
+      return runtime?.images?.enabled === false
+        ? { label: 'disabled at runtime', tone: 'muted' }
+        : { label: runtime?.images?.visionEnabled ? 'enabled · vision on' : 'enabled · vision off', tone: 'ok' };
+    // Autonomy is OFF by default and says so. Claiming 'built in' for a
+    // subsystem an operator has not switched on would be exactly the confusion
+    // the manifest exists to prevent.
+    case 'durable_autonomy':
+      return runtime?.autonomy?.enabled
+        ? { label: `enabled · outbox ${runtime.autonomy.outboxMode}`, tone: 'warn' }
+        : { label: 'off by default', tone: 'muted' };
+    case 'external_effects': {
+      const writes = runtime?.autonomy?.externalWrites || {};
+      if (!writes.built) return { label: 'not built', tone: 'muted' };
+      if (writes.deliversNow) return { label: 'live deliveries on', tone: 'bad' };
+      if (writes.rungEnabled) return { label: `rung on · outbox ${runtime?.autonomy?.outboxMode || 'shadow'}`, tone: 'warn' };
+      return { label: 'off by default', tone: 'muted' };
+    }
     default:
       return { label: 'built in', tone: 'ok' };
   }
@@ -129,6 +156,14 @@ export default function Identity() {
       ['Agent tools', (r.agent?.tools || []).join(', ')],
       ['Agent writes', r.agent?.autonomousWrites ? 'enabled' : 'unavailable'],
       ['Background tasks', r.agent?.backgroundExecution ? 'enabled' : 'unavailable'],
+      ['Autonomy loop', r.autonomy?.enabled ? `enabled · ${r.autonomy.outboxMode}` : 'off by default'],
+      ['Built effect tiers', (r.autonomy?.builtTiers || []).join(', ')],
+      ['External writes', r.autonomy?.externalWrites?.deliversNow
+        ? 'LIVE'
+        : r.autonomy?.externalWrites?.rungEnabled
+          ? `rung on · ${r.autonomy?.outboxMode} (nothing delivered)`
+          : 'off by default'],
+      ['Writes from a chat turn', r.autonomy?.writesFromChatTurn ? 'enabled' : 'impossible'],
       ['Adaptive behavior', r.knowledge?.adaptiveMode],
       ['Database', r.persistence?.databaseConfigured ? 'configured' : 'not configured'],
     ];

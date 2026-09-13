@@ -45,7 +45,12 @@ export const GATED_ACTIONS = Object.freeze({
   rewrite_history: "Delete or alter ledger, telemetry or improvement rows",
   enable_agent_write_tool: "Give agent mode a write-capable or consequential tool",
   weaken_source_boundary: "Relax source prompt-injection, citation, or SSRF protections",
-  revert_improvement: "Record the reversal of an earlier improvement row"
+  revert_improvement: "Record the reversal of an earlier improvement row",
+  // Phase 21: named so that a proposal to open an outbound channel or raise a
+  // rung is REFUSED WITH A LAW rather than falling through to "unknown action".
+  // An unknown-action refusal is a vocabulary gap; this is a boundary.
+  enable_outbound_channel: "Open a channel carrying COGNOS effects or output to an external destination",
+  set_autonomy_rung: "Raise the autonomy rung this deployment runs at"
 });
 
 // Exported so the Action Governor (server/autonomy/actionGovernor.js) judges a
@@ -57,6 +62,55 @@ export const SECRET_PATTERNS = [
   /api[_-]?key\s*[:=]\s*["']?[A-Za-z0-9]{20,}/i,
   /postgres(ql)?:\/\/[^"\s]*:[^"\s]*@/i
 ];
+
+/** What replaces a credential in a stored record: a marker, not a hole. */
+export const REDACTION = "[redacted:credential-shaped]";
+
+/**
+ * Keys whose VALUE is a credential whatever it looks like. Phase 21 made this
+ * necessary: `webhook.post` takes a `headers` argument, so a model can propose
+ * `{ Authorization: "hunter2" }` — a secret no pattern would recognise. Refusing
+ * the effect is not enough, because the refused step's own `input` column would
+ * still be holding the value. `secret_ref` is deliberately NOT here: a reference
+ * is an environment variable NAME, and the name is exactly what the ledger is
+ * supposed to keep.
+ */
+export const CREDENTIAL_KEYS = Object.freeze([
+  "authorization", "proxy-authorization", "cookie", "set-cookie",
+  "x-api-key", "api-key", "api_key", "x-auth-token", "x-goog-api-key",
+  "password", "passwd", "secret", "token", "access_token", "refresh_token"
+]);
+
+const isCredentialKey = (key) => CREDENTIAL_KEYS.includes(String(key || "").trim().toLowerCase());
+
+/**
+ * Return a copy of `value` with credentials replaced by REDACTION.
+ *
+ * Used for anything a model composed that is about to be STORED — step inputs
+ * above all. The refusal path already keeps a credential out of an effect; this
+ * keeps it out of the record of the refusal. A redaction is recursive and
+ * depth-bounded, and it never throws: a ledger that fails to write because an
+ * argument was shaped oddly is worse than a ledger that wrote a redaction.
+ */
+export function redactSecrets(value, depth = 0) {
+  if (depth > 8) return REDACTION;
+  if (typeof value === "string") {
+    let out = value;
+    for (const pattern of SECRET_PATTERNS) out = out.replace(new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : pattern.flags + "g"), REDACTION);
+    return out.length > 4000 ? out.slice(0, 4000) + "…" : out;
+  }
+  if (Array.isArray(value)) return value.slice(0, 200).map(entry => redactSecrets(entry, depth + 1));
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [key, entry] of Object.entries(value).slice(0, 200)) {
+      out[key] = isCredentialKey(key) && typeof entry === "string" && entry.trim()
+        ? REDACTION
+        : redactSecrets(entry, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
 
 // Statements that are additive in the sense pin.additive_schema means.
 const ADDITIVE_SQL = /^\s*(CREATE\s+(TABLE|INDEX|UNIQUE\s+INDEX)\s+IF\s+NOT\s+EXISTS|ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS|COMMENT\s+ON)\b/i;
@@ -133,8 +187,24 @@ function checkAction(proposal) {
       break;
 
     case "enable_agent_write_tool":
-      violations.push(violation("pin.agent_bounded", "Phase 17 agent mode is read-only. A write-capable tool requires a separately reviewed approval barrier, idempotent executor, and cancellation/consistency proof before it can be enabled"));
+      violations.push(violation("pin.agent_bounded", "the per-turn agent stays read-only. The approval barrier Phase 17 deferred now exists (Phase 19's outbox and Action Governor, Phase 21's rung-gated webhook), but it belongs to the autonomy loop: no runtime adaptation may hand a write-capable tool to a chat turn"));
       break;
+
+    case "enable_outbound_channel":
+      violations.push(violation("pin.destination_granted", "an outbound channel is opened by an operator in the environment and granted destination by destination inside a goal's authorized scope. A runtime adaptation may not open one, widen one, or name a destination"));
+      if (!params.killSwitch) {
+        violations.push(violation("phase15.complexity_justification", "an outbound channel needs a kill switch naming the flag that closes it"));
+      }
+      break;
+
+    case "set_autonomy_rung": {
+      violations.push(violation("phase19.autonomy_default_off", "a rung is raised by an operator's kill switch plus a recorded evidence row, never by a runtime adaptation. Building a rung is not enabling one, and enabling one is not earning one"));
+      const target = String(params.rung ?? proposal.target ?? "");
+      if (/^(4|5|6|external|irreversible|inbound)/i.test(target)) {
+        violations.push(violation("pin.external_write_earned", `rung '${target}' touches the world: it needs a shadow corpus with zero false releases recorded as an evidence row before any live delivery`));
+      }
+      break;
+    }
 
     case "weaken_source_boundary":
       violations.push(violation("pin.source_untrusted", "source text remains untrusted evidence; SSRF, exact-locator citation, content, redirect, timeout, and size boundaries cannot be weakened at runtime"));

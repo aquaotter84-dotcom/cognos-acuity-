@@ -18,7 +18,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Activity, AlertTriangle, Bot, Check, ChevronDown, ChevronRight, ClipboardCheck,
   Clock, Gauge, Inbox, Menu, Pause, Play, Plus, RefreshCw, ScrollText,
-  ShieldAlert, ShieldCheck, Snowflake, Sprout, ThumbsDown, ThumbsUp, Undo2, X, Zap
+  Send, ShieldAlert, ShieldCheck, Snowflake, Sprout, ThumbsDown, ThumbsUp, Undo2, X, Zap
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { noteLocator } from '@/components/chat/GoalCard';
@@ -918,58 +918,208 @@ function Notices() {
   );
 }
 
+/**
+ * A receipt is metadata: ids, statuses, counts, digests, header NAMES. There is
+ * no response body in it to render, and that is the point — an endpoint that
+ * echoes a credential back cannot write it into this row.
+ */
+function ReceiptLine({ receipt }) {
+  const r = typeof receipt === 'string' ? (() => { try { return JSON.parse(receipt); } catch { return null; } })() : receipt;
+  if (!r || typeof r !== 'object') return null;
+
+  if (r.dryRun) {
+    return (
+      <p className="text-[10px] text-muted-foreground mt-0.5 font-mono">
+        dry run {r.built === false ? '· could not be built' : '· request built, nothing sent'}
+        {r.request?.bodyBytes != null ? ` · ${r.request.bodyBytes} B` : ''}
+        {r.signed ? ' · signed' : ''}
+      </p>
+    );
+  }
+  if (typeof r.status !== 'number' && !r.reversal) return null;
+
+  const parts = [];
+  if (typeof r.status === 'number') parts.push(`${r.status} ${r.statusText || ''}`.trim());
+  if (r.accepted === false) parts.push('released, not accepted');
+  if (typeof r.attempts === 'number' && r.attempts > 1) parts.push(`${r.attempts} attempts`);
+  if (r.redirects) parts.push(`${r.redirects} redirect(s)`);
+  if (typeof r.latencyMs === 'number') parts.push(`${r.latencyMs}ms`);
+  if (typeof r.responseBytes === 'number') parts.push(`response ${r.responseBytes} B, digest only`);
+  if (r.signed) parts.push('signed');
+  if (r.reversal) parts.push(r.reversal.unsendable ? 'reversed · cannot be un-sent' : 'reversed');
+
+  return (
+    <p className={`text-[10px] mt-0.5 font-mono ${r.accepted === false || r.reversal?.unsendable ? 'text-yellow-500' : 'text-muted-foreground'}`}>
+      {parts.join(' · ')}
+    </p>
+  );
+}
+
 // ------------------------------------------------------------------- outbox
 function Outbox({ status }) {
   const [data, setData] = useState(null);
+  const [rungs, setRungs] = useState(null);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  const [measuring, setMeasuring] = useState(false);
 
   const refresh = useCallback(async () => {
-    try { setData(await api.listOutbox()); }
-    catch (e) { setError(e.message || 'Could not load the outbox'); }
+    try {
+      const [outbox, rungList] = await Promise.all([
+        api.listOutbox(),
+        api.listRungs().catch(() => null),
+      ]);
+      setData(outbox); setRungs(rungList);
+    } catch (e) { setError(e.message || 'Could not load the outbox'); }
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
 
   const decide = async (id, decision) => {
-    setBusy(true); setError('');
-    try { await api.decideEffect(id, { decision }); await refresh(); }
-    catch (e) { setError(e.message || `Could not ${decision} this effect`); }
-    finally { setBusy(false); }
+    setBusy(true); setError(''); setNotice('');
+    try {
+      await api.decideEffect(id, { decision });
+      await refresh();
+    } catch (e) {
+      // A refusal is an answer, not a broken button: the Governor says why.
+      setError(e.message || `Could not ${decision} this effect`);
+      await refresh();
+    } finally { setBusy(false); }
+  };
+
+  const measure = async () => {
+    setMeasuring(true); setError(''); setNotice('');
+    try {
+      const out = await api.recordRungEvidence('external_writes');
+      setNotice(out?.decision === 'justified'
+        ? `Recorded: ${out.metrics?.samples ?? 0} T4 sample(s), ${out.metrics?.falseReleaseCount ?? 0} false release(s). A live release now passes the evidence gate — the rung flag and the Governor's per-effect verdicts still apply.`
+        : `Recorded as insufficient: ${(out?.reasons || []).join('; ') || 'the corpus does not yet justify the rung'}. Nothing was enabled by this row.`);
+      await refresh();
+    } catch (e) { setError(e.message || 'Could not measure the corpus'); }
+    finally { setMeasuring(false); }
   };
 
   const effects = data?.effects || [];
   const corpus = data?.corpus;
+  const writes = status?.externalWrites || {};
+  const rung = (rungs?.rungs || []).find(r => r.rung === 'external_writes');
+  const gate = rungs?.gate || status?.shadowGate || {};
+  const measured = rung?.measurement?.metrics;
 
   return (
     <div className="space-y-3">
       <ErrorNote error={error} />
+      {notice && (
+        <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] leading-relaxed">
+          {notice}
+        </div>
+      )}
 
-      {corpus && (
-        <Section
-          title="Shadow corpus"
-          subtitle="Every judgement recorded while nothing was delivered — the evidence that earns the next rung"
-          icon={Gauge}
-        >
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {[
-              ['samples', corpus.samples],
-              ['would release', corpus.wouldRelease],
-              ['refused', corpus.refused],
-              ['released', corpus.released],
-            ].map(([label, value]) => (
-              <div key={label} className="rounded-lg border border-border px-3 py-2">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</p>
-                <p className="text-lg font-semibold tabular-nums">{value ?? 0}</p>
-              </div>
+      <Section
+        title="Rung 4 — external writes"
+        subtitle="Built, switched off, and shadow-judged until a recorded corpus earns a live delivery"
+        icon={Send}
+      >
+        <div className="flex flex-wrap items-center gap-1.5 mb-3">
+          <Pill tone={writes.built ? 'info' : 'muted'}>{writes.built ? 'T4 built' : 'T4 not built'}</Pill>
+          <Pill tone={writes.rungEnabled ? 'warn' : 'muted'}>
+            rung {writes.rungEnabled ? 'on' : 'off'}
+          </Pill>
+          <Pill tone={writes.deliversNow ? 'bad' : 'info'}>outbox {status?.outboxMode || 'shadow'}</Pill>
+          <Pill tone={writes.deliversNow ? 'bad' : 'ok'}>
+            {writes.deliversNow ? 'can deliver' : 'delivers nothing'}
+          </Pill>
+          {writes.evidence?.length > 0 && (
+            <Pill tone={writes.evidence[0].decision === 'justified' ? 'ok' : 'muted'}>
+              evidence: {writes.evidence[0].decision}
+            </Pill>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            ['T4 samples', measured?.samples ?? corpus?.byTier?.T4 ?? 0, `floor ${gate.minShadowSamples ?? 25}`],
+            ['would release', measured?.wouldRelease ?? corpus?.wouldRelease ?? 0, 'judged, not sent'],
+            ['refused', measured?.refused ?? corpus?.refused ?? 0, 'rules named below'],
+            ['false releases', measured?.falseReleaseCount ?? '—', `tolerance ${gate.maxAcceptableFalseReleases ?? 0}`],
+          ].map(([label, value, hint]) => (
+            <div key={label} className="rounded-lg border border-border px-3 py-2">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</p>
+              <p className={`text-lg font-semibold tabular-nums ${label === 'false releases' && Number(value) > 0 ? 'text-destructive' : ''}`}>
+                {value}
+              </p>
+              <p className="text-[9px] text-muted-foreground/70">{hint}</p>
+            </div>
+          ))}
+        </div>
+
+        {(measured?.byRule && Object.keys(measured.byRule).length > 0) && (
+          <div className="mt-3">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">What the gate refused, by rule</p>
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(measured.byRule).sort((a, b) => b[1] - a[1]).map(([rule, n]) => (
+                <span key={rule} className="rounded border border-border px-1.5 py-0.5 text-[10px] font-mono">
+                  {rule} <span className="text-muted-foreground">×{n}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(corpus?.byDestination && Object.keys(corpus.byDestination).length > 0) && (
+          <div className="mt-3">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Where effects were aimed</p>
+            <div className="space-y-1">
+              {Object.entries(corpus.byDestination).slice(0, 8).map(([destination, n]) => (
+                <p key={destination} className="text-[10px] font-mono truncate">
+                  {destination} <span className="text-muted-foreground">×{n}</span>
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {rung?.justifiedNow === false && (rung?.measurement?.reasons || []).length > 0 && (
+          <ul className="mt-3 space-y-0.5">
+            {rung.measurement.reasons.map(reason => (
+              <li key={reason} className="text-[10px] text-muted-foreground flex items-start gap-1">
+                <AlertTriangle className="w-3 h-3 mt-0.5 text-yellow-500 shrink-0" /> {reason}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {(writes.evidence || []).length > 0 && (
+          <div className="mt-3 space-y-1">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Recorded evidence rows</p>
+            {writes.evidence.map(row => (
+              <p key={row.id} className="text-[10px] font-mono text-muted-foreground">
+                <span className={row.decision === 'justified' ? 'text-green-500' : 'text-yellow-500'}>{row.decision}</span>
+                {' · '}
+                {row.samples ?? '?'} sample(s), {row.falseReleases ?? '?'} false release(s)
+                {' · '}
+                {fmtTime(row.decided_ms)} by {row.decided_by || 'operator'}
+                {' · '}
+                {String(row.metrics_sha256 || '').slice(0, 12)}…
+              </p>
             ))}
           </div>
-          <p className="text-[10px] text-muted-foreground mt-2">
-            Rung 4 (external writes) opens only when this corpus justifies it. A count alone can be
-            rationalised; a single false release cannot.
+        )}
+
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          <button onClick={measure} disabled={measuring || status?.enabled !== true}
+            className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[11px] hover:bg-muted/50 disabled:opacity-40"
+            title={status?.enabled !== true ? 'Autonomy is frozen, so there is no corpus to measure' : 'Measure the shadow corpus and record it as an evidence row'}>
+            <ClipboardCheck className={`w-3.5 h-3.5 ${measuring ? 'animate-pulse' : ''}`} />
+            Measure and record the corpus
+          </button>
+          <p className="text-[10px] text-muted-foreground max-w-md leading-relaxed">
+            A count alone can be rationalised; a single false release cannot. Recording an
+            insufficient measurement is not a failure — it is the history of having asked.
           </p>
-        </Section>
-      )}
+        </div>
+      </Section>
 
       <Section
         title="Staged effects"
@@ -977,7 +1127,7 @@ function Outbox({ status }) {
         icon={ShieldCheck}
       >
         {effects.length === 0
-          ? <Empty>Nothing staged. Phase 19 builds T0–T2 only, so the only effect a goal can produce is a notice.</Empty>
+          ? <Empty>Nothing staged. Effects appear here the moment a goal stages one — notices, reads, and (with Rung 4 on) webhook deliveries.</Empty>
           : (
             <div className="space-y-2">
               {effects.map(effect => {
@@ -995,12 +1145,26 @@ function Outbox({ status }) {
                         <p className="text-[10px] text-muted-foreground mt-0.5 font-mono truncate">
                           skill {effect.skill_id} · goal {shortId(effect.goal_id)} · key {shortId(effect.idempotency_key)}
                         </p>
+                        {effect.destination && (
+                          <p className="text-[10px] mt-0.5 font-mono truncate flex items-center gap-1">
+                            <Send className="w-3 h-3 shrink-0 text-muted-foreground" />
+                            <span className="text-foreground/80">{effect.destination}</span>
+                          </p>
+                        )}
+                        <ReceiptLine receipt={effect.receipt} />
                         <p className="text-[10px] text-muted-foreground/70 mt-0.5">{fmtTime(effect.created_date)}</p>
                       </div>
                       {effect.status === 'staged' && (
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button onClick={() => decide(effect.id, 'approve')} disabled={busy}
-                            className="flex items-center gap-1 rounded-lg bg-primary text-primary-foreground px-2 py-1 text-[10px] disabled:opacity-40">
+                            title={effect.tier === 'T4' && !writes.rungEnabled
+                              ? 'Rung 4 is off: this approval would be refused. The effect stays staged and judged in shadow.'
+                              : 'Ask the Action Governor to release this effect'}
+                            className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] disabled:opacity-40 ${
+                              effect.tier === 'T4' && !writes.rungEnabled
+                                ? 'border border-border text-muted-foreground'
+                                : 'bg-primary text-primary-foreground'
+                            }`}>
                             <ThumbsUp className="w-3 h-3" /> Approve
                           </button>
                           <button onClick={() => decide(effect.id, 'refuse')} disabled={busy}
@@ -1009,8 +1173,11 @@ function Outbox({ status }) {
                           </button>
                         </div>
                       )}
-                      {['released', 'refused'].includes(effect.status) && (
+                      {['released', 'refused', 'would_release', 'failed'].includes(effect.status) && (
                         <button onClick={() => decide(effect.id, 'revert')} disabled={busy}
+                          title={effect.status === 'released' && effect.effect_type === 'external_write'
+                            ? 'Record the reversal. A delivered webhook cannot be un-sent — the row will say so.'
+                            : 'Record the reversal as a new transition; the original row stays'}
                           className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] hover:bg-muted/50 shrink-0 disabled:opacity-40">
                           <Undo2 className="w-3 h-3" /> Revert
                         </button>
