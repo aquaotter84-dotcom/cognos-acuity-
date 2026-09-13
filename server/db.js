@@ -42,7 +42,7 @@ import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { newId, num } from "./db/util.js";
-import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA } from "./db/schema.js";
+import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA, PHASE24_SCHEMA } from "./db/schema.js";
 import { appendEvent, snapshot } from "./knowledge/events.js";
 import {
   createKnowledgeStore, TRACKED_FIELDS,
@@ -51,6 +51,7 @@ import {
 import { createMetaStore } from "./meta/store.js";
 import { createSourceAgentStore } from "./sources/store.js";
 import { createAutonomyStore } from "./autonomy/store.js";
+import { createAccountsStore } from "./accounts/store.js";
 import { confidenceFromEvidence, statementKey, projectMemoryWrite, retireBeliefByKey } from "./knowledge/beliefs.js";
 import { linkCoActivations } from "./knowledge/relationships.js";
 import { normalizeMemoryFields } from "./memory/structure.js";
@@ -188,7 +189,7 @@ CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events (created_date DESC)
 // Phase 14 (Dynamic Systems) and Phase 15 (Meta-Cognition). Additive only:
 // new tables, new indexes, and two nullable columns on memories.
 + PHASE14_SCHEMA + PHASE15_SCHEMA + PHASE16_SCHEMA + PHASE17_SCHEMA + PHASE18_SCHEMA + PHASE19_SCHEMA
-+ PHASE20_SCHEMA + PHASE21_SCHEMA + PHASE22_SCHEMA + PHASE23_SCHEMA;
++ PHASE20_SCHEMA + PHASE21_SCHEMA + PHASE22_SCHEMA + PHASE23_SCHEMA + PHASE24_SCHEMA;
 
 function isNeon(url) {
   return /\.neon\.tech/i.test(url) || /neon\.database/i.test(url);
@@ -339,7 +340,10 @@ function createCoreStore(run) {
       return rows[0] || null;
     },
     async create(data) {
-      const id = newId("ws");
+      // Phase 24: the account service creates per-user private workspaces with
+      // UUID ids (the brief's workspace-<uuid> shape); existing callers keep
+      // the generated `ws_…` ids. Additive optional field only.
+      const id = data.id || newId("ws");
       const rows = await run(
         `INSERT INTO workspaces (id, name, description, instructions, color, icon, is_default)
          VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
@@ -841,12 +845,15 @@ function createStore(run) {
   const meta = createMetaStore(run);
   const sources = createSourceAgentStore(run);
   const autonomy = createAutonomyStore(run);
+  // Phase 24 — accounts, groups, auth blocklist, OAuth state, workspace audit.
+  const accounts = createAccountsStore(run);
   return {
     ...core,
     ...knowledge,
     ...meta,
     ...sources,
     ...autonomy,
+    ...accounts,
     query: run,
     ready,
     withTransaction,
@@ -900,6 +907,12 @@ export const AutonomyNotice = db.AutonomyNotice;
 export const AutonomyTick = db.AutonomyTick;
 // Phase 21 — the evidence row that earns a rung (append-only).
 export const RungEvidence = db.RungEvidence;
+// Phase 24 — accounts & multi-tenant workspaces.
+export const Accounts = db.Accounts;
+export const Groups = db.Groups;
+export const AuthBlocklist = db.AuthBlocklist;
+export const AuthState = db.AuthState;
+export const WorkspaceAudit = db.WorkspaceAudit;
 
 export { TRACKED_FIELDS, MEMORY_TRACKED_FIELDS, CONVERSATION_TRACKED_FIELDS, TASK_CONTEXT_TRACKED_FIELDS };
 

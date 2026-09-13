@@ -150,6 +150,8 @@ export function createKnowledgeStore(run) {
       getNode: (id) => graph.getNode(run, id),
       findByKey: (workspaceId, type, label) => graph.findNodeByKey(run, workspaceId, type, label),
       createNode: (args) => graph.createNode(run, args),
+      // Phase 24 — namespaced creation for the multi-tenant workspace layer.
+      createNamespacedNode: (args) => graph.createNamespacedNode(run, args),
       pinNode: (args) => graph.pinNode(run, args),
       retireNode: (args) => graph.retireNode(run, args),
       forkNode: (args) => graph.forkNode(run, args),

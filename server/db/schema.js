@@ -943,6 +943,101 @@ CREATE INDEX IF NOT EXISTS graph_snapshots_ws_idx ON graph_snapshots (workspace_
 CREATE INDEX IF NOT EXISTS graph_snapshots_root_idx ON graph_snapshots (workspace_id, merkle_root);
 `;
 
+// ---------------------------------------------------------------------------
+// Phase 24 — Accounts, multi-tenant workspaces, and sealed provenance.
+//
+// ADDITIVE ONLY. Every statement is IF NOT EXISTS. These tables sit BESIDE the
+// existing single-tenant stack, never over it:
+//   * accounts        — one row per person. workspace_id -> their default
+//                       private workspace (a real row in the existing
+//                       `workspaces` table, so the whole stack works per-user).
+//   * account_groups  — the brief's groups table (group_id, group_name,
+//                       owner_id, members as a JSON array) plus the flag the
+//                       role matrix needs (private_writers).
+//   * jwt_blocklist   — the logout revocation list (jti until token expiry).
+//                       Postgres stands in for Redis; expiry semantics match.
+//   * google_auth_states — single-use CSRF state/nonce for "Sign in with
+//                       Google" (10-minute TTL, consumed once).
+//   * workspace_audit — append-only audit trail (<ts, user_id, workspace_id,
+//                       action, resource_id>). The app issues INSERT/SELECT
+//                       only; rotation is a maintenance script's job.
+// ---------------------------------------------------------------------------
+export const PHASE24_SCHEMA = `
+-- 24.1 Accounts. Emails are stored normalized (lowercased) and unique.
+-- password_hash is nullable: Google-only accounts have none. google_sub is
+-- the immutable Google identity; linking an existing account REQUIRES a
+-- verified Google email (enforced in server/accounts/service.js).
+CREATE TABLE IF NOT EXISTS accounts (
+  id             TEXT PRIMARY KEY,
+  email          TEXT NOT NULL,
+  display_name   TEXT,
+  password_hash  TEXT,
+  auth_provider  TEXT NOT NULL DEFAULT 'email',
+  google_sub     TEXT,
+  google_email   TEXT,
+  avatar_url     TEXT,
+  workspace_id   TEXT NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'active',
+  last_login_at  TIMESTAMPTZ,
+  created_date   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS accounts_email_idx ON accounts (email);
+CREATE UNIQUE INDEX IF NOT EXISTS accounts_google_sub_idx ON accounts (google_sub) WHERE google_sub IS NOT NULL;
+CREATE INDEX IF NOT EXISTS accounts_workspace_idx ON accounts (workspace_id);
+
+-- 24.2 Groups (brief §2.3). members is the JSON array of user ids; the
+-- optional private_writers array carries the "read/write private bucket"
+-- flag the role matrix gates on.
+CREATE TABLE IF NOT EXISTS account_groups (
+  id              TEXT PRIMARY KEY,
+  group_name      TEXT NOT NULL,
+  owner_id        TEXT NOT NULL,
+  members         JSONB NOT NULL DEFAULT '[]'::jsonb,
+  private_writers JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_date    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS account_groups_owner_idx ON account_groups (owner_id);
+
+-- 24.3 JWT revocation list. On logout the token's jti lands here until the
+-- token's own exp passes (a TTL, Redis-style, in Postgres form).
+CREATE TABLE IF NOT EXISTS jwt_blocklist (
+  jti          TEXT PRIMARY KEY,
+  user_id      TEXT,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  created_date TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS jwt_blocklist_expiry_idx ON jwt_blocklist (expires_at);
+
+-- 24.4 Google OAuth single-use state + nonce (CSRF / replay defence).
+CREATE TABLE IF NOT EXISTS google_auth_states (
+  state        TEXT PRIMARY KEY,
+  nonce        TEXT NOT NULL,
+  consumed     BOOLEAN NOT NULL DEFAULT FALSE,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  created_date TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS google_auth_states_expiry_idx ON google_auth_states (expires_at);
+
+-- 24.5 Append-only audit trail (brief §4). One row per mutation or denial:
+-- <timestamp, user_id, workspace_id, action, resource_id>. No accessor in the
+-- app ever UPDATEs or DELETEs these rows; rotation is a maintenance script.
+CREATE TABLE IF NOT EXISTS workspace_audit (
+  id           TEXT PRIMARY KEY,
+  ts_ms        BIGINT NOT NULL,
+  user_id      TEXT,
+  workspace_id TEXT,
+  action       TEXT NOT NULL,
+  resource_id  TEXT,
+  detail       JSONB,
+  created_date TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS workspace_audit_ws_time_idx ON workspace_audit (workspace_id, ts_ms DESC);
+CREATE INDEX IF NOT EXISTS workspace_audit_user_idx ON workspace_audit (user_id, ts_ms DESC);
+CREATE INDEX IF NOT EXISTS workspace_audit_action_idx ON workspace_audit (action, ts_ms DESC);
+`;
+
 export const PHASE_SCHEMAS = [
   { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
   { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
@@ -953,5 +1048,6 @@ export const PHASE_SCHEMAS = [
   { id: "0007", phase: 20, name: "phase20_subagents_promotion", sql: PHASE20_SCHEMA },
   { id: "0008", phase: 21, name: "phase21_webhook_effects", sql: PHASE21_SCHEMA },
   { id: "0009", phase: 22, name: "phase22_context_and_structured_memory", sql: PHASE22_SCHEMA },
-  { id: "0010", phase: 23, name: "phase23_trust_annotated_graph", sql: PHASE23_SCHEMA }
+  { id: "0010", phase: 23, name: "phase23_trust_annotated_graph", sql: PHASE23_SCHEMA },
+  { id: "0011", phase: 24, name: "phase24_accounts_and_workspaces", sql: PHASE24_SCHEMA }
 ];

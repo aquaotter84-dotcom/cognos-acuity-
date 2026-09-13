@@ -26,8 +26,12 @@ try {
     // pin/retire/fork/revise/trust), edges (4: list/create/detail/retire),
     // related/query/conflicts (3), snapshots (4: list/create/diff/detail),
     // verify/coverage (2), and graph replay (1).
-    assert.equal(nonStatic.length, 100);
-    if (!process.env.VERCEL) assert.equal(routes.length, 101);
+    // Phase 24 added 24: accounts (8: register/login/logout/me and the four
+    // Google sign-in routes), workspaces (10: overview; nodes list/create/
+    // detail/retire; edges list/create; query; verify; audit) and groups
+    // (6: create/list/detail/add-member/flag-member/remove-member).
+    assert.equal(nonStatic.length, 124);
+    if (!process.env.VERCEL) assert.equal(routes.length, 125);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",
