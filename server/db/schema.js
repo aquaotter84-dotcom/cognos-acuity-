@@ -819,6 +819,26 @@ CREATE INDEX IF NOT EXISTS autonomy_rung_evidence_ws_idx
   ON autonomy_rung_evidence (workspace_id, rung, decided_ms DESC);
 `;
 
+// ---------------------------------------------------------------------------
+// Phase 22 — bounded token window + structured memory hierarchy.
+//
+// The existing `content` column remains the human-readable memory. These
+// nullable/additive fields make the layer, stable key, and machine-readable
+// value explicit without rewriting old rows. A working record is short-lived
+// context, episodic is conversation-derived history, and semantic is durable
+// persistent knowledge. The context assembler decides what is admitted to a
+// prompt; no memory row can bypass the Governor or become an instruction.
+// ---------------------------------------------------------------------------
+export const PHASE22_SCHEMA = `
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS memory_layer TEXT NOT NULL DEFAULT 'semantic';
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS memory_key TEXT;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS memory_value JSONB;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS memory_schema_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS memories_layer_idx ON memories (workspace_id, memory_layer, is_enabled, importance DESC, created_date DESC);
+CREATE INDEX IF NOT EXISTS memories_key_idx ON memories (workspace_id, memory_key);
+`;
+
 export const PHASE_SCHEMAS = [
   { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
   { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
@@ -827,5 +847,6 @@ export const PHASE_SCHEMAS = [
   { id: "0005", phase: 18, name: "phase18_research_projects_images", sql: PHASE18_SCHEMA },
   { id: "0006", phase: 19, name: "phase19_autonomy", sql: PHASE19_SCHEMA },
   { id: "0007", phase: 20, name: "phase20_subagents_promotion", sql: PHASE20_SCHEMA },
-  { id: "0008", phase: 21, name: "phase21_webhook_effects", sql: PHASE21_SCHEMA }
+  { id: "0008", phase: 21, name: "phase21_webhook_effects", sql: PHASE21_SCHEMA },
+  { id: "0009", phase: 22, name: "phase22_context_and_structured_memory", sql: PHASE22_SCHEMA }
 ];

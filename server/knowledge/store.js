@@ -222,7 +222,9 @@ export function createKnowledgeStore(run) {
 }
 
 export const MEMORY_TRACKED_FIELDS = Object.freeze([
-  "content", "memory_type", "importance", "evidence_level", "volatility", "is_enabled", "confidence"
+  "content", "memory_type", "memory_layer", "memory_key", "memory_value",
+  "memory_schema_version", "expires_at", "importance", "evidence_level",
+  "volatility", "is_enabled", "confidence"
 ]);
 export const CONVERSATION_TRACKED_FIELDS = Object.freeze([
   "title", "summary", "is_archived", "last_message_preview", "project_id"

@@ -9,23 +9,43 @@
 // confidence arithmetic, relationship decay) and `telemetry` (run records and the
 // adaptive orchestrator's mode). They follow the existing convention exactly:
 // a knob is ON unless its environment variable is the string "false", and every
-// number is an editable constant here rather than another environment variable.
+// number is an editable constant here rather than another environment variable;
+// the Phase 22 context-window controls are the bounded, documented exception.
 // New subsystems are all switchable — that is what phase15.complexity_justification
 // requires ("a subsystem that cannot be turned off" is refused).
 
 import { resolveModel, getModelRequestPolicy } from "./llm.js";
+import { normalizeContextWindowConfig } from "./contextWindow.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function getSystemConfig() {
   const primary = resolveModel(process.env.COGNOS_MODEL);
   const fast = resolveModel(process.env.COGNOS_FAST_MODEL || process.env.COGNOS_MODEL);
+  // Phase 22: the context window is explicit and bounded instead of relying on
+  // a provider to reject an oversized prompt. The larger default keeps more
+  // recent dialogue, while the deterministic assembler still reserves room for
+  // structured memory, evidence, and the current request.
+  const contextWindow = normalizeContextWindowConfig({
+    maxInputTokens: process.env.COGNOS_CONTEXT_MAX_TOKENS,
+    outputReserveTokens: process.env.COGNOS_CONTEXT_OUTPUT_RESERVE_TOKENS,
+    maxHistoryMessages: process.env.COGNOS_CONTEXT_MAX_HISTORY_MESSAGES,
+    historyTokens: process.env.COGNOS_CONTEXT_HISTORY_TOKENS,
+    summaryTokens: process.env.COGNOS_CONTEXT_SUMMARY_TOKENS,
+    memoryTokens: process.env.COGNOS_CONTEXT_MEMORY_TOKENS,
+    sourceTokens: process.env.COGNOS_CONTEXT_SOURCE_TOKENS,
+    supplementalTokens: process.env.COGNOS_CONTEXT_SEARCH_TOKENS,
+    workspaceTokens: process.env.COGNOS_CONTEXT_WORKSPACE_TOKENS,
+    maxUserTokens: process.env.COGNOS_CONTEXT_USER_TOKENS,
+    overheadTokens: process.env.COGNOS_CONTEXT_OVERHEAD_TOKENS
+  });
   return Object.freeze({
     orchestrator: {
-      maxHistoryMessages: 20,
-      maxMemories: 10,
-      memoryPoolSize: 20,
-      summaryEnabled: true
+      maxHistoryMessages: contextWindow.maxHistoryMessages,
+      maxMemories: 12,
+      memoryPoolSize: 40,
+      summaryEnabled: true,
+      contextWindow
     },
     models: {
       primary,

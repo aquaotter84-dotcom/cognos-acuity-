@@ -27,6 +27,12 @@ const volatilityColors = {
   high: 'bg-red-500/15 text-red-400',
 };
 
+const layerColors = {
+  working: 'bg-cyan-500/15 text-cyan-400',
+  episodic: 'bg-accent/15 text-accent',
+  semantic: 'bg-primary/15 text-primary',
+};
+
 export default function Memory() {
   const { openSidebar } = useCognos();
   const [memories, setMemories] = useState([]);
@@ -35,6 +41,9 @@ export default function Memory() {
   const [editContent, setEditContent] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [newContent, setNewContent] = useState('');
+  const [newLayer, setNewLayer] = useState('semantic');
+  const [newKey, setNewKey] = useState('');
+  const [newValue, setNewValue] = useState('');
   const [error, setError] = useState(null);
 
   const load = () => api.listMemories().then(setMemories).catch(e => setError(e.message));
@@ -70,10 +79,25 @@ export default function Memory() {
   const handleAdd = async () => {
     const content = newContent.trim();
     if (!content) return;
+    let value = undefined;
+    if (newValue.trim()) {
+      try { value = JSON.parse(newValue); }
+      catch { setError('Structured value must be valid JSON.'); return; }
+    }
     try {
-      const created = await api.createMemory({ content, memory_type: 'semantic', importance: 7 });
+      const created = await api.createMemory({
+        content,
+        memory_type: newLayer,
+        memory_layer: newLayer,
+        memory_key: newKey.trim() || undefined,
+        memory_value: value,
+        importance: 7
+      });
       setMemories(prev => [created, ...prev]);
       setNewContent('');
+      setNewKey('');
+      setNewValue('');
+      setNewLayer('semantic');
       setIsAdding(false);
     } catch (e) { setError(e.message); }
   };
@@ -104,8 +128,21 @@ export default function Memory() {
               <textarea value={newContent} onChange={e => setNewContent(e.target.value)} rows={3}
                 placeholder="Something COGNOS should remember..."
                 className="w-full bg-transparent outline-none text-sm resize-none" />
+              <div className="grid sm:grid-cols-2 gap-2">
+                <select value={newLayer} onChange={e => setNewLayer(e.target.value)} className="bg-muted/40 border border-border rounded-lg px-2 py-1.5 text-xs outline-none">
+                  <option value="semantic">semantic · durable fact</option>
+                  <option value="episodic">episodic · conversation event</option>
+                  <option value="working">working · short-lived context</option>
+                </select>
+                <input value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="stable key (optional)"
+                  className="bg-muted/40 border border-border rounded-lg px-2 py-1.5 text-xs outline-none placeholder:text-muted-foreground/60" />
+              </div>
+              <textarea value={newValue} onChange={e => setNewValue(e.target.value)} rows={2}
+                placeholder='Structured value JSON (optional), e.g. {"value":"Python"}'
+                className="w-full bg-muted/40 border border-border rounded-lg p-2 outline-none text-xs resize-none font-mono" />
+              <p className="text-[10px] text-muted-foreground">The readable note stays visible; the bounded structured value helps COGNOS retrieve durable facts without treating them as instructions.</p>
               <div className="flex gap-2 justify-end">
-                <button onClick={() => { setIsAdding(false); setNewContent(''); }} className="text-xs px-3 py-1.5 rounded-lg hover:bg-muted">Cancel</button>
+                <button onClick={() => { setIsAdding(false); setNewContent(''); setNewKey(''); setNewValue(''); }} className="text-xs px-3 py-1.5 rounded-lg hover:bg-muted">Cancel</button>
                 <button onClick={handleAdd} className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground">Save</button>
               </div>
             </div>
@@ -131,8 +168,13 @@ export default function Memory() {
               ) : (
                 <>
                   <p className="text-sm leading-relaxed mb-2">{mem.content}</p>
+                  {mem.memory_value && <p className="text-[10px] text-muted-foreground/70 font-mono truncate mb-2" title={typeof mem.memory_value === 'string' ? mem.memory_value : JSON.stringify(mem.memory_value)}>
+                    value {typeof mem.memory_value === 'string' ? mem.memory_value : JSON.stringify(mem.memory_value)}
+                  </p>}
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${typeColors[mem.memory_type] || 'bg-muted'}`}>{mem.memory_type}</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${layerColors[mem.memory_layer || mem.memory_type] || 'bg-muted'}`}>{mem.memory_layer || mem.memory_type || 'semantic'} layer</span>
+                    {mem.memory_key && <span className="px-1.5 py-0.5 rounded text-[10px] font-mono text-muted-foreground bg-muted/60">{mem.memory_key}</span>}
                     {mem.evidence_level && <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${evidenceColors[mem.evidence_level] || 'bg-muted'}`}>{mem.evidence_level}</span>}
                     {mem.volatility && <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${volatilityColors[mem.volatility] || 'bg-muted'}`}>{mem.volatility}</span>}
                     <span className="text-[10px] text-muted-foreground">importance {mem.importance}</span>

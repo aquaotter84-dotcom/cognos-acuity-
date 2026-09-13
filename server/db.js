@@ -16,7 +16,7 @@
 //
 // PHASE 14 ADDITION (additive, same conventions):
 //   * Every statement is still CREATE TABLE IF NOT EXISTS / ADD COLUMN IF NOT
-//     EXISTS. The Phase 14–17 additive schemas live in server/db/schema.js and
+//     EXISTS. The Phase 14–22 additive schemas live in server/db/schema.js and
 //     are concatenated onto SCHEMA below, so one lazy migration applies them all
 //     and migrations/*.sql stays byte-identical to what the app runs.
 //   * withTransaction(fn) hands the callback a store whose accessors are bound
@@ -42,7 +42,7 @@ import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { newId, num } from "./db/util.js";
-import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA } from "./db/schema.js";
+import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA } from "./db/schema.js";
 import { appendEvent, snapshot } from "./knowledge/events.js";
 import {
   createKnowledgeStore, TRACKED_FIELDS,
@@ -53,6 +53,7 @@ import { createSourceAgentStore } from "./sources/store.js";
 import { createAutonomyStore } from "./autonomy/store.js";
 import { confidenceFromEvidence, statementKey, projectMemoryWrite, retireBeliefByKey } from "./knowledge/beliefs.js";
 import { linkCoActivations } from "./knowledge/relationships.js";
+import { normalizeMemoryFields } from "./memory/structure.js";
 
 // Neon's serverless driver talks over WebSockets, which is what works from a
 // Vercel serverless function (no long-lived TCP socket to keep warm). In Node
@@ -187,7 +188,7 @@ CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events (created_date DESC)
 // Phase 14 (Dynamic Systems) and Phase 15 (Meta-Cognition). Additive only:
 // new tables, new indexes, and two nullable columns on memories.
 + PHASE14_SCHEMA + PHASE15_SCHEMA + PHASE16_SCHEMA + PHASE17_SCHEMA + PHASE18_SCHEMA + PHASE19_SCHEMA
-+ PHASE20_SCHEMA + PHASE21_SCHEMA;
++ PHASE20_SCHEMA + PHASE21_SCHEMA + PHASE22_SCHEMA;
 
 function isNeon(url) {
   return /\.neon\.tech/i.test(url) || /neon\.database/i.test(url);
@@ -526,10 +527,11 @@ function createCoreStore(run) {
   };
 
   const Memory = {
-    async filter({ workspace_id, is_enabled }, limit = 100) {
+    async filter({ workspace_id, is_enabled, activeOnly = false }, limit = 100) {
       const clauses = ["workspace_id = $1"];
       const params = [workspace_id];
       if (is_enabled !== undefined) { clauses.push(`is_enabled = $${params.length + 1}`); params.push(is_enabled); }
+      if (activeOnly) clauses.push("(expires_at IS NULL OR expires_at > now())");
       params.push(limit);
       return run(
         `SELECT * FROM memories WHERE ${clauses.join(" AND ")} ORDER BY importance DESC, created_date DESC LIMIT $${params.length}`,
@@ -551,12 +553,14 @@ function createCoreStore(run) {
         const r = store ? store.query : run;
         const id = newId("mem");
         const ts = Date.now();
+        const structured = normalizeMemoryFields(data);
         const confidence = num(data.confidence, null) ?? confidenceFromEvidence(data);
         const rows = await r(
-          `INSERT INTO memories (id, workspace_id, content, memory_type, source, importance, evidence_level, volatility, last_confirmed, is_enabled, tags, confidence, confidence_as_of_ms)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
-          [id, data.workspace_id, data.content, data.memory_type || "episodic", data.source || null,
-           data.importance || 5, data.evidence_level || "inferred", data.volatility || "medium",
+          `INSERT INTO memories (id, workspace_id, content, memory_type, memory_layer, memory_key, memory_value, memory_schema_version, expires_at, source, importance, evidence_level, volatility, last_confirmed, is_enabled, tags, confidence, confidence_as_of_ms)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
+          [id, data.workspace_id, structured.content, structured.memory_type, structured.memory_layer,
+           structured.memory_key, JSON.stringify(structured.memory_value), structured.memory_schema_version,
+           structured.expires_at, data.source || null, data.importance || 5, data.evidence_level || "inferred", data.volatility || "medium",
            data.last_confirmed || new Date().toISOString(), data.is_enabled !== false,
            data.tags ? JSON.stringify(data.tags) : null, confidence, ts]
         );
@@ -612,12 +616,43 @@ function createCoreStore(run) {
       });
     },
     async update(id, data, opts = {}) {
-      const { clause, values, next } = set(data, ["content", "memory_type", "importance", "evidence_level", "volatility", "is_enabled", "confidence"]);
-      if (!clause) return null;
       return transacted(run, async (store) => {
         const self = store ? store.Memory : this;
         const r = store ? store.query : run;
         const before = await self.get(id);
+        if (!before) return null;
+
+        const structuredKeys = ["content", "memory_type", "memory_layer", "memory_key", "key", "memory_value", "value", "expires_at"];
+        const hasStructuredPatch = structuredKeys.some(key => data?.[key] !== undefined);
+        const patch = { ...(data || {}) };
+        if (hasStructuredPatch) {
+          const structured = normalizeMemoryFields({
+            content: data.content !== undefined ? data.content : before.content,
+            memory_type: data.memory_type !== undefined ? data.memory_type : before.memory_type,
+            memory_layer: data.memory_layer !== undefined ? data.memory_layer : before.memory_layer,
+            memory_key: data.memory_key !== undefined ? data.memory_key : (data.key !== undefined ? data.key : before.memory_key),
+            memory_value: data.memory_value !== undefined ? data.memory_value : (data.value !== undefined ? data.value : before.memory_value),
+            expires_at: data.expires_at !== undefined ? data.expires_at : before.expires_at
+          });
+          patch.content = structured.content;
+          patch.memory_type = structured.memory_type;
+          patch.memory_layer = structured.memory_layer;
+          patch.memory_key = structured.memory_key;
+          patch.memory_value = JSON.stringify(structured.memory_value);
+          patch.memory_schema_version = structured.memory_schema_version;
+          patch.expires_at = structured.expires_at;
+          delete patch.key;
+          delete patch.value;
+        } else if (patch.memory_value !== undefined) {
+          patch.memory_value = JSON.stringify(patch.memory_value);
+        }
+
+        const { clause, values, next } = set(patch, [
+          "content", "memory_type", "memory_layer", "memory_key", "memory_value",
+          "memory_schema_version", "expires_at", "importance", "evidence_level",
+          "volatility", "is_enabled", "confidence"
+        ]);
+        if (!clause) return before;
         const rows = await r(`UPDATE memories SET ${clause}, updated_date = now() WHERE id = $${next} RETURNING *`, [...values, id]);
         const after = rows[0];
         if (!after || !ledgerOn()) return after;
