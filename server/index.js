@@ -71,6 +71,16 @@
 //   GET  /api/graph/verify               provenance hash-mismatch audit
 //   GET  /api/graph/coverage             session-content coverage audit
 //
+// Phase 25 (hybrid enablement, the attention queue, the resident designer):
+//   GET  /api/autonomy/settings          the delegated switch, and who decided it
+//   POST /api/autonomy/settings          flip it (409 against a pin / no delegation)
+//   GET  /api/autonomy/attention         what is waiting on a human, by tab
+//   POST /api/autonomy/designer          one design turn → a clamped draft; writes nothing
+//   POST /api/autonomy/designer/create   the explicit click: re-clamps, then creates
+// The designer is NOT a second answer route. It drafts rows and returns a short
+// design note about them; POST /api/chat remains the only path that composes an
+// answer, and test/integrity.mjs still counts exactly one.
+//
 // Access gate: only active when COGNOS_RUNTIME_SECRET is set. No gate otherwise.
 
 import express from "express";
@@ -180,8 +190,15 @@ app.get("/api/health", (req, res) => {
       autonomousWrites: config.agent.autonomousWrites
     },
     // Phase 19 — durable autonomy. Off unless an operator enables a rung.
+    // Phase 25 adds HOW it came to be on: a pin, a delegated UI switch, or the
+    // default-off resting state. `enabled` alone cannot distinguish those, and a
+    // health surface that cannot is a health surface an operator has to go and
+    // read the Autonomy page to interpret.
     autonomy: {
       enabled: autonomyConfig().enabled,
+      enabledSource: autonomyConfig().enabledSource,
+      pinned: autonomyConfig().pinned,
+      uiControl: autonomyConfig().uiControl,
       defaultOff: true,
       outboxMode: autonomyConfig().outboxMode,
       builtTiers: autonomyConfig().builtTiers,

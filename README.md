@@ -230,6 +230,71 @@ live release additionally refuses with `EVIDENCE_GATE_UNMET` until
 releases, at least one release and at least one refusal in it. Raising the floor
 afterwards invalidates an old justification instead of grandfathering it.
 
+## Turning it on from the UI, and designing a resident (Phase 25)
+
+Autonomy being off by default is correct. The *only* way to change that being an
+environment variable plus a restart is not: the Autonomy page could show you a
+frozen system and offer nothing but the name of a variable you cannot set from a
+browser. Phase 25 is hybrid enablement — the operator decides **who** decides.
+
+| Variable | Meaning |
+|---|---|
+| `COGNOS_AUTONOMY_ENABLED=true` | A **pin**. Autonomy is on and the UI may not turn it off. `POST /api/autonomy/settings` answers 409 and says so. |
+| `COGNOS_AUTONOMY_UI_CONTROL=true` | A **delegation**. The Autonomy page gets a real Enable/Off switch. Delegation is not enablement — the system is still off until someone flips it. |
+| neither | The page shows copyable setup steps instead of a dead toggle. |
+
+The delegated value lives in `autonomy_settings` (migration `0012`), one row per
+workspace, and it can hold **only** the global on/off — there is no column for a
+rung, a ceiling, a skill or a budget, so the table cannot widen anything. A flip
+takes effect on the next heartbeat with no restart, and every flip is appended to
+`workspace_audit` as `autonomy.enabled` with its from/to values and who did it.
+Precedence is resolved in exactly one place (`server/autonomy/settings.js`),
+which `autonomyConfig()` asks, so the tick, the Action Governor and the skill
+registry all read the same answer. Both switches are allow-lists: only
+`1/true/yes/on/enabled` enable, so `COGNOS_AUTONOMY_ENABLED=` — the most likely
+misconfiguration on a real host — is **off**.
+
+An unloaded cache reads `false`, and a failed re-read keeps the last known value
+and marks itself `stale`: a database blip cannot silently enable a system, and it
+should not silently freeze a running one either.
+
+**Designing a resident is a conversation.** A Bot button in chat and *Design with
+COGNOS* on the Autonomy page open the same drawer: describe what you want watched
+and how often, and COGNOS drafts the complete resident — name, purpose, brief,
+skill allowlist, wake-up interval, budget and an optional first goal. You refine
+it by talking, then create it with one click. Four rules make that safe:
+
+1. **A turn creates nothing.** The draft is inert; creation is a separate
+   explicit `POST` that re-clamps what the browser sent, because a draft could
+   have been edited between turns.
+2. **Skills are intersected, and every omission is named.** A skill that does not
+   exist, or that this deployment cannot execute (its rung is off, its notice
+   channel is unset, its kill switch is closed), is dropped *with the reason
+   shown*. A silently shortened allowlist is how an operator ends up authorizing
+   something other than what they read.
+3. **Budgets only clamp down** against `DEFAULT_GOAL_BUDGET`, and each reduction
+   is reported. Scope is not settable from a draft at all — a model proposing its
+   own scope would be proposing its own authority.
+4. **Failures are sentences.** A missing API key, an unreachable provider, or
+   output that will not parse all return a bounded, secret-free message and a
+   code (503/502, never a 500 with raw configuration text), and the previous
+   draft survives so a failed turn costs nothing.
+
+The designer works while autonomy is frozen — that is the point of it. Creation
+is what waits, and the refusal names the switch that unblocks it. Its model prose
+is a short design note about the rows it proposes, not an answer to a question:
+`POST /api/chat` remains the only route that composes an answer.
+
+The page also answers *"what does autonomy want from me?"* in one glance
+(`GET /api/autonomy/attention`): waiting authorizations, staged actions, unread
+notices, paused goals and open promotions, each group naming the tab that
+resolves it. Statuses read as sentences everywhere — *Waiting for you*, *Paused
+with a reason*, *Ran out of budget* — in the page and in the chat Goal Card, with
+the machine vocabulary demoted into a **Technical details** disclosure rather
+than deleted, and a glossary behind the **?** button. Labels live in
+`src/lib/autonomyLabels.js` so the same status cannot read one way on the page
+and another way in chat.
+
 ## Model-gateway resilience
 
 A model call has one cancellation-aware deadline across all physical attempts.
@@ -532,12 +597,19 @@ GET  /api/autonomy/promotions         the memory-promotion queue
 POST /api/autonomy/promotions/:id/decide human confirm (lands `inferred`)
 GET  /api/autonomy/notices            templated reports
 POST /api/autonomy/tick               run one slice (the heartbeat calls this)
+GET  /api/autonomy/settings           the delegated switch: value, pin, may-the-UI-use-it
+POST /api/autonomy/settings           flip it (409 against an operator pin or with no delegation)
+GET  /api/autonomy/attention          what is waiting on a human, grouped, each with its tab
+POST /api/autonomy/designer           one designer turn → a clamped draft (creates nothing)
+POST /api/autonomy/designer/create    THE explicit click: re-clamps, then creates
 ```
 
 ```bash
-npm test               # every suite: voice, phase22, phase23, performance,
-                       # sources/agent, phase18, autonomy, phase20, phase21,
-                       # identity, integrity, smoke
+npm test               # every suite: voice, phase22, phase23, phase24,
+                       # performance, sources/agent, phase18, autonomy,
+                       # autonomy-ux, phase20, phase21, identity, integrity, smoke
+npm run autonomy-ux    # Phase 25: the delegated switch, the designer's clamps,
+                       # the attention queue (3 harnesses: delegated / not / pinned)
 npm run voice          # speech normalization and chunking regressions
 npm run performance    # latency instrumentation and no-prompt-change regressions
 npm run sources-agent  # extraction, SSRF, prompt injection, citation, agent tests

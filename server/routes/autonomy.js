@@ -1,19 +1,32 @@
-// Read-only surfaces plus the two decision points of Phase 19.
+// Read-only surfaces plus the decision points of Phase 19, and Phase 25's two
+// additions: the delegated on/off switch, and the conversational designer.
 //
 // Everything here is either a query over stored rows or an authorization
 // decision. Nothing on this route can produce an answer, compose prose, or
 // release an effect on its own authority — the outbox and the Action Governor
 // do that, and the one send path still owns every sentence the user reads.
 //
-// Three barriers live here:
-//   POST /api/autonomy/goals/:id/decision      — a goal does no work until this
-//                                                records consent with scope hashes
-//   POST /api/autonomy/outbox/:id/decision     — a staged effect is approved,
-//                                                refused or reverted (T2+)
-//   POST /api/autonomy/promotions/:id/decide   — a promotion request is approved
-//                                                (and applied) or refused (Phase 20)
+// The designer is the one route that calls a model for text, and it is bounded
+// into a shape that cannot become an answer path: it returns a DRAFT of rows
+// (a name, a brief, an allowlist, ceilings) plus a short design note about that
+// draft. It creates nothing, and creating goes through the same gated routes a
+// manual form uses.
+//
+// Barriers live here:
+//   POST /api/autonomy/settings              — the delegated switch (Phase 25)
+//   POST /api/autonomy/goals/:id/decision    — a goal does no work until this
+//                                              records consent with scope hashes
+//   POST /api/autonomy/outbox/:id/decision   — a staged effect is approved,
+//                                              refused or reverted (T2+)
+//   POST /api/autonomy/promotions/:id/decide — a promotion request is approved
+//                                              (and applied) or refused (Phase 20)
 
 import { autonomyConfig } from "../autonomy/config.js";
+import {
+  describeSettings, ensureSettingsLoaded, refreshSettings, setSettingsEnabled,
+  listSettingFlips, AUTONOMY_PIN_ENV, AUTONOMY_UI_CONTROL_ENV
+} from "../autonomy/settings.js";
+import { designTurn, clampDraft, emptyDraft, DESIGNER_LIMITS } from "../autonomy/designer.js";
 import { scopeHashes, authorizationCovers, isTightening } from "../autonomy/authorize.js";
 import { decideEffect, revertEffect, refuseEffect, shadowCorpus } from "../autonomy/outbox.js";
 import { RUNGS, RUNG_IDS, recordRungEvidence, rungEvidenceStatus } from "../autonomy/evidenceGate.js";
@@ -25,6 +38,10 @@ import { runTick } from "../autonomy/tick.js";
 const safe = (value, max) => String(value ?? "")
   .replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
 
+/** The slug rule the manual resident form uses, in one place. */
+const slugify = (value) => String(value ?? "").toLowerCase()
+  .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
+
 const parseJson = (value, fallback) => {
   if (value == null) return fallback;
   if (typeof value === "object") return value;
@@ -34,8 +51,30 @@ const parseJson = (value, fallback) => {
 export function registerAutonomyRoutes(app, { wrap, db, logger }) {
   const config = () => autonomyConfig();
 
+  /**
+   * What "autonomy is off" means HERE, in words the reader can act on.
+   *
+   * Naming a variable is not help: from a browser you cannot set one. So the
+   * message says which of the two situations this deployment is in — a switch
+   * you can use, or a switch an operator has to hand over — and the UI renders
+   * the copyable steps for the second case.
+   */
+  const frozenError = () => {
+    const cfg = config();
+    return cfg.canToggleFromUi
+      ? "Autonomy is off. Turn it on with the switch at the top of the Autonomy page, then try again."
+      : `Autonomy is off. An operator enables it with ${AUTONOMY_PIN_ENV}=true, or hands the switch to this UI with ${AUTONOMY_UI_CONTROL_ENV}=true.`;
+  };
+
   // --- Status: what is on, what is built, what is off -----------------------
   app.get("/api/autonomy/status", wrap(async (req, res) => {
+    // Phase 25 — `enabled` is now the effective switch, which may be a stored
+    // delegated value. Load it before reading the config, so the first request
+    // after a boot does not report an unloaded cache as "off". `?fresh=1` forces
+    // a re-read instead, for a multi-instance host where this process's cache may
+    // predate a flip another instance served.
+    if (req.query.fresh) await refreshSettings(db);
+    else await ensureSettingsLoaded(db);
     const cfg = config();
     const ws = await db.Workspace.ensureDefault();
     const [agents, active, parked, awaiting, openPromos, evidenceRows] = await Promise.all([
@@ -50,6 +89,15 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       enabled: cfg.enabled,
       requestedEnabled: cfg.requestedEnabled,
       defaultOff: true,
+      // Phase 25 — HOW it is on. Three separate facts, because "is it running",
+      // "did an operator force it" and "may I change it from here" are three
+      // different questions and the UI has to be able to answer all three.
+      enabledSource: cfg.enabledSource,
+      pinned: cfg.pinned,
+      uiControl: cfg.uiControl,
+      canToggleFromUi: cfg.canToggleFromUi,
+      toggleRefusal: cfg.toggleRefusal,
+      settings: cfg.settings,
       rung: cfg.rung,
       outboxMode: cfg.outboxMode,
       notices: cfg.notices,
@@ -89,7 +137,322 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       skills: describeSkills(cfg),
       noticeTemplates: NOTICE_TEMPLATE_IDS,
       law: "phase19.autonomy_default_off",
-      note: "Durable autonomy is disabled by default. Enabling it is an operator decision per rung."
+      note: cfg.pinned
+        ? `An operator pinned this on with ${AUTONOMY_PIN_ENV}=true. The UI reports that honestly and cannot override it.`
+        : cfg.uiControl
+          ? `The switch is delegated to the UI (${AUTONOMY_UI_CONTROL_ENV}=true). Flipping it is recorded and takes effect on the next heartbeat — no restart.`
+          : `Durable autonomy is disabled by default. Set ${AUTONOMY_PIN_ENV}=true to pin it on, or ${AUTONOMY_UI_CONTROL_ENV}=true to hand the switch to the UI.`
+    });
+  }));
+
+  // --- Phase 25: the delegated switch ---------------------------------------
+  /**
+   * What the switch is, who decided it, and whether this UI may change it.
+   * Separate from /status because the banner polls it after a flip and should
+   * not drag the whole skill catalogue along.
+   */
+  app.get("/api/autonomy/settings", wrap(async (req, res) => {
+    await refreshSettings(db);
+    const settings = describeSettings();
+    res.json({
+      ...settings,
+      flips: await listSettingFlips(db, { limit: Number(req.query.limit) || 10 })
+    });
+  }));
+
+  /**
+   * THE SWITCH. Only works when an operator delegated it, and never against a
+   * pin. Both refusals are 409 with the reason in words, because a toggle that
+   * silently does nothing is worse than no toggle: the operator believes they
+   * turned the system on.
+   *
+   * The write is write-through — the response carries the new effective state,
+   * and any synchronous autonomyConfig() after this point agrees with it.
+   */
+  app.post("/api/autonomy/settings", wrap(async (req, res) => {
+    await ensureSettingsLoaded(db);
+    const requested = req.body?.enabled;
+    if (typeof requested !== "boolean") {
+      return res.status(400).json({ error: "enabled must be true or false" });
+    }
+    const outcome = await setSettingsEnabled(db, {
+      enabled: requested,
+      updatedBy: safe(req.body?.updated_by, 60) || "ui"
+    });
+    if (!outcome.ok) {
+      return res.status(409).json({
+        error: outcome.refusal.message,
+        code: outcome.refusal.code,
+        settings: outcome.settings
+      });
+    }
+    logger.info("autonomy switch flipped from the UI", {
+      to: outcome.settings.enabled, from: outcome.previous?.enabled,
+      source: outcome.settings.source
+    });
+    res.json({
+      settings: outcome.settings,
+      enabled: outcome.settings.enabled,
+      changed: outcome.previous?.enabled !== outcome.settings.enabled,
+      atMs: outcome.atMs,
+      note: outcome.settings.enabled
+        ? "On. Residents may wake on the heartbeat; a goal still does no work until you authorize it."
+        : "Off. Nothing wakes and nothing new is staged. Goals keep their rows and their authorizations."
+    });
+  }));
+
+  // --- Phase 25: what does autonomy want from me? ---------------------------
+  /**
+   * The attention queue. One query, five kinds of thing that are waiting on a
+   * human, each with the tab that resolves it. Bounded on both sides: a handful
+   * of rows per kind, and every row is something the operator can act on.
+   *
+   * This is a VIEW, not a new decision surface — each item links to the barrier
+   * that already exists (authorize, approve, acknowledge, decide).
+   */
+  app.get("/api/autonomy/attention", wrap(async (req, res) => {
+    await ensureSettingsLoaded(db);
+    const ws = await db.Workspace.ensureDefault();
+    const perKind = Math.max(1, Math.min(10, Number(req.query.limit) || 5));
+
+    const [awaiting, parked, staged, notices, promotions] = await Promise.all([
+      db.AutonomyGoal.list(ws.id, { status: "awaiting_authorization", limit: perKind }),
+      db.AutonomyGoal.list(ws.id, { status: "parked", limit: perKind }),
+      db.AutonomyOutbox.list(ws.id, { status: "staged", limit: perKind }),
+      db.AutonomyNotice.listUnread(ws.id, perKind),
+      db.NotePromotion.list(ws.id, { status: "requested", limit: perKind })
+    ]);
+
+    const groups = [
+      {
+        kind: "awaiting_authorization",
+        tab: "goals",
+        label: "Waiting for your authorization",
+        hint: "These goals do no work at all until you authorize the scope and budget you are shown.",
+        rows: (awaiting || []).map(g => ({
+          id: g.id, title: g.title, detail: String(g.objective || "").slice(0, 160),
+          atMs: g.created_date ? Date.parse(g.created_date) : null
+        }))
+      },
+      {
+        kind: "staged_effect",
+        tab: "outbox",
+        label: "An action is staged and waiting",
+        hint: "The loop wants to do something. Nothing happens until you approve or refuse it here.",
+        rows: (staged || []).map(o => ({
+          id: o.id, title: `${o.skill_id} · ${o.tier}`,
+          detail: o.effect_type ? String(o.effect_type) : null,
+          atMs: o.created_date ? Date.parse(o.created_date) : null
+        }))
+      },
+      {
+        kind: "unread_notice",
+        tab: "notices",
+        label: "Unread notices",
+        hint: "Why a goal stopped, or what it finished. Templated text, never model prose.",
+        rows: (notices || []).map(n => ({
+          id: n.id, title: n.template_id, detail: null, atMs: Number(n.created_ms) || null
+        }))
+      },
+      {
+        kind: "parked_goal",
+        tab: "goals",
+        label: "Paused with a reason",
+        hint: "A goal stopped itself — a ceiling, a failure, or a pause you asked for. The reason is recorded.",
+        rows: (parked || []).map(g => ({
+          id: g.id, title: g.title, detail: g.park_reason ? String(g.park_reason) : null,
+          atMs: g.updated_date ? Date.parse(g.updated_date) : null
+        }))
+      },
+      {
+        kind: "open_promotion",
+        tab: "promotions",
+        label: "A finding wants to become knowledge",
+        hint: "The only route from a working note to durable memory or a belief — and it needs your approval.",
+        rows: (promotions || []).map(p => ({
+          id: p.id, title: p.target || "promotion", detail: p.reason ? String(p.reason).slice(0, 160) : null,
+          atMs: p.created_date ? Date.parse(p.created_date) : null
+        }))
+      }
+    ].map(group => ({ ...group, count: group.rows.length }));
+
+    res.json({
+      groups,
+      total: groups.reduce((n, g) => n + g.count, 0),
+      needsAttention: groups.some(g => g.count > 0),
+      enabled: config().enabled
+    });
+  }));
+
+  // --- Phase 25: the conversational resident designer -----------------------
+  /**
+   * One turn. Stateless: the client holds the transcript and the current draft,
+   * and sends both. The response is the next draft plus a short design note.
+   *
+   * This route is deliberately reachable while autonomy is frozen — designing a
+   * resident is how an operator discovers what they want to enable. It writes
+   * nothing.
+   */
+  app.post("/api/autonomy/designer", wrap(async (req, res) => {
+    const cfg = config();
+    const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    const incomingDraft = req.body?.draft && typeof req.body.draft === "object" ? req.body.draft : null;
+
+    const outcome = await designTurn({
+      config: cfg,
+      messages,
+      draft: incomingDraft,
+      logger
+    });
+
+    if (!outcome.ok) {
+      // A designer failure is a sentence, never a stack trace and never the raw
+      // configuration complaint that callLLM throws. The draft the client sent
+      // is untouched, so a failed turn costs nothing.
+      const status = outcome.code === "empty_conversation" ? 400
+        : outcome.code === "no_model_key" || outcome.code === "misconfigured" ? 503 : 502;
+      return res.status(status).json({
+        error: outcome.message,
+        code: outcome.code,
+        draft: incomingDraft ? clampDraft(incomingDraft, { config: cfg }).draft : emptyDraft()
+      });
+    }
+
+    res.json({
+      draft: outcome.draft,
+      reply: outcome.reply,
+      questions: outcome.questions,
+      adjustments: outcome.adjustments,
+      droppedSkills: outcome.droppedSkills,
+      ignoredFields: outcome.ignoredFields,
+      limits: DESIGNER_LIMITS,
+      frozen: cfg.enabled !== true,
+      note: cfg.enabled !== true
+        ? "Nothing was created — and nothing can be created until autonomy is on. Design first, enable, then create."
+        : "Nothing was created. Review the draft, then create it."
+    });
+  }));
+
+  /**
+   * CREATE FROM A DRAFT. The explicit click, and the only thing in the designer
+   * that writes.
+   *
+   * The draft is clamped AGAIN here rather than trusted because it arrived from
+   * a browser: whatever the client holds could have been edited between turns.
+   * Re-clamping server-side is what makes "budgets only ever clamp down" true of
+   * the row that is written, not just of the row that was displayed.
+   *
+   * The resident is created exactly as the manual form creates it, and the first
+   * goal (if asked for) lands in awaiting_authorization — it does no work until
+   * the operator authorizes its scope and budget.
+   */
+  app.post("/api/autonomy/designer/create", wrap(async (req, res) => {
+    // Creation is rare and it writes, so it reads the switch fresh rather than
+    // trusting this process's cache.
+    await refreshSettings(db);
+    const cfg = config();
+    if (cfg.enabled !== true) {
+      return res.status(409).json({
+        error: cfg.canToggleFromUi
+          ? "Autonomy is off, so the resident cannot be created yet. Turn it on with the switch at the top of this page and create it again — your draft is kept."
+          : `Autonomy is off, so the resident cannot be created yet. An operator has to enable it (${AUTONOMY_PIN_ENV}=true, or delegate the switch with ${AUTONOMY_UI_CONTROL_ENV}=true). Your draft is kept.`,
+        code: "autonomy_disabled",
+        canToggleFromUi: cfg.canToggleFromUi,
+        draft: clampDraft(req.body?.draft || {}, { config: cfg }).draft
+      });
+    }
+
+    const clamped = clampDraft(req.body?.draft || {}, { config: cfg });
+    const draft = clamped.draft;
+    if (!draft.complete) {
+      return res.status(400).json({
+        error: "The draft has no name yet, so there is nothing to create.",
+        code: "incomplete_draft", draft, adjustments: clamped.adjustments
+      });
+    }
+
+    const ws = await db.Workspace.ensureDefault();
+    const slug = draft.slug || slugify(draft.name);
+    if (!slug) return res.status(400).json({ error: "The draft needs a name that produces a slug.", code: "incomplete_draft" });
+
+    // A slug already in use is a refusal in words, not a unique-index violation
+    // surfacing as a 500. This is likelier from the designer than from the form:
+    // the model proposes sensible names, and "Agenda Watcher" is a sensible name
+    // twice. The draft comes back so the operator can rename it in the same
+    // conversation instead of starting over.
+    const existingVersion = await db.AutonomyAgent.latestVersion(ws.id, slug);
+    if (existingVersion > 0) {
+      return res.status(409).json({
+        error: `A resident called “${slug}” already exists. Ask the designer for a different name, or edit that resident's brief instead — a brief change is a new version, never an overwrite.`,
+        code: "slug_taken",
+        slug,
+        draft
+      });
+    }
+
+    const version = existingVersion + 1;
+    const conversation = await db.Conversation.create({
+      workspace_id: ws.id, title: draft.name.slice(0, 50), last_message_preview: ""
+    });
+
+    const agent = await db.AutonomyAgent.create({
+      workspace_id: ws.id,
+      name: draft.name,
+      slug,
+      purpose: draft.purpose || null,
+      brief: draft.brief,
+      brief_version: version,
+      skill_allowlist: draft.skills,
+      conversation_id: conversation?.id || null,
+      default_budgets: draft.budget,
+      heartbeat_interval_ms: draft.heartbeatMs,
+      enabled: req.body?.enabled !== false
+    });
+
+    let goal = null;
+    let hashes = null;
+    if (req.body?.create_first_goal === true && draft.firstGoal) {
+      // Same scope construction as POST /api/autonomy/goals: the low-risk
+      // templated notice channel is inside the scope the operator authorizes, so
+      // it is visible at the barrier and removable before consent.
+      const scope = { effectsAllowed: ["notify"] };
+      goal = await db.AutonomyGoal.create({
+        workspace_id: ws.id,
+        agent_id: agent.id,
+        conversation_id: agent.conversation_id,
+        title: draft.firstGoal.title,
+        objective: draft.firstGoal.objective,
+        status: "awaiting_authorization",
+        scope,
+        budget: draft.budget,
+        schedule: { kind: "heartbeat", intervalMs: draft.heartbeatMs }
+      });
+      hashes = scopeHashes({ goalId: goal.id, scope, budget: draft.budget });
+      await db.GoalEvent.append({
+        goal_id: goal.id, agent_id: agent.id,
+        event_type: "goal_created", to_status: "awaiting_authorization",
+        detail: { title: draft.firstGoal.title, origin: "designer", ...hashes }
+      });
+    }
+
+    await db.WorkspaceAudit.append({
+      workspaceId: ws.id,
+      action: "autonomy.resident_designed",
+      resourceId: agent.id,
+      detail: {
+        slug, skills: draft.skills, droppedSkills: clamped.droppedSkills.map(d => d.id),
+        firstGoal: goal?.id || null, via: "designer"
+      }
+    }).catch(() => {});
+
+    res.status(201).json({
+      agent, goal, hashes,
+      droppedSkills: clamped.droppedSkills,
+      adjustments: clamped.adjustments,
+      status: goal ? "awaiting_authorization" : "created",
+      note: goal
+        ? "Created. Its first goal is waiting for your authorization — it does no work until you give it."
+        : "Created."
     });
   }));
 
@@ -119,7 +482,7 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
 
   app.post("/api/autonomy/agents", wrap(async (req, res) => {
     if (config().enabled !== true) {
-      return res.status(409).json({ error: "Autonomy is disabled (COGNOS_AUTONOMY_ENABLED)." });
+      return res.status(409).json({ error: frozenError(), code: "autonomy_disabled" });
     }
     const ws = await db.Workspace.ensureDefault();
     const name = safe(req.body?.name, 80);
@@ -219,7 +582,7 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
 
   app.post("/api/autonomy/goals", wrap(async (req, res) => {
     if (config().enabled !== true) {
-      return res.status(409).json({ error: "Autonomy is disabled (COGNOS_AUTONOMY_ENABLED)." });
+      return res.status(409).json({ error: frozenError(), code: "autonomy_disabled" });
     }
     const ws = await db.Workspace.ensureDefault();
     const title = safe(req.body?.title, 120);
@@ -405,7 +768,7 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
    */
   app.post("/api/autonomy/rungs/:rung/evidence", wrap(async (req, res) => {
     if (config().enabled !== true) {
-      return res.status(409).json({ error: "Autonomy is disabled (COGNOS_AUTONOMY_ENABLED), so there is no corpus to measure." });
+      return res.status(409).json({ error: `${frozenError()} There is also no corpus to measure.`, code: "autonomy_disabled" });
     }
     const rung = String(req.params.rung || "").trim();
     if (!RUNG_IDS.includes(rung)) {
@@ -566,7 +929,7 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
 
   app.post("/api/autonomy/promotions/:id/decide", wrap(async (req, res) => {
     if (config().enabled !== true) {
-      return res.status(409).json({ error: "Autonomy is disabled (COGNOS_AUTONOMY_ENABLED)." });
+      return res.status(409).json({ error: frozenError(), code: "autonomy_disabled" });
     }
     const ws = await db.Workspace.ensureDefault();
     const row = await db.NotePromotion.get(req.params.id);
@@ -600,11 +963,18 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
 
   /** Run one slice now. Operator surface and the cron fallback. */
   app.post("/api/autonomy/tick", wrap(async (req, res) => {
+    // ALWAYS re-read here, not merely ensure-loaded. This is the route that acts
+    // on the switch, and the dangerous direction is a stale "on": an operator
+    // turns autonomy off and a cron tick on another instance keeps running. One
+    // indexed single-row SELECT per tick is a fair price for that, and a host
+    // with no heartbeat (Vercel, cron-driven) has nothing else that would read
+    // the row at all.
+    await refreshSettings(db);
     const cfg = config();
     if (cfg.enabled !== true) {
       return res.json({
         frozen: true, goalsClaimed: 0, stepsExecuted: 0,
-        note: "Autonomy is disabled (COGNOS_AUTONOMY_ENABLED). Nothing ran."
+        note: `${frozenError()} Nothing ran.`
       });
     }
     const result = await runTick({

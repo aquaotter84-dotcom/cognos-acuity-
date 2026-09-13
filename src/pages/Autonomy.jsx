@@ -12,18 +12,32 @@
 // When autonomy is off, the page says so first and disables creation. That is
 // not a warning banner bolted on — the resting state of this system is frozen,
 // and the UI should look like it.
+//
+// Phase 25 adds three things and changes no decision above:
+//   * the switch itself, when an operator has delegated it (settings.js);
+//   * "Needs your attention" — one glance at everything waiting on a human,
+//     each row jumping to the tab that resolves it;
+//   * plain-language labels, with the machine vocabulary demoted into a
+//     "Technical details" disclosure rather than deleted (see lib/autonomyLabels.js).
+// The designer drawer is the one place here that talks to a model, and it
+// creates nothing: it drafts rows and hands you an explicit Create button.
 
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Activity, AlertTriangle, Bot, Check, ChevronDown, ChevronRight, ClipboardCheck,
-  Clock, Gauge, Inbox, Menu, Pause, Play, Plus, RefreshCw, ScrollText,
-  Send, ShieldAlert, ShieldCheck, Snowflake, Sprout, ThumbsDown, ThumbsUp, Undo2, X, Zap
+  Activity, AlertTriangle, Bell, Bot, Check, ChevronDown, ChevronRight, ClipboardCheck,
+  Clock, Copy, Gauge, HelpCircle, Inbox, Menu, Pause, Play, Plus, RefreshCw, ScrollText,
+  Send, ShieldAlert, ShieldCheck, Snowflake, Sparkles, Sprout, ThumbsDown, ThumbsUp, Undo2, X, Zap
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { noteLocator } from '@/components/chat/GoalCard';
 import { useCognos } from '@/lib/cognosContext';
 import { Pill, Empty, ErrorNote } from '@/components/system/SystemUi';
+import DesignerDrawer from '@/components/autonomy/DesignerDrawer';
+import {
+  GLOSSARY, TIER_LABEL, effectStatusLabel, goalStatusLabel,
+  humanInterval, parkReasonLabel, tierLabel,
+} from '@/lib/autonomyLabels';
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: Gauge },
@@ -108,9 +122,85 @@ function Section({ title, subtitle, icon: Icon, children, action }) {
   );
 }
 
-/** The frozen/enabled banner. Deliberately the first thing you see. */
-function StatusBanner({ status }) {
+/** The setup steps shown when nobody has handed the switch to this page. */
+const SETUP_STEPS = [
+  {
+    env: 'COGNOS_AUTONOMY_UI_CONTROL=true',
+    what: 'Hands the on/off switch to this page. Recommended: you can then turn autonomy on and off from here, and every flip is recorded.',
+  },
+  {
+    env: 'COGNOS_AUTONOMY_ENABLED=true',
+    what: 'Pins autonomy on in the environment instead. This outranks the UI — once pinned, the toggle cannot turn it off.',
+  },
+  {
+    env: 'restart the server process',
+    what: 'Environment variables are read at boot. After a flip from this page no restart is needed; after editing them, one is.',
+  },
+  {
+    env: 'COGNOS_AUTONOMY_NOTICE_MODE=internal',
+    what: 'Optional, and needed before a resident can report anything to you. Without a notice channel the loop stays silent.',
+  },
+];
+
+function CopyButton({ text, label = 'Copy' }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <button
+      onClick={copy}
+      className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted/50"
+      title="Copy to clipboard"
+    >
+      {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+      {copied ? 'Copied' : label}
+    </button>
+  );
+}
+
+/** The switch itself — present only when an operator delegated it. */
+function EnableToggle({ status, busy, onToggle }) {
   const on = status?.enabled === true;
+  return (
+    <div className="flex items-center gap-2.5 shrink-0">
+      <span className="text-[11px] text-muted-foreground hidden sm:inline">{on ? 'On' : 'Off'}</span>
+      <button
+        role="switch"
+        aria-checked={on}
+        aria-label={on ? 'Turn autonomy off' : 'Turn autonomy on'}
+        onClick={() => onToggle(!on)}
+        disabled={busy}
+        className={`relative w-11 h-6 rounded-full transition-colors disabled:opacity-50 ${on ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+        title={on ? 'Turn autonomy off' : 'Turn autonomy on'}
+      >
+        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-background shadow transition-transform ${on ? 'translate-x-5' : ''}`} />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The banner: the first thing on the page, and the answer to "is it on, and can
+ * I do anything about that?"
+ *
+ * Three cases, because they are three genuinely different situations. A frozen
+ * page that only names an environment variable is a dead end; a toggle that
+ * silently fails against an operator pin is a lie. So: a working switch when the
+ * switch was delegated, an honest "an operator pinned this" when it was not, and
+ * copyable setup steps when neither.
+ */
+function StatusBanner({ status, busy, onToggle, onError }) {
+  const on = status?.enabled === true;
+  const canToggle = status?.canToggleFromUi === true;
+  const pinned = status?.pinned === true;
+
   return (
     <div className={`rounded-xl border p-4 ${on ? 'border-primary/40 bg-primary/5' : 'border-border bg-muted/30'}`}>
       <div className="flex items-start gap-3">
@@ -118,24 +208,165 @@ function StatusBanner({ status }) {
           ? <Zap className="w-4 h-4 text-primary mt-0.5 shrink-0" />
           : <Snowflake className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />}
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold flex items-center gap-2">
-            {on ? 'Autonomy is enabled' : 'Autonomy is frozen'}
-            <Pill tone={on ? 'ok' : 'muted'}>{on ? 'running' : 'default off'}</Pill>
+          <p className="text-sm font-semibold flex items-center gap-2 flex-wrap">
+            {on ? 'Autonomy is on' : 'Autonomy is off'}
+            <Pill tone={on ? 'ok' : 'muted'}>{on ? 'running' : 'frozen'}</Pill>
+            {pinned && <Pill tone="info">pinned by an operator</Pill>}
+            {!pinned && canToggle && <Pill tone="info">you control this</Pill>}
           </p>
           <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
             {on
-              ? 'Residents may wake on the heartbeat and advance authorized goals. Every effect they produce is still staged and judged before anything happens.'
-              : 'Nothing wakes, no goal runs, no notice is written, no tick is recorded. This is the resting state (phase19.autonomy_default_off) — enabling a rung is an operator decision.'}
+              ? 'Residents may wake on the heartbeat and advance authorized goals. Every effect they produce is still staged and judged before anything happens, and a goal still does no work until you authorize it.'
+              : 'Nothing wakes, no goal runs, no notice is written, no tick is recorded. This is the resting state — and you can change it from here if an operator handed you the switch.'}
           </p>
-          {!on && (
-            <p className="text-[10px] text-muted-foreground/70 mt-1.5 font-mono">
-              COGNOS_AUTONOMY_ENABLED{status?.requestedEnabled ? ` = ${status.requestedEnabled}` : ''}
+
+          {pinned && (
+            <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed">
+              An operator pinned this on with{' '}
+              <span className="font-mono text-foreground/80">COGNOS_AUTONOMY_ENABLED{status?.requestedEnabled ? `=${String(status.requestedEnabled).split(' ')[0]}` : '=true'}</span>.
+              The UI will not pretend it can override that — remove the variable and restart to hand the switch back.
+            </p>
+          )}
+
+          {!canToggle && !pinned && (
+            <div className="mt-2.5 rounded-lg border border-border bg-background/60 p-3">
+              <p className="text-[11px] font-semibold flex items-center gap-1.5">
+                <ClipboardCheck className="w-3.5 h-3.5 text-muted-foreground" />
+                How to turn it on
+              </p>
+              <ol className="mt-2 space-y-2">
+                {SETUP_STEPS.map((step, i) => (
+                  <li key={step.env} className="flex items-start gap-2">
+                    <span className="text-[10px] text-muted-foreground/70 tabular-nums mt-0.5">{i + 1}.</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="flex items-center gap-2 flex-wrap">
+                        <code className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded">{step.env}</code>
+                        {step.env.startsWith('COGNOS_') && <CopyButton text={step.env} />}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">{step.what}</p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              <CopyButton
+                label="Copy all the steps"
+                text={SETUP_STEPS.map((s, i) => `${i + 1}. ${s.env} — ${s.what}`).join('\n')}
+              />
+            </div>
+          )}
+
+          {canToggle && (
+            <p className="text-[10px] text-muted-foreground/70 mt-1.5">
+              Flipping this takes effect on the next heartbeat — no restart — and every flip is written to the audit trail.
+              {status?.settings?.stored?.updatedAtMs ? ` Last changed ${fmtTime(new Date(Number(status.settings.stored.updatedAtMs)))}${status.settings.stored.updatedBy ? ` by ${status.settings.stored.updatedBy}` : ''}.` : ''}
             </p>
           )}
         </div>
-        <div className="flex flex-col items-end gap-1 shrink-0">
-          <Pill tone="info">outbox: {status?.outboxMode || 'shadow'}</Pill>
-          <Pill tone="muted">tiers: {(status?.builtTiers || []).join(', ') || '—'}</Pill>
+
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          {canToggle && <EnableToggle status={status} busy={busy} onToggle={onToggle} />}
+          {!canToggle && (
+            <div className="flex flex-col items-end gap-1">
+              <Pill tone="muted">outbox: {status?.outboxMode || 'shadow'}</Pill>
+              <Pill tone="muted">{(status?.builtTiers || []).length} tiers built</Pill>
+            </div>
+          )}
+        </div>
+      </div>
+      {onError}
+    </div>
+  );
+}
+
+/**
+ * "What does autonomy want from me?" — one panel, one glance.
+ *
+ * Everything in here is a thing that is waiting on a human, grouped by the kind
+ * of decision, and each group names the tab that resolves it. The panel adds no
+ * new decision: every row is a link to a barrier that already existed. An empty
+ * panel is the good state, and it says so in words rather than disappearing.
+ */
+function AttentionPanel({ data, onJump, loading }) {
+  if (loading) {
+    return (
+      <Section title="Needs your attention" icon={Bell}>
+        <p className="text-xs text-muted-foreground">Checking…</p>
+      </Section>
+    );
+  }
+  const groups = (data?.groups || []).filter(g => g.count > 0);
+
+  return (
+    <Section
+      title="Needs your attention"
+      subtitle="Everything waiting on you, in one place. Nothing here happens until you decide."
+      icon={Bell}
+      action={<Pill tone={groups.length ? 'warn' : 'ok'}>{data?.total ?? 0} waiting</Pill>}
+    >
+      {groups.length === 0 ? (
+        <p className="text-xs text-muted-foreground py-1">
+          Nothing is waiting on you. {data?.enabled ? 'The loop is running and has no questions.' : 'Autonomy is off, so there is nothing to ask.'}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {groups.map(group => (
+            <div key={group.kind} className="rounded-lg border border-border">
+              <button
+                onClick={() => onJump(group.tab)}
+                className="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-muted/40 transition-colors"
+                title={`Open the ${group.tab} tab`}
+              >
+                <span className="mt-0.5 shrink-0 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[10px] font-semibold px-1.5 py-0.5 tabular-nums">
+                  {group.count}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="text-xs font-medium block">{group.label}</span>
+                  <span className="text-[10px] text-muted-foreground block leading-snug">{group.hint}</span>
+                  <span className="mt-1 flex flex-wrap gap-1">
+                    {group.rows.slice(0, 3).map(row => (
+                      <span key={row.id} className="px-1.5 py-0.5 rounded bg-muted text-[10px] truncate max-w-[16rem]">
+                        {row.title || row.id}
+                        {row.detail ? <span className="text-muted-foreground"> · {row.detail}</span> : null}
+                      </span>
+                    ))}
+                    {group.count > 3 && <span className="text-[10px] text-muted-foreground px-1">+{group.count - 3} more</span>}
+                  </span>
+                </span>
+                <ChevronRight className="w-3.5 h-3.5 text-muted-foreground mt-1 shrink-0" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+/** The glossary behind the "?" button. Teaches the jargon instead of hiding it. */
+function HelpDrawer({ open, onClose }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-label="What these words mean">
+      <button className="absolute inset-0 bg-black/50" onClick={onClose} aria-label="Close" tabIndex={-1} />
+      <div className="relative flex flex-col w-full max-w-md h-full bg-background border-l border-border shadow-2xl">
+        <header className="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">
+          <HelpCircle className="w-4 h-4 text-primary" />
+          <div className="flex-1 min-w-0">
+            <h2 className="text-sm font-semibold">What these words mean</h2>
+            <p className="text-[10px] text-muted-foreground">Plain language first, the machine name under it.</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted" title="Close">
+            <X className="w-4 h-4" />
+          </button>
+        </header>
+        <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-3 space-y-3">
+          {GLOSSARY.map(entry => (
+            <div key={entry.term}>
+              <p className="text-xs font-semibold">{entry.term}</p>
+              <p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5">{entry.body}</p>
+              <p className="text-[10px] font-mono text-muted-foreground/60 mt-0.5">{entry.technical}</p>
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -143,7 +374,7 @@ function StatusBanner({ status }) {
 }
 
 // ---------------------------------------------------------------- residents
-function Residents({ status, frozen, onError }) {
+function Residents({ status, frozen, onError, onDesign, onChanged }) {
   const [rows, setRows] = useState([]);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: '', slug: '', purpose: '', brief: '', skill_allowlist: [] });
@@ -155,7 +386,8 @@ function Residents({ status, frozen, onError }) {
   const refresh = useCallback(async () => {
     try { setRows(await api.listResidents()); }
     catch (e) { setError(e.message || 'Could not load residents'); }
-  }, []);
+    onChanged?.();
+  }, [onChanged]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -221,15 +453,27 @@ function Residents({ status, frozen, onError }) {
         subtitle="Named agents with an objective, a versioned brief, and their own skill allowlist"
         icon={Bot}
         action={
-          <button
-            onClick={() => setCreating(v => !v)}
-            disabled={frozen}
-            title={frozen ? 'Autonomy is frozen' : undefined}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium disabled:opacity-40"
-          >
-            {creating ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-            {creating ? 'Cancel' : 'New resident'}
-          </button>
+          <div className="flex items-center gap-1.5">
+            {/* Designing is never disabled by the frozen state: describing a
+                resident is how you find out what you want to turn on. */}
+            <button
+              onClick={onDesign}
+              title="Describe a resident in plain words and COGNOS drafts it"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-primary/40 bg-primary/5 text-primary text-xs font-medium hover:bg-primary/10"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Design with COGNOS</span>
+            </button>
+            <button
+              onClick={() => setCreating(v => !v)}
+              disabled={frozen}
+              title={frozen ? 'Autonomy is off — turn it on, or design a resident first' : 'Fill in the form yourself'}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium disabled:opacity-40"
+            >
+              {creating ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+              {creating ? 'Cancel' : 'New resident'}
+            </button>
+          </div>
         }
       >
         {creating && (
@@ -270,10 +514,11 @@ function Residents({ status, frozen, onError }) {
                       key={skill.id} type="button" onClick={() => toggleSkill(skill.id)}
                       className={`px-2 py-1 rounded-md border text-[10px] transition-colors ${
                         on ? 'border-primary/60 bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted/50'
-                      }`}
-                      title={skill.summary}
+                      } ${skill.enabled ? '' : 'opacity-50'}`}
+                      title={`${skill.summary} — ${tierLabel(skill.tier)}${skill.enabled ? '' : ' (not available in this deployment yet)'}`}
                     >
                       {skill.id} <span className="opacity-60">{skill.tier}</span>
+                      {!skill.enabled && <span className="opacity-70"> · off here</span>}
                     </button>
                   );
                 })}
@@ -287,7 +532,10 @@ function Residents({ status, frozen, onError }) {
         )}
 
         {rows.length === 0 && !creating && (
-          <Empty>No residents yet. Create one, then give it a goal to work on.</Empty>
+          <Empty>
+            No residents yet. Describe one to COGNOS with “Design with COGNOS”, or fill in the form yourself —
+            then give it a goal to work on.
+          </Empty>
         )}
 
         <div className="space-y-2">
@@ -303,9 +551,18 @@ function Residents({ status, frozen, onError }) {
                   </p>
                   {resident.purpose && <p className="text-xs text-muted-foreground truncate">{resident.purpose}</p>}
                   <div className="flex flex-wrap gap-1 mt-1.5">
-                    {(resident.skill_allowlist || []).map(id => (
-                      <span key={id} className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono text-muted-foreground">{id}</span>
-                    ))}
+                    {(resident.skill_allowlist || []).map(id => {
+                      const skill = skills.find(s => s.id === id);
+                      return (
+                        <span
+                          key={id}
+                          className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono text-muted-foreground"
+                          title={skill ? `${skill.summary} — ${tierLabel(skill.tier)}` : id}
+                        >
+                          {id}
+                        </span>
+                      );
+                    })}
                     {(resident.skill_allowlist || []).length === 0 && (
                       <span className="text-[10px] text-muted-foreground/70">no skills allowed yet</span>
                     )}
@@ -369,7 +626,7 @@ function Residents({ status, frozen, onError }) {
 }
 
 // -------------------------------------------------------------------- goals
-function Goals({ status, frozen, residents, onError }) {
+function Goals({ status, frozen, residents, onError, onChanged }) {
   const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [filter, setFilter] = useState('');
@@ -385,7 +642,10 @@ function Goals({ status, frozen, residents, onError }) {
   const refresh = useCallback(async () => {
     try { setRows(await api.listGoals(filter ? { status: filter } : {})); }
     catch (e) { setError(e.message || 'Could not load goals'); }
-  }, [filter]);
+    // Every decision re-reads the list, so this is also the moment the
+    // "needs your attention" panel is out of date. Tell the page.
+    onChanged?.();
+  }, [filter, onChanged]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -461,9 +721,9 @@ function Goals({ status, frozen, residents, onError }) {
               value={filter} onChange={e => setFilter(e.target.value)}
               className="bg-background border border-border rounded-lg px-2 py-1.5 text-xs outline-none"
             >
-              <option value="">All statuses</option>
+              <option value="">Any state</option>
               {['awaiting_authorization', 'active', 'parked', 'completed', 'cancelled'].map(s => (
-                <option key={s} value={s}>{s}</option>
+                <option key={s} value={s}>{goalStatusLabel(s)}</option>
               ))}
             </select>
             <button
@@ -500,7 +760,8 @@ function Goals({ status, frozen, residents, onError }) {
               {residents.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
             <p className="text-[10px] text-muted-foreground">
-              The goal is created <strong>awaiting authorization</strong>. Nothing runs until you authorize it.
+              The goal is created <strong>waiting for you</strong> (<span className="font-mono">awaiting_authorization</span>).
+              Nothing runs until you authorize it.
             </p>
             <button type="submit" disabled={busy || !form.title.trim() || !form.objective.trim()}
               className="rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs disabled:opacity-40">
@@ -528,11 +789,11 @@ function Goals({ status, frozen, residents, onError }) {
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium truncate flex items-center gap-2">
                       {goal.title}
-                      <Pill tone={GOAL_TONE[goal.status] || 'muted'}>{goal.status}</Pill>
+                      <Pill tone={GOAL_TONE[goal.status] || 'muted'}>{goalStatusLabel(goal.status)}</Pill>
                     </p>
                     <p className="text-[10px] text-muted-foreground truncate">
                       {GOAL_STATUS_HELP[goal.status] || ''}
-                      {goal.park_reason ? ` Reason: ${goal.park_reason}.` : ''}
+                      {goal.park_reason ? ` ${parkReasonLabel(goal.park_reason)}.` : ''}
                     </p>
                     <div className="flex flex-wrap items-center gap-3 mt-1.5 text-[10px] text-muted-foreground tabular-nums">
                       <span>{Number(spent.steps || 0)} / {budget.maxSteps ?? '—'} steps</span>
@@ -816,7 +1077,7 @@ function PromotionRow({ promotion: p, busy, onDecide }) {
   );
 }
 
-function Promotions({ frozen }) {
+function Promotions({ frozen, onChanged }) {
   const [rows, setRows] = useState([]);
   const [filter, setFilter] = useState('');
   const [busy, setBusy] = useState(false);
@@ -825,7 +1086,8 @@ function Promotions({ frozen }) {
   const refresh = useCallback(async () => {
     try { setRows(await api.listPromotions(filter ? { status: filter } : {})); }
     catch (e) { setError(e.message || 'Could not load promotions'); }
-  }, [filter]);
+    onChanged?.();
+  }, [filter, onChanged]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -846,15 +1108,17 @@ function Promotions({ frozen }) {
           value={filter} onChange={e => setFilter(e.target.value)}
           className="bg-background border border-border rounded-lg px-2 py-1.5 text-xs outline-none"
         >
-          <option value="">All statuses</option>
+          <option value="">Any state</option>
           {['requested', 'approved', 'applied', 'refused'].map(s => (
-            <option key={s} value={s}>{s}</option>
+            <option key={s} value={s}>
+              {s === 'requested' ? 'Waiting for you' : s === 'applied' ? 'Added to knowledge' : s[0].toUpperCase() + s.slice(1)}
+            </option>
           ))}
         </select>
       }
     >
       <ErrorNote error={error} />
-      {frozen && <p className="text-[11px] text-muted-foreground mb-2">Autonomy is frozen — the queue is visible but decisions need it on.</p>}
+      {frozen && <p className="text-[11px] text-muted-foreground mb-2">Autonomy is off — the queue is still visible, but deciding one needs it on.</p>}
       {rows.length === 0
         ? <Empty>No promotion requests. A worker asks with note.promote.request; you confirm here, or a Governor-approved answer carries a cited finding.</Empty>
         : (
@@ -869,14 +1133,15 @@ function Promotions({ frozen }) {
 }
 
 // ------------------------------------------------------------------ notices
-function Notices() {
+function Notices({ onChanged }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState('');
 
   const refresh = useCallback(async () => {
     try { setRows(await api.listNotices()); }
     catch (e) { setError(e.message || 'Could not load notices'); }
-  }, []);
+    onChanged?.();
+  }, [onChanged]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -956,7 +1221,7 @@ function ReceiptLine({ receipt }) {
 }
 
 // ------------------------------------------------------------------- outbox
-function Outbox({ status }) {
+function Outbox({ status, onChanged }) {
   const [data, setData] = useState(null);
   const [rungs, setRungs] = useState(null);
   const [error, setError] = useState('');
@@ -972,7 +1237,8 @@ function Outbox({ status }) {
       ]);
       setData(outbox); setRungs(rungList);
     } catch (e) { setError(e.message || 'Could not load the outbox'); }
-  }, []);
+    onChanged?.();
+  }, [onChanged]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -1122,12 +1388,12 @@ function Outbox({ status }) {
       </Section>
 
       <Section
-        title="Staged effects"
-        subtitle="Staging is not acting. Each effect is judged by the Action Governor before anything happens."
+        title="Actions waiting on you"
+        subtitle="Staging is not acting. Each one is judged before anything happens, and nothing runs until you approve it."
         icon={ShieldCheck}
       >
         {effects.length === 0
-          ? <Empty>Nothing staged. Effects appear here the moment a goal stages one — notices, reads, and (with Rung 4 on) webhook deliveries.</Empty>
+          ? <Empty>Nothing is waiting. Actions appear here the moment a goal stages one — a notice to send, a page to read, or (with outside writes enabled) a webhook to call.</Empty>
           : (
             <div className="space-y-2">
               {effects.map(effect => {
@@ -1137,14 +1403,23 @@ function Outbox({ status }) {
                     <div className="flex items-start gap-2">
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-medium flex items-center gap-2 flex-wrap">
-                          <span className="font-mono">{effect.effect_type}</span>
-                          <Pill tone="muted">{effect.tier}</Pill>
-                          <Pill tone={EFFECT_TONE[effect.status] || 'muted'}>{effect.status}</Pill>
-                          <Pill tone={effect.mode === 'live' ? 'warn' : 'info'}>{effect.mode}</Pill>
+                          <span>{effectStatusLabel(effect.status)}</span>
+                          <Pill tone={EFFECT_TONE[effect.status] || 'muted'}>{effect.tier}</Pill>
+                          <Pill tone={effect.mode === 'live' ? 'warn' : 'info'}>
+                            {effect.mode === 'live' ? 'would really run' : 'shadow — delivers nothing'}
+                          </Pill>
                         </p>
-                        <p className="text-[10px] text-muted-foreground mt-0.5 font-mono truncate">
-                          skill {effect.skill_id} · goal {shortId(effect.goal_id)} · key {shortId(effect.idempotency_key)}
+                        <p className="text-[10px] text-muted-foreground mt-0.5 truncate" title={tierLabel(effect.tier)}>
+                          {tierLabel(effect.tier)}
                         </p>
+                        {/* The machine names stay one disclosure deep: whoever reads the logs needs them. */}
+                        <details className="text-[10px] text-muted-foreground/70 mt-0.5">
+                          <summary className="cursor-pointer select-none">Technical details</summary>
+                          <p className="font-mono truncate mt-0.5">
+                            {effect.effect_type} · {effect.status} · mode {effect.mode} · skill {effect.skill_id} ·
+                            goal {shortId(effect.goal_id)} · key {shortId(effect.idempotency_key)}
+                          </p>
+                        </details>
                         {effect.destination && (
                           <p className="text-[10px] mt-0.5 font-mono truncate flex items-center gap-1">
                             <Send className="w-3 h-3 shrink-0 text-muted-foreground" />
@@ -1225,22 +1500,36 @@ function Outbox({ status }) {
 }
 
 // ----------------------------------------------------------------- overview
-function Overview({ status, residents, goals, onTick, ticking }) {
+function Overview({ status, residents, goals, onTick, ticking, onToggle, toggling, bannerError,
+  attention, attentionLoading, onJump, onDesign }) {
   const ceilings = status?.ceilings || {};
   const counts = status?.counts || {};
   const skills = status?.skills || [];
   const tick = status?.tick || {};
+  const frozen = status?.enabled !== true;
 
   return (
     <div className="space-y-3">
-      <StatusBanner status={status} />
+      <StatusBanner
+        status={status}
+        busy={toggling}
+        onToggle={onToggle}
+        onError={bannerError ? (
+          <p className="mt-2.5 text-[11px] text-destructive flex items-start gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /><span>{bannerError}</span>
+          </p>
+        ) : null}
+      />
+
+      {/* What is waiting on you, above the numbers. The numbers are context; this is the question. */}
+      <AttentionPanel data={attention} onJump={onJump} loading={attentionLoading} />
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           ['Residents', counts.residents ?? residents.length, Bot, 'text-accent'],
-          ['Active goals', counts.activeGoals ?? 0, Activity, 'text-green-500'],
-          ['Parked goals', counts.parkedGoals ?? 0, Pause, 'text-yellow-500'],
-          ['Staged effects', counts.stagedEffects ?? 0, ShieldCheck, 'text-primary'],
+          ['Running goals', counts.activeGoals ?? 0, Activity, 'text-green-500'],
+          ['Paused goals', counts.parkedGoals ?? 0, Pause, 'text-yellow-500'],
+          ['Actions waiting', counts.stagedEffects ?? 0, ShieldCheck, 'text-primary'],
         ].map(([label, value, Icon, tone]) => (
           <div key={label} className="rounded-xl border border-border bg-card px-3 py-3">
             <Icon className={`w-3.5 h-3.5 ${tone} mb-1.5`} />
@@ -1250,65 +1539,130 @@ function Overview({ status, residents, goals, onTick, ticking }) {
         ))}
       </div>
 
+      <Section title="Start here" subtitle="The two things worth doing first on this page" icon={Sparkles}>
+        <div className="grid sm:grid-cols-2 gap-2">
+          <button
+            onClick={onDesign}
+            className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2.5 text-left hover:bg-primary/10 transition-colors"
+          >
+            <p className="text-xs font-semibold flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-primary" /> Design a resident by describing it
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">
+              Say what you want watched and how often. COGNOS drafts the name, brief, skills, budget and a first
+              goal — you review all of it, and nothing is created until you click.
+            </p>
+          </button>
+          <button
+            onClick={() => onJump('goals')}
+            className="rounded-lg border border-border px-3 py-2.5 text-left hover:bg-muted/50 transition-colors"
+          >
+            <p className="text-xs font-semibold flex items-center gap-1.5">
+              <ClipboardCheck className="w-3.5 h-3.5 text-accent" /> Review the goals
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">
+              A goal does no work at all until you authorize the exact scope and budget you are shown.
+            </p>
+          </button>
+        </div>
+      </Section>
+
       <div className="grid md:grid-cols-2 gap-3">
-        <Section title="Ceilings" subtitle="Hitting one parks a goal and writes a notice — it is never silently queued" icon={Gauge}>
+        <Section title="Spending limits" subtitle="Hitting one pauses the goal and tells you why — it is never silently queued" icon={Gauge}>
           <div className="space-y-3">
             <Meter label="Workspace spend today" used={0} limit={ceilings.maxCostPerDayUsd ?? 0} suffix="" />
             <div className="grid grid-cols-2 gap-3 text-[10px]">
-              <div><p className="text-muted-foreground">Daily ceiling</p><p className="font-medium tabular-nums">{fmtMoney(ceilings.maxCostPerDayUsd)}</p></div>
-              <div><p className="text-muted-foreground">Monthly ceiling</p><p className="font-medium tabular-nums">{fmtMoney(ceilings.maxCostPerMonthUsd)}</p></div>
-              <div><p className="text-muted-foreground">Active goals</p><p className="font-medium tabular-nums">{ceilings.maxActiveGoals}</p></div>
-              <div><p className="text-muted-foreground">Notices / day</p><p className="font-medium tabular-nums">{ceilings.maxNoticesPerDay}</p></div>
+              <div><p className="text-muted-foreground">Per day</p><p className="font-medium tabular-nums">{fmtMoney(ceilings.maxCostPerDayUsd)}</p></div>
+              <div><p className="text-muted-foreground">Per month</p><p className="font-medium tabular-nums">{fmtMoney(ceilings.maxCostPerMonthUsd)}</p></div>
+              <div><p className="text-muted-foreground">Goals at once</p><p className="font-medium tabular-nums">{ceilings.maxActiveGoals}</p></div>
+              <div><p className="text-muted-foreground">Notices per day</p><p className="font-medium tabular-nums">{ceilings.maxNoticesPerDay}</p></div>
             </div>
           </div>
         </Section>
 
-        <Section title="The loop" subtitle="One bounded slice per wake-up; a lease makes two workers impossible" icon={RefreshCw}>
+        <Section title="How often it wakes" subtitle="One bounded slice per wake-up; a lease makes two workers impossible" icon={RefreshCw}>
           <div className="grid grid-cols-2 gap-3 text-[10px]">
-            <div><p className="text-muted-foreground">Heartbeat</p><p className="font-medium tabular-nums">{fmtMs(tick.intervalMs)}</p></div>
-            <div><p className="text-muted-foreground">Slice cap</p><p className="font-medium tabular-nums">{fmtMs(tick.sliceMs)}</p></div>
-            <div><p className="text-muted-foreground">Steps / slice</p><p className="font-medium tabular-nums">{tick.maxStepsPerTick}</p></div>
-            <div><p className="text-muted-foreground">Lease</p><p className="font-medium tabular-nums">{fmtMs(tick.leaseMs)}</p></div>
-            <div><p className="text-muted-foreground">Park after</p><p className="font-medium tabular-nums">{tick.maxConsecutiveFailures} failures</p></div>
-            <div><p className="text-muted-foreground">Notices</p><p className="font-medium">{status?.notices?.mode || '—'}</p></div>
+            <div><p className="text-muted-foreground">Wakes every</p><p className="font-medium">{humanInterval(tick.intervalMs)}</p></div>
+            <div><p className="text-muted-foreground">Work per wake-up</p><p className="font-medium tabular-nums">up to {tick.maxStepsPerTick} steps</p></div>
+            <div><p className="text-muted-foreground">Longest slice</p><p className="font-medium tabular-nums">{fmtMs(tick.sliceMs)}</p></div>
+            <div><p className="text-muted-foreground">Pauses after</p><p className="font-medium tabular-nums">{tick.maxConsecutiveFailures} failures</p></div>
+            <div className="col-span-2">
+              <p className="text-muted-foreground">Reports to you</p>
+              <p className="font-medium">
+                {status?.notices?.mode === 'none'
+                  ? 'nowhere yet — no notice channel is configured'
+                  : `through the ${status?.notices?.mode || '—'} channel`}
+              </p>
+            </div>
           </div>
-          <button onClick={onTick} disabled={ticking || status?.enabled !== true}
+          <button onClick={onTick} disabled={ticking || frozen}
             className="mt-3 flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs disabled:opacity-40"
-            title={status?.enabled !== true ? 'Autonomy is frozen' : 'Run one bounded slice now'}>
+            title={frozen ? 'Autonomy is off' : 'Run one bounded slice now'}>
             <RefreshCw className={`w-3.5 h-3.5 ${ticking ? 'animate-spin' : ''}`} /> Run a slice now
           </button>
+          <details className="mt-2.5 text-[10px] text-muted-foreground">
+            <summary className="cursor-pointer select-none">Technical details</summary>
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1 mt-1.5 font-mono">
+              <span>intervalMs: {fmtMs(tick.intervalMs)}</span>
+              <span>sliceMs: {fmtMs(tick.sliceMs)}</span>
+              <span>leaseMs: {fmtMs(tick.leaseMs)}</span>
+              <span>jitterMs: {fmtMs(tick.jitterMs)}</span>
+              <span>outboxMode: {status?.outboxMode || 'shadow'}</span>
+              <span>backoffMs: {fmtMs(tick.stepBackoffMs)}</span>
+            </div>
+          </details>
         </Section>
       </div>
 
       <Section
-        title="Skills"
-        subtitle="Code-owned, not data. A row in any table cannot add to this list — only a reviewed code change can."
+        title="What residents can do"
+        subtitle="Skills live in code, not in a table. No brief, no draft and no database row can add one."
         icon={Zap}
       >
         <div className="space-y-1.5">
           {skills.map(skill => (
             <div key={skill.id} className="flex items-start gap-2 rounded-lg border border-border px-3 py-2">
-              <Pill tone={skill.tier === 'T0' ? 'muted' : skill.tier === 'T1' ? 'info' : 'warn'}>{skill.tier}</Pill>
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium font-mono">{skill.id}</p>
-                <p className="text-[10px] text-muted-foreground">{skill.summary}</p>
-                <p className="text-[10px] text-muted-foreground/60 font-mono mt-0.5">kill switch: {skill.killSwitch}</p>
+                <p className="text-xs font-medium">{skill.summary}</p>
+                <p className="text-[10px] text-muted-foreground/80 mt-0.5">{tierLabel(skill.tier)}</p>
               </div>
-              <Pill tone={skill.enabled ? 'ok' : 'muted'}>{skill.enabled ? 'enabled' : 'off'}</Pill>
+              <Pill tone={skill.enabled ? 'ok' : 'muted'}>{skill.enabled ? 'available' : 'not available here'}</Pill>
             </div>
           ))}
-          {status?.noticeTemplates?.length > 0 && (
-            <p className="text-[10px] text-muted-foreground pt-1">
-              Notice templates: <span className="font-mono">{status.noticeTemplates.join(', ')}</span> —
-              a model cannot write free text into a notice.
-            </p>
-          )}
         </div>
+        {/* The machine vocabulary is demoted, not deleted: whoever reads the logs
+            needs the same tokens the code and the audit trail use. */}
+        <details className="mt-2.5 rounded-lg border border-border/60 px-3 py-2">
+          <summary className="text-[11px] text-muted-foreground cursor-pointer select-none">
+            Technical details — skill ids, tiers and kill switches
+          </summary>
+          <div className="mt-2 space-y-1">
+            {skills.map(skill => (
+              <p key={skill.id} className="text-[10px] font-mono text-muted-foreground/80 flex flex-wrap gap-x-2">
+                <span className="text-foreground/80">{skill.id}</span>
+                <span>{skill.tier}</span>
+                <span>kill switch: {skill.killSwitch}</span>
+                {skill.requiresRung ? <span>needs rung: {skill.requiresRung}</span> : null}
+                <span>{skill.enabled ? 'enabled' : 'off'}</span>
+              </p>
+            ))}
+            {status?.noticeTemplates?.length > 0 && (
+              <p className="text-[10px] text-muted-foreground pt-1">
+                Notice templates: <span className="font-mono">{status.noticeTemplates.join(', ')}</span> —
+                a model cannot write free text into a notice.
+              </p>
+            )}
+            <p className="text-[10px] text-muted-foreground pt-1">
+              Built tiers: <span className="font-mono">{(status?.builtTiers || []).join(', ') || '—'}</span>.
+              Tiers in words: {Object.entries(TIER_LABEL).map(([t, l]) => `${t} ${l}`).join(' · ')}.
+              T5 is declared and not built.
+            </p>
+          </div>
+        </details>
       </Section>
     </div>
   );
 }
-
 // --------------------------------------------------------------------- page
 export default function Autonomy() {
   const { openSidebar } = useCognos() || {};
@@ -1316,8 +1670,14 @@ export default function Autonomy() {
   const [status, setStatus] = useState(null);
   const [residents, setResidents] = useState([]);
   const [goals, setGoals] = useState([]);
+  const [attention, setAttention] = useState(null);
+  const [attentionLoading, setAttentionLoading] = useState(true);
   const [ticking, setTicking] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [error, setError] = useState('');
+  const [bannerError, setBannerError] = useState('');
+  const [designerOpen, setDesignerOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [, forceRefresh] = useState(0);
 
   const refreshAll = useCallback(async () => {
@@ -1333,7 +1693,14 @@ export default function Autonomy() {
     }
   }, []);
 
-  useEffect(() => { refreshAll(); }, [refreshAll]);
+  const refreshAttention = useCallback(async () => {
+    setAttentionLoading(true);
+    try { setAttention(await api.autonomyAttention()); }
+    catch { setAttention(null); }
+    finally { setAttentionLoading(false); }
+  }, []);
+
+  useEffect(() => { refreshAll(); refreshAttention(); }, [refreshAll, refreshAttention]);
 
   const frozen = status?.enabled !== true;
 
@@ -1341,12 +1708,35 @@ export default function Autonomy() {
     setTicking(true); setError('');
     try {
       const result = await api.runTick();
-      if (result?.frozen) setError('Autonomy is frozen — nothing ran.');
+      if (result?.frozen) setError('Autonomy is off — nothing ran.');
       await refreshAll();
       forceRefresh(n => n + 1);
     } catch (e) {
       setError(e.message || 'The tick failed');
     } finally { setTicking(false); }
+  };
+
+  /**
+   * THE SWITCH. Only rendered when an operator delegated it, and the server is
+   * the thing that decides — a pin answers 409 with the reason, which is shown
+   * here rather than swallowed. The toggle flips back to the truth on refusal
+   * instead of staying where the click put it.
+   */
+  const handleToggle = async (next) => {
+    if (toggling) return;
+    setToggling(true); setBannerError('');
+    try {
+      const out = await api.setAutonomyEnabled(next);
+      await Promise.all([refreshAll(), refreshAttention()]);
+      setBannerError(out.changed === false
+        ? `Autonomy was already ${out.enabled ? 'on' : 'off'}.`
+        : '');
+    } catch (e) {
+      // Refusal or failure: re-read the truth so the switch cannot sit in a
+      // position the server did not accept.
+      setBannerError(e?.message || 'Could not change the switch.');
+      await refreshAll();
+    } finally { setToggling(false); }
   };
 
   return (
@@ -1364,8 +1754,24 @@ export default function Autonomy() {
           residents, goals, and the outbox — every effect judged before it happens
         </span>
         <button
-          onClick={refreshAll}
+          onClick={() => setHelpOpen(true)}
           className="ml-auto p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
+          title="What do these words mean?"
+          aria-label="Open the glossary"
+        >
+          <HelpCircle className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={() => setDesignerOpen(true)}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium"
+          title="Describe a resident in plain words and COGNOS drafts it"
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Design with COGNOS</span>
+        </button>
+        <button
+          onClick={() => { refreshAll(); refreshAttention(); }}
+          className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
           title="Refresh"
         >
           <RefreshCw className="w-3.5 h-3.5" />
@@ -1393,20 +1799,36 @@ export default function Autonomy() {
           {!status ? (
             <p className="text-xs text-muted-foreground py-6 text-center">Loading autonomy status…</p>
           ) : tab === 'overview' ? (
-            <Overview status={status} residents={residents} goals={goals} onTick={runTick} ticking={ticking} />
+            <Overview
+              status={status} residents={residents} goals={goals}
+              onTick={runTick} ticking={ticking}
+              onToggle={handleToggle} toggling={toggling}
+              bannerError={bannerError}
+              attention={attention} attentionLoading={attentionLoading}
+              onJump={setTab} onDesign={() => setDesignerOpen(true)}
+            />
           ) : tab === 'residents' ? (
-            <Residents status={status} frozen={frozen} />
+            <Residents status={status} frozen={frozen} onDesign={() => setDesignerOpen(true)} onChanged={refreshAll} />
           ) : tab === 'goals' ? (
-            <Goals status={status} frozen={frozen} residents={residents} />
+            <Goals status={status} frozen={frozen} residents={residents} onChanged={refreshAttention} />
           ) : tab === 'notices' ? (
-            <Notices />
+            <Notices onChanged={refreshAttention} />
           ) : tab === 'promotions' ? (
-            <Promotions frozen={frozen} />
+            <Promotions frozen={frozen} onChanged={refreshAttention} />
           ) : (
-            <Outbox status={status} />
+            <Outbox status={status} onChanged={refreshAttention} />
           )}
         </div>
       </div>
+
+      <DesignerDrawer
+        open={designerOpen}
+        onClose={() => setDesignerOpen(false)}
+        status={status}
+        onCreated={() => { refreshAll(); refreshAttention(); }}
+        onEnabledChange={() => { refreshAll(); refreshAttention(); }}
+      />
+      <HelpDrawer open={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   );
 }

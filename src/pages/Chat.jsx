@@ -13,7 +13,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Folder, Menu, Globe, Volume2, VolumeX } from 'lucide-react';
+import { Bot, Folder, Menu, Globe, Volume2, VolumeX } from 'lucide-react';
 import { api, sendMessage } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
 import { useVoice } from '@/lib/voiceContext';
@@ -22,6 +22,11 @@ import ChatInput from '@/components/chat/ChatInput';
 import WelcomeScreen from '@/components/chat/WelcomeScreen';
 import ResearchDecisionCard from '@/components/chat/ResearchDecisionCard';
 import GoalCard from '@/components/chat/GoalCard';
+// Phase 25 — the resident designer is reachable from chat as well as from the
+// Autonomy page, and it is the same component: describing a resident is a
+// conversation, and this is where conversations already happen. It creates
+// nothing; the Autonomy surface still owns every write.
+import DesignerDrawer from '@/components/autonomy/DesignerDrawer';
 
 const STYLES = ['balanced', 'casual', 'technical', 'strategic'];
 
@@ -56,6 +61,7 @@ export default function Chat() {
   // Phase 20 — asking ABOUT a goal: ?goal=<id> deep-links from Autonomy. The
   // goal's notes load as citable evidence for every turn until detached.
   const [goalId, setGoalId] = useState(() => searchParams.get('goal') || null);
+  const [designerOpen, setDesignerOpen] = useState(false);
   const [goalDetail, setGoalDetail] = useState(null);
   const [goalBusy, setGoalBusy] = useState(false);
   const [goalError, setGoalError] = useState('');
@@ -328,6 +334,14 @@ export default function Chat() {
           )}
         </div>
         <button
+          onClick={() => setDesignerOpen(true)}
+          aria-label="Design a resident"
+          className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          title="Design a resident — describe it in plain words and COGNOS drafts the whole thing"
+        >
+          <Bot className="w-4 h-4" />
+        </button>
+        <button
           onClick={toggleVoiceMode}
           disabled={!voiceSupported}
           aria-pressed={voiceSettings.enabled}
@@ -434,6 +448,8 @@ export default function Chat() {
         agentMode={agentMode}
         onAgentModeChange={setAgentMode}
       />
+
+      <DesignerDrawer open={designerOpen} onClose={() => setDesignerOpen(false)} />
     </div>
   );
 }

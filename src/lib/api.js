@@ -139,6 +139,27 @@ export const api = {
   /** Run one bounded slice now. No-op (frozen) when autonomy is disabled. */
   runTick: (body = {}) => req("/api/autonomy/tick", { method: "POST", body }),
 
+  // --- Phase 25: hybrid enablement, the attention queue, the designer --------
+  /**
+   * The delegated switch: what it is, who decided it, and whether this UI may
+   * change it. `pinned` means an operator forced it in the environment and the
+   * toggle cannot override that; `canToggle` false with no pin means the switch
+   * was never delegated.
+   */
+  autonomySettings: (params = {}) => req(`/api/autonomy/settings${qs(params)}`),
+  /** Flip it. 409 (with the reason in words) when pinned or not delegated. */
+  setAutonomyEnabled: (enabled, body = {}) =>
+    req("/api/autonomy/settings", { method: "POST", body: { enabled, ...body } }),
+  /** What is waiting on a human, grouped, each group naming the tab that resolves it. */
+  autonomyAttention: (params = {}) => req(`/api/autonomy/attention${qs(params)}`),
+  /**
+   * One designer turn. Stateless: send the transcript and the current draft, get
+   * the next draft plus a short design note. Creates nothing.
+   */
+  designResident: (body) => req("/api/autonomy/designer", { method: "POST", body }),
+  /** THE explicit click: create the resident, and optionally its first goal. */
+  createDesignedResident: (body) => req("/api/autonomy/designer/create", { method: "POST", body }),
+
   // --- Phase 21: rungs and the evidence that earns them ---------------------
   // A rung flag says an operator switched it on. An evidence row says the
   // shadow corpus justified it. A live external write needs both.

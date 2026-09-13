@@ -42,7 +42,7 @@ import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { newId, num } from "./db/util.js";
-import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA, PHASE24_SCHEMA } from "./db/schema.js";
+import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA, PHASE24_SCHEMA, PHASE25_SCHEMA } from "./db/schema.js";
 import { appendEvent, snapshot } from "./knowledge/events.js";
 import {
   createKnowledgeStore, TRACKED_FIELDS,
@@ -189,7 +189,10 @@ CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events (created_date DESC)
 // Phase 14 (Dynamic Systems) and Phase 15 (Meta-Cognition). Additive only:
 // new tables, new indexes, and two nullable columns on memories.
 + PHASE14_SCHEMA + PHASE15_SCHEMA + PHASE16_SCHEMA + PHASE17_SCHEMA + PHASE18_SCHEMA + PHASE19_SCHEMA
-+ PHASE20_SCHEMA + PHASE21_SCHEMA + PHASE22_SCHEMA + PHASE23_SCHEMA + PHASE24_SCHEMA;
++ PHASE20_SCHEMA + PHASE21_SCHEMA + PHASE22_SCHEMA + PHASE23_SCHEMA + PHASE24_SCHEMA
+// Phase 25 — the delegated autonomy switch. Additive: one new table, and it is
+// inert unless COGNOS_AUTONOMY_UI_CONTROL delegates the switch to the UI.
++ PHASE25_SCHEMA;
 
 function isNeon(url) {
   return /\.neon\.tech/i.test(url) || /neon\.database/i.test(url);
@@ -907,6 +910,8 @@ export const AutonomyNotice = db.AutonomyNotice;
 export const AutonomyTick = db.AutonomyTick;
 // Phase 21 — the evidence row that earns a rung (append-only).
 export const RungEvidence = db.RungEvidence;
+// Phase 25 — the delegated on/off switch (inert without COGNOS_AUTONOMY_UI_CONTROL).
+export const AutonomySettings = db.AutonomySettings;
 // Phase 24 — accounts & multi-tenant workspaces.
 export const Accounts = db.Accounts;
 export const Groups = db.Groups;

@@ -8,6 +8,7 @@
 
 import { useState } from 'react';
 import { Bot, Check, ChevronDown, ChevronRight, ClipboardCheck, Sprout, ThumbsDown, ThumbsUp, X } from 'lucide-react';
+import { goalStatusLabel, parkReasonLabel } from '@/lib/autonomyLabels';
 
 /** The locator tail: the goal id minus its constant `goal_` prefix. */
 export function goalTail(goalId) {
@@ -27,9 +28,9 @@ const STATUS_TONE = {
   cancelled: 'bg-muted text-muted-foreground',
 };
 
-function Pill({ tone, children }) {
+function Pill({ tone, children, title }) {
   return (
-    <span className={`text-[9px] uppercase tracking-wide rounded px-1.5 py-0.5 ${tone || 'bg-muted text-muted-foreground'}`}>
+    <span title={title} className={`text-[9px] uppercase tracking-wide rounded px-1.5 py-0.5 ${tone || 'bg-muted text-muted-foreground'}`}>
       {children}
     </span>
   );
@@ -61,7 +62,17 @@ export default function GoalCard({ detail, busy, error, carried, onDecision, onP
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold flex items-center gap-2 flex-wrap">
             <span className="truncate">{goal.title}</span>
-            <Pill tone={STATUS_TONE[goal.status]}>{String(goal.status || '').replace(/_/g, ' ')}</Pill>
+            {/* Plain language first, machine status one hover away: the same goal
+                must not read "Waiting for you" here and "awaiting_authorization"
+                on the Autonomy page, so both use lib/autonomyLabels. */}
+            <Pill tone={STATUS_TONE[goal.status]} title={String(goal.status || '')}>
+              {goalStatusLabel(goal.status)}
+            </Pill>
+            {goal.park_reason && (
+              <span className="text-[10px] text-muted-foreground font-normal" title={String(goal.park_reason)}>
+                {parkReasonLabel(goal.park_reason)}
+              </span>
+            )}
             {error && <span className="text-[10px] text-destructive font-normal">{error}</span>}
           </h3>
           <p className="text-[11px] text-muted-foreground tabular-nums">
