@@ -26,7 +26,7 @@ import {
   describeSettings, ensureSettingsLoaded, refreshSettings, setSettingsEnabled,
   listSettingFlips, AUTONOMY_PIN_ENV, AUTONOMY_UI_CONTROL_ENV
 } from "../autonomy/settings.js";
-import { designTurn, clampDraft, emptyDraft, DESIGNER_LIMITS } from "../autonomy/designer.js";
+import { designTurn, clampDraft, emptyDraft, DESIGNER_LIMITS, firstGoalScope, clampProposedUrls } from "../autonomy/designer.js";
 import { scopeHashes, authorizationCovers, isTightening } from "../autonomy/authorize.js";
 import { decideEffect, revertEffect, refuseEffect, shadowCorpus } from "../autonomy/outbox.js";
 import { RUNGS, RUNG_IDS, recordRungEvidence, rungEvidenceStatus } from "../autonomy/evidenceGate.js";
@@ -435,10 +435,13 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     let goal = null;
     let hashes = null;
     if (req.body?.create_first_goal === true && draft.firstGoal) {
-      // Same scope construction as POST /api/autonomy/goals: the low-risk
-      // templated notice channel is inside the scope the operator authorizes, so
-      // it is visible at the barrier and removable before consent.
-      const scope = { effectsAllowed: ["notify"] };
+      // Notify is always inside the scope the operator authorizes. Proposed
+      // URLs become urlAllowlist + external_read only when the operator ticks
+      // them here — a draft URL is not a grant, and a URL the clamp dropped
+      // cannot be smuggled back in through grant_urls.
+      const proposed = new Set(draft.proposedUrls || []);
+      const selected = clampProposedUrls(req.body?.grant_urls).filter(url => proposed.has(url));
+      const scope = firstGoalScope({ skills: draft.skills, grantUrls: selected });
       goal = await db.AutonomyGoal.create({
         workspace_id: ws.id,
         agent_id: agent.id,

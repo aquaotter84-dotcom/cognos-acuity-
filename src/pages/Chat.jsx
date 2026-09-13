@@ -63,6 +63,7 @@ export default function Chat() {
   // goal's notes load as citable evidence for every turn until detached.
   const [goalId, setGoalId] = useState(() => searchParams.get('goal') || null);
   const [designerOpen, setDesignerOpen] = useState(false);
+  const [attention, setAttention] = useState(null);
   const [goalDetail, setGoalDetail] = useState(null);
   const [goalBusy, setGoalBusy] = useState(false);
   const [goalError, setGoalError] = useState('');
@@ -311,6 +312,18 @@ export default function Chat() {
 
   const handleStop = () => abortRef.current?.abort();
 
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      api.autonomyAttention()
+        .then(data => { if (!cancelled) setAttention(data); })
+        .catch(() => { if (!cancelled) setAttention(null); });
+    };
+    load();
+    const timer = setInterval(load, 20_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [conversationId, goalId, messages.length]);
+
   return (
     <div className="flex flex-col h-full min-h-0">
       <header
@@ -435,6 +448,23 @@ export default function Chat() {
             )}
             {researchRun.error && <p className="text-destructive mt-1">{researchRun.error}</p>}
           </div>
+        </div>
+      )}
+
+      {attention?.needsAttention && attention.total > 0 && (
+        <div className="shrink-0 px-3 md:px-4 pb-1">
+          <button
+            type="button"
+            onClick={() => navigate('/autonomy')}
+            className="max-w-3xl mx-auto w-full flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-[11px] text-left hover:bg-amber-500/10"
+          >
+            <span className="rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 tabular-nums font-semibold">
+              {attention.total}
+            </span>
+            <span className="text-foreground/80 min-w-0 truncate">
+              {attention.total === 1 ? 'One thing needs you on Autonomy' : `${attention.total} things need you on Autonomy`}
+            </span>
+          </button>
         </div>
       )}
 

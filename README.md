@@ -368,7 +368,7 @@ npm run dev
 | `COGNOS_AUTONOMY_ENABLED` | no | **Unset = the loop is frozen.** No goal wakes, no notice is written, no tick row is recorded. Set `true` to **pin** it on; the UI cannot override a pin. |
 | `COGNOS_AUTONOMY_UI_CONTROL` | no | **Delegation, not enablement.** Set `true` to hand the on/off switch to the Autonomy page. The system stays off until someone flips it. |
 | `COGNOS_AUTONOMY_OUTBOX_MODE` | no | `shadow` (default) records verdicts and performs nothing; `dry_run` also records the exact request it declined to send; `live` performs. |
-| `COGNOS_AUTONOMY_NOTICE_MODE` | no | `none`, `internal` (default), or `webhook` with `COGNOS_AUTONOMY_NOTICE_WEBHOOK`. Notices are templates with declared fields. |
+| `COGNOS_AUTONOMY_NOTICE_MODE` | no | `none` / `internal` / `webhook`. Unset + autonomy on → `internal`; unset + frozen → `none`. Explicit values always win. Webhook needs `COGNOS_AUTONOMY_NOTICE_WEBHOOK`. Notices are templates with declared fields. |
 | `COGNOS_AUTONOMY_RESIDENTS` | no | Rung 3: sub-agents, promotion, and `web.search`. Default off. |
 | `COGNOS_AUTONOMY_EXTERNAL_WRITES` | no | **Rung 4.** Default off. On its own it still delivers nothing: the outbox mode and a recorded evidence row also apply. |
 | `COGNOS_AUTONOMY_MIN_SHADOW_SAMPLES` | no | Same-tier samples a corpus needs before a rung can be recorded as justified. Default 25; zero false releases is not configurable. |

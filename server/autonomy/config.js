@@ -30,6 +30,30 @@ const envNum = (name, fallback, min, max) => {
   return Math.max(min, Math.min(max, n));
 };
 
+/**
+ * Where notices go — and how that answer was reached.
+ *
+ * Explicit `none` / `internal` / `webhook` always wins. Unset is NOT the same
+ * as `none`: when autonomy is on, the in-app channel is the default so a first
+ * authorized goal can actually report; when the loop is frozen, unset stays
+ * silent. Distinguishing those two is why we read the raw env rather than
+ * collapsing an empty value into `none`.
+ */
+export function resolveNotices(enabled) {
+  const raw = process.env.COGNOS_AUTONOMY_NOTICE_MODE;
+  const explicit = ["none", "internal", "webhook"].includes(raw);
+  const mode = explicit ? raw : (enabled ? "internal" : "none");
+  const modeSource = explicit ? "env" : (enabled ? "default-on" : "default-off");
+  const webhook = String(process.env.COGNOS_AUTONOMY_NOTICE_WEBHOOK || "").trim() || null;
+  return Object.freeze({
+    mode,
+    webhook,
+    enabled: mode !== "none" && envFlag("COGNOS_AUTONOMY_NOTICES", true),
+    misconfigured: mode === "webhook" && !webhook,
+    modeSource
+  });
+}
+
 /** Per-goal default budget. Overridable per goal — only downward, never above. */
 export const DEFAULT_GOAL_BUDGET = Object.freeze({
   maxSteps: 500,                 // ~5 days of hourly 5-step slices for one goal
@@ -148,19 +172,7 @@ export function autonomyConfig() {
     // at all" and "where does a notice go" are different questions, and a
     // single flag conflating them meant the kill switch was checking a shape
     // the config never produced (so it could never fire).
-    notices: (() => {
-      const mode = ["none", "internal", "webhook"].includes(process.env.COGNOS_AUTONOMY_NOTICE_MODE)
-        ? process.env.COGNOS_AUTONOMY_NOTICE_MODE
-        : "none";                       // record only, surface nothing, until a rung is earned
-      const webhook = String(process.env.COGNOS_AUTONOMY_NOTICE_WEBHOOK || "").trim() || null;
-      return Object.freeze({
-        mode,
-        webhook,
-        enabled: mode !== "none" && envFlag("COGNOS_AUTONOMY_NOTICES", true),
-        // A webhook mode with no URL is a misconfiguration, not a silent no-op.
-        misconfigured: mode === "webhook" && !webhook
-      });
-    })(),
+    notices: resolveNotices(enabled),
     outboxMode: ["shadow", "dry_run", "live"].includes(process.env.COGNOS_AUTONOMY_OUTBOX_MODE)
       ? process.env.COGNOS_AUTONOMY_OUTBOX_MODE : "shadow",
 

@@ -26,7 +26,7 @@ import { ErrorNote, Pill } from '@/components/system/SystemUi';
 
 const EMPTY_DRAFT = {
   name: '', slug: '', purpose: '', brief: '', skills: [],
-  heartbeatMs: 900000, budget: null, firstGoal: null, complete: false,
+  heartbeatMs: 900000, budget: null, firstGoal: null, proposedUrls: [], complete: false,
 };
 
 /** The opening line, so the drawer is never an empty box with a cursor in it. */
@@ -57,6 +57,7 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
   const [notice, setNotice] = useState('');
   const [status, setStatus] = useState(statusProp);
   const [withGoal, setWithGoal] = useState(true);
+  const [grantUrls, setGrantUrls] = useState([]);
   const [showDraft, setShowDraft] = useState(true);
   const [created, setCreated] = useState(null);
   const scrollRef = useRef(null);
@@ -83,6 +84,7 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
     setAdjustments([]); setDropped([]);
     setInput(''); setError(''); setNotice(''); setCreated(null);
     setWithGoal(true);
+    setGrantUrls([]);
   }, [open]);
 
   useEffect(() => {
@@ -112,7 +114,15 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
         messages: transcript,
         draft: draft.complete || draft.name ? draft : null,
       });
-      setDraft(out.draft || EMPTY_DRAFT);
+      const nextDraft = out.draft || EMPTY_DRAFT;
+      setDraft(nextDraft);
+      setGrantUrls(prev => {
+        const proposed = Array.isArray(nextDraft.proposedUrls) ? nextDraft.proposedUrls : [];
+        const previouslyProposed = Array.isArray(draft.proposedUrls) ? draft.proposedUrls : [];
+        const kept = prev.filter(url => proposed.includes(url));
+        const newlyProposed = proposed.filter(url => !previouslyProposed.includes(url));
+        return [...new Set([...kept, ...newlyProposed])];
+      });
       setAdjustments(out.adjustments || []);
       setDropped(out.droppedSkills || []);
       setMessages(prev => [...prev, {
@@ -150,6 +160,7 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
       const out = await api.createDesignedResident({
         draft,
         create_first_goal: withGoal && Boolean(draft.firstGoal),
+        grant_urls: grantUrls,
       });
       setCreated(out);
       setDropped(out.droppedSkills || []);
@@ -161,7 +172,7 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
     } finally {
       setCreating(false);
     }
-  }, [creating, draft, withGoal, onCreated]);
+  }, [creating, draft, withGoal, grantUrls, onCreated]);
 
   /** Turn autonomy on from inside the drawer, when this deployment allows it. */
   const enableFromDrawer = useCallback(async () => {
@@ -302,6 +313,35 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">First goal — will wait for your authorization</p>
                       <p className="text-xs font-medium mt-0.5">{draft.firstGoal.title}</p>
                       <p className="text-[11px] text-muted-foreground line-clamp-3">{draft.firstGoal.objective}</p>
+                    </div>
+                  )}
+
+                  {(draft.proposedUrls || []).length > 0 && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                        Pages it may read — tick to grant at create
+                      </p>
+                      <p className="text-[10px] text-muted-foreground mb-1.5 leading-snug">
+                        These are proposals. Nothing is allowlisted until you tick it and create, then authorize the goal.
+                      </p>
+                      <div className="space-y-1">
+                        {draft.proposedUrls.map(url => {
+                          const on = grantUrls.includes(url);
+                          return (
+                            <label key={url} className="flex items-start gap-2 text-[11px] cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={on}
+                                onChange={() => setGrantUrls(prev => (
+                                  on ? prev.filter(u => u !== url) : [...prev, url]
+                                ))}
+                                className="accent-primary mt-0.5"
+                              />
+                              <span className="font-mono break-all">{url}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
 

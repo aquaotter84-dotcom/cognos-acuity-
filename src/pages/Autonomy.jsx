@@ -34,6 +34,8 @@ import { noteLocator } from '@/components/chat/GoalCard';
 import { useCognos } from '@/lib/cognosContext';
 import { Pill, Empty, ErrorNote } from '@/components/system/SystemUi';
 import DesignerDrawer from '@/components/autonomy/DesignerDrawer';
+import AuthorizeConsent from '@/components/autonomy/AuthorizeConsent';
+import { ARCHIVIST } from '@/lib/archivist';
 import {
   GLOSSARY, TIER_LABEL, effectStatusLabel, goalStatusLabel,
   humanInterval, parkReasonLabel, tierLabel,
@@ -138,7 +140,7 @@ const SETUP_STEPS = [
   },
   {
     env: 'COGNOS_AUTONOMY_NOTICE_MODE=internal',
-    what: 'Optional, and needed before a resident can report anything to you. Without a notice channel the loop stays silent.',
+    what: 'Optional. When autonomy is on and this is unset, notices already go to the in-app channel. Set none to stay silent, or webhook plus COGNOS_AUTONOMY_NOTICE_WEBHOOK to post them out.',
   },
 ];
 
@@ -1501,7 +1503,7 @@ function Outbox({ status, onChanged }) {
 
 // ----------------------------------------------------------------- overview
 function Overview({ status, residents, goals, onTick, ticking, onToggle, toggling, bannerError,
-  attention, attentionLoading, onJump, onDesign }) {
+  attention, attentionLoading, onJump, onDesign, onSeedArchivist, seedingArchivist }) {
   const ceilings = status?.ceilings || {};
   const counts = status?.counts || {};
   const skills = status?.skills || [];
@@ -1554,14 +1556,17 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
             </p>
           </button>
           <button
-            onClick={() => onJump('goals')}
-            className="rounded-lg border border-border px-3 py-2.5 text-left hover:bg-muted/50 transition-colors"
+            onClick={onSeedArchivist}
+            disabled={frozen || seedingArchivist}
+            title={frozen ? 'Autonomy is off — turn it on first' : 'Create the Archivist. Its first goal waits for you.'}
+            className="rounded-lg border border-border px-3 py-2.5 text-left hover:bg-muted/50 transition-colors disabled:opacity-40"
           >
             <p className="text-xs font-semibold flex items-center gap-1.5">
-              <ClipboardCheck className="w-3.5 h-3.5 text-accent" /> Review the goals
+              <Bot className="w-3.5 h-3.5 text-accent" /> {seedingArchivist ? 'Creating the Archivist…' : 'Try the Archivist'}
             </p>
             <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">
-              A goal does no work at all until you authorize the exact scope and budget you are shown.
+              A monitor that records how beliefs change. It is created, not authorized — nothing runs until you
+              say so on the Goals tab.
             </p>
           </button>
         </div>
@@ -1590,7 +1595,9 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
               <p className="text-muted-foreground">Reports to you</p>
               <p className="font-medium">
                 {status?.notices?.mode === 'none'
-                  ? 'nowhere yet — no notice channel is configured'
+                  ? (status?.enabled
+                    ? 'nowhere — the notice channel is set to none'
+                    : 'nowhere yet — turn autonomy on and notices go to the in-app channel unless you set none')
                   : `through the ${status?.notices?.mode || '—'} channel`}
               </p>
             </div>
@@ -1678,6 +1685,7 @@ export default function Autonomy() {
   const [bannerError, setBannerError] = useState('');
   const [designerOpen, setDesignerOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [seedingArchivist, setSeedingArchivist] = useState(false);
   const [, forceRefresh] = useState(0);
 
   const refreshAll = useCallback(async () => {
@@ -1801,6 +1809,39 @@ export default function Autonomy() {
           ) : tab === 'overview' ? (
             <Overview
               status={status} residents={residents} goals={goals}
+              onTick={runTick} ticking={ticking}
+              onToggle={handleToggle} toggling={toggling}
+              bannerError={bannerError}
+              attention={attention} attentionLoading={attentionLoading}
+              onJump={setTab} onDesign={() => setDesignerOpen(true)}
+              onSeedArchivist={seedArchivist} seedingArchivist={seedingArchivist}
+            />
+          ) : tab === 'residents' ? (
+            <Residents status={status} frozen={frozen} onDesign={() => setDesignerOpen(true)} onChanged={refreshAll} />
+          ) : tab === 'goals' ? (
+            <Goals status={status} frozen={frozen} residents={residents} onChanged={refreshAttention} />
+          ) : tab === 'notices' ? (
+            <Notices onChanged={refreshAttention} />
+          ) : tab === 'promotions' ? (
+            <Promotions frozen={frozen} onChanged={refreshAttention} />
+          ) : (
+            <Outbox status={status} onChanged={refreshAttention} />
+          )}
+        </div>
+      </div>
+
+      <DesignerDrawer
+        open={designerOpen}
+        onClose={() => setDesignerOpen(false)}
+        status={status}
+        onCreated={() => { refreshAll(); refreshAttention(); }}
+        onEnabledChange={() => { refreshAll(); refreshAttention(); }}
+      />
+      <HelpDrawer open={helpOpen} onClose={() => setHelpOpen(false)} />
+    </div>
+  );
+}
+tatus={status} residents={residents} goals={goals}
               onTick={runTick} ticking={ticking}
               onToggle={handleToggle} toggling={toggling}
               bannerError={bannerError}

@@ -50,9 +50,10 @@ prompt, every resident is amnesiac and the heartbeat is pointless.
 every hour is noise, not reporting. It appends a finding only when something
 moved, and a watermark after each look.
 
-Seed it with `npm run seed:archivist`. The goal is created
-**awaiting_authorization** on purpose — authorizing is the operator's decision,
-not a seed script's.
+Seed it with `npm run seed:archivist`, or **Try the Archivist** on the Autonomy
+overview. Both use the existing agent and goal writes; neither authorizes. The
+goal is created **awaiting_authorization** on purpose — authorizing is the
+operator's decision, not a seed script's.
 
 Two things the Archivist immediately revealed:
 
@@ -1120,7 +1121,9 @@ governance this document has spent four phases building:
    the on/off is suspended, and only for description.
 3. **Budgets only clamp down** against `DEFAULT_GOAL_BUDGET`, and each reduction
    is reported. Scope is not settable from a draft at all: a model proposing its
-   own scope would be proposing its own authority.
+   own scope would be proposing its own authority. It may *propose* https URLs;
+   the operator ticks them at create, and only then do they become
+   `urlAllowlist` + `external_read` on the first goal.
 4. **Failures are sentences.** No API key, unreachable provider, unparseable
    output — each becomes a bounded, secret-free message plus a code (503/502,
    never a 500 carrying raw configuration text), and the previous draft survives,

@@ -9,6 +9,7 @@
 import { useState } from 'react';
 import { Bot, Check, ChevronDown, ChevronRight, ClipboardCheck, Sprout, ThumbsDown, ThumbsUp, X } from 'lucide-react';
 import { goalStatusLabel, parkReasonLabel } from '@/lib/autonomyLabels';
+import AuthorizeConsent from '@/components/autonomy/AuthorizeConsent';
 
 /** The locator tail: the goal id minus its constant `goal_` prefix. */
 export function goalTail(goalId) {
@@ -109,16 +110,7 @@ export default function GoalCard({ detail, busy, error, carried, onDecision, onP
                 Nothing runs until you authorize it. Authorizing records the hash of this scope and
                 budget — the goal can never widen either without a new decision from you.
               </p>
-              <div className="grid sm:grid-cols-2 gap-2 mt-2 text-[10px]">
-                <div className="rounded bg-background/60 border border-border p-2">
-                  <p className="text-muted-foreground mb-1">Scope</p>
-                  <pre className="font-mono whitespace-pre-wrap break-all">{JSON.stringify(scope, null, 1)}</pre>
-                </div>
-                <div className="rounded bg-background/60 border border-border p-2">
-                  <p className="text-muted-foreground mb-1">Budget</p>
-                  <pre className="font-mono whitespace-pre-wrap break-all">{JSON.stringify(budget, null, 1)}</pre>
-                </div>
-              </div>
+              <AuthorizeConsent scope={scope} budget={budget} />
               {declining ? (
                 <div className="flex items-center gap-2 mt-2.5">
                   <input
