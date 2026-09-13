@@ -679,6 +679,59 @@ await test("google GIS verify endpoint: wrong-audience and foreign-key credentia
   assert.equal((await raw("/api/accounts/auth/google/verify", { method: "POST", body: {} })).status, 400);
 });
 
+await test("race: concurrent registrations with one email -> one 201, rest 409, zero 5xx", async () => {
+  const N = 6;
+  const attempts = Array.from({ length: N }, () =>
+    raw("/api/accounts/register", { method: "POST", body: { email: "clash@x.test", password: "hunter2boogaloo" } })
+  );
+  const results = await Promise.all(attempts);
+  const created = results.filter(r => r.status === 201);
+  const conflicted = results.filter(r => r.status === 409);
+  const serverErrors = results.filter(r => r.status >= 500);
+  assert.equal(created.length, 1, `exactly one account created (got ${created.length})`);
+  assert.equal(conflicted.length, N - 1, `losers get 409 (got ${conflicted.length})`);
+  assert.equal(serverErrors.length, 0, "no unique-violation leaks as a 500");
+  // And the database holds exactly ONE row for that email, and the rolled-back
+  // loser left no workspace behind: total workspaces = accounts' workspaces
+  // (+1 at most for the legacy single-tenant default workspace).
+  const rows = await harness.sql(`SELECT COUNT(*)::int AS n FROM accounts WHERE email = 'clash@x.test'`);
+  assert.equal(rows[0].n, 1, "single account row despite the race");
+  const counts = await harness.sql(
+    `SELECT (SELECT COUNT(*)::int FROM workspaces) AS ws, (SELECT COUNT(*)::int FROM accounts) AS acct`
+  );
+  assert.ok(counts[0].ws - counts[0].acct <= 1, "no orphan workspace left by the rolled-back loser");
+});
+
+await test("race: two parallel Google callbacks, same identity -> same account, zero 5xx", async () => {
+  mockState.idTokenFactory = (nonce) => makeIdToken(gk1, {
+    nonce, sub: "google-sub-race", email: "race.google@x.test", name: "Race Tester"
+  });
+  const starts = await Promise.all([
+    raw("/api/accounts/auth/google/start?format=json"),
+    raw("/api/accounts/auth/google/start?format=json")
+  ]);
+  const callbacks = starts.map(s => {
+    const url = new URL(s.json.authorize_url);
+    return raw(`/api/accounts/auth/google/callback?code=nonce-${encodeURIComponent(url.searchParams.get("nonce"))}&state=${encodeURIComponent(url.searchParams.get("state"))}`);
+  });
+  const [a, b] = await Promise.all(callbacks);
+  assert.equal(a.status, 200, a.text?.slice(0, 200));
+  assert.equal(b.status, 200, b.text?.slice(0, 200));
+  assert.equal(a.json.account.user_id, b.json.account.user_id, "both tabs land on the SAME account");
+  const rows = await harness.sql(`SELECT COUNT(*)::int AS n FROM accounts WHERE google_sub = 'google-sub-race'`);
+  assert.equal(rows[0].n, 1, "single account row for the google identity");
+});
+
+await test("token responses ship Cache-Control: no-store", async () => {
+  const res = await fetch(harness.base + "/api/accounts/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "a@example.com", password: "hunter2boogaloo" })
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("cache-control"), "no-store");
+});
+
 await test("health exposes account configuration (no secret material)", async () => {
   const h = await raw("/api/health");
   assert.equal(h.json.accounts.google.configured, true);

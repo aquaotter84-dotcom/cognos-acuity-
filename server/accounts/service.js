@@ -57,6 +57,17 @@ function httpError(status, code, message) {
   return err;
 }
 
+/**
+ * Postgres unique-violation detector (SQLSTATE 23505). Sign-in must never
+ * answer 500 just because two requests raced past the pre-checks: the unique
+ * indexes on accounts.email / accounts.google_sub are the real arbiters, and
+ * the loser of a race is re-read and answered with the domain response
+ * (409 email_taken, or the existing account for Google sign-in).
+ */
+function isUniqueViolation(err) {
+  return err && (err.code === "23505" || err?.cause?.code === "23505");
+}
+
 export function createAccountService({ db, logger }) {
 
   // A private workspace is a real row in the existing `workspaces` table —
@@ -116,6 +127,16 @@ export function createAccountService({ db, logger }) {
         tsMs: Date.now()
       });
       return { account, workspace: ws };
+    }).catch(async (err) => {
+      // Race guard: two concurrent registrations can both pass the byEmail
+      // pre-check above. The unique index decides; the loser re-reads and
+      // answers 409 — never a raw 500, never a half-created account (the
+      // transaction rolls back the workspace with it).
+      if (isUniqueViolation(err)) {
+        const winner = await db.Accounts.byEmail(normEmail);
+        if (winner) throw httpError(409, "email_taken", "An account with this email already exists");
+      }
+      throw err;
     });
 
     throttleOk(registerCounts, `register:${regKey}`);
@@ -181,9 +202,18 @@ export function createAccountService({ db, logger }) {
       if (byEmail.google_sub && byEmail.google_sub !== payload.sub) {
         throw httpError(409, "google_identity_conflict", "This account is already linked to a different Google identity");
       }
-      const linked = await db.Accounts.linkGoogle(byEmail.id, {
-        googleSub: payload.sub, googleEmail: payload.email, avatarUrl: payload.picture || null
-      });
+      let linked;
+      try {
+        linked = await db.Accounts.linkGoogle(byEmail.id, {
+          googleSub: payload.sub, googleEmail: payload.email, avatarUrl: payload.picture || null
+        });
+      } catch (err) {
+        // Race guard: a concurrent callback may have linked this same Google
+        // identity (or created the sub) first. Re-read; never 500 on 23505.
+        if (!isUniqueViolation(err)) throw err;
+        linked = (await db.Accounts.byGoogleSub(payload.sub)) || (await db.Accounts.byEmail(payload.email));
+        if (!linked) throw err;
+      }
       await db.Accounts.touchLogin(linked.id);
       await db.WorkspaceAudit.append({
         userId: linked.id, workspaceId: linked.workspace_id,
@@ -230,8 +260,18 @@ export function createAccountService({ db, logger }) {
         tsMs: Date.now()
       });
       return { account, workspace: ws };
+    }).catch(async (err) => {
+      // Race guard: two concurrent first sign-ins with the same Google
+      // identity (double click, two tabs) can both pass the byGoogleSub and
+      // byEmail pre-checks. The unique indexes decide; the loser re-reads the
+      // winner and BOTH tabs get a token for the SAME account — never a 500,
+      // never a duplicate identity.
+      if (!isUniqueViolation(err)) throw err;
+      const winner = (await db.Accounts.byGoogleSub(payload.sub)) || (await db.Accounts.byEmail(payload.email));
+      if (!winner) throw err;
+      return { account: winner, workspace: null, raced: true };
     });
-    return { account: created.account, created: true, linked: false };
+    return { account: created.account, created: !created.raced, linked: false };
   }
 
   /**

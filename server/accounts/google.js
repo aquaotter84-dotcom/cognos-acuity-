@@ -141,8 +141,8 @@ function claimChecks(payload, { clientId, expectedNonce }) {
     throw err;
   };
   if (!ISSUERS.includes(payload.iss)) fail("bad_issuer", `issuer ${payload.iss} is not Google`);
+  if (Array.isArray(payload.aud)) fail("bad_audience", "multi-audience tokens are refused");
   if (payload.aud !== clientId) fail("bad_audience", "audience is not this deployment's client id");
-  if (Array.isArray(payload.aud) ? true : false) fail("bad_audience", "multi-audience tokens are refused");
   if (payload.azp && payload.azp !== clientId) fail("bad_audience", "authorized party is not this deployment");
   const nowSec = Math.floor(Date.now() / 1000);
   if (!Number.isFinite(payload.exp) || nowSec - CLOCK_LEEWAY_S >= payload.exp) fail("expired", "token expired");

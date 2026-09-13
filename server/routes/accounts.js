@@ -102,6 +102,7 @@ export function registerAccountRoutes(app, { wrap, db, logger }) {
 
   // --- register ---------------------------------------------------------------
   app.post("/api/accounts/register", wrap(async (req, res) => {
+    res.set("Cache-Control", "no-store"); // bearer tokens must never be cached
     const { email, password, display_name: displayName = null } = req.body || {};
     const { account, workspace } = await service.registerAccount({
       email, password, displayName, ip: req.ip
@@ -114,6 +115,7 @@ export function registerAccountRoutes(app, { wrap, db, logger }) {
 
   // --- login (email) ------------------------------------------------------------
   app.post("/api/accounts/login", wrap(async (req, res) => {
+    res.set("Cache-Control", "no-store");
     const { email, password } = req.body || {};
     const account = await service.authenticateEmail({ email, password, ip: req.ip });
     res.json(tokenResponse(account));
@@ -172,6 +174,7 @@ export function registerAccountRoutes(app, { wrap, db, logger }) {
 
   // --- Google: OAuth callback -----------------------------------------------------
   app.get("/api/accounts/auth/google/callback", wrap(async (req, res) => {
+    res.set("Cache-Control", "no-store");
     if (!googleConfigured()) {
       return res.status(501).json({ error: "Google sign-in is not configured.", code: "google_not_configured" });
     }
@@ -211,6 +214,7 @@ export function registerAccountRoutes(app, { wrap, db, logger }) {
 
   // --- Google: GIS / One Tap credential --------------------------------------------
   app.post("/api/accounts/auth/google/verify", wrap(async (req, res) => {
+    res.set("Cache-Control", "no-store");
     if (!googleConfigured()) {
       return res.status(501).json({ error: "Google sign-in is not configured.", code: "google_not_configured" });
     }
