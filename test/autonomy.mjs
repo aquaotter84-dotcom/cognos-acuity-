@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Phase 19 regressions: durable residents, goals that need authorization
-// before they do any work, staged effects, and a loop that is frozen by
-// default.
+// Phase 19 regressions, evolved for Phase 20: durable residents, goals that need
+// authorization before they do any work, staged effects, T3 external reads, and a
+// loop that is frozen by default.
 //
 // Deterministic and local: no test here reaches a real model or the network.
 // The point of this file is that every autonomy safety property is a fact you
@@ -37,17 +37,18 @@ await test("skills are code, not data: the registry is frozen and tiers are decl
     // intersected against this registry before anything runs.
     assert.ok(skill.idempotencyRule, `${id} states how replay is detected`);
   }
-  // Phase 19 builds T0-T2 only. A T3+ skill appearing here means a rung was
-  // crossed without a shadow corpus.
+  // Phase 20 builds T0-T3 only. A T4+ skill appearing here means a rung was
+  // crossed without a shadow corpus. T3 reads; it cannot write externally.
   const tiers = SKILL_IDS.map(id => getSkill(id).tier);
-  assert.ok(tiers.every(t => ["T0", "T1", "T2"].includes(t)),
-    `Phase 19 must not ship a write-capable skill, got ${tiers.join(",")}`);
+  assert.ok(tiers.every(t => ["T0", "T1", "T2", "T3"].includes(t)),
+    `Phase 20 must not ship an externally-writing skill, got ${tiers.join(",")}`);
+  assert.ok(tiers.includes("T3"), "Phase 20 builds T3 (external read)");
 });
 
-await test("no write-capable skill exists in Phase 19 — external writes are a Phase 21 gate", async () => {
-  const writeTiers = SKILL_IDS.filter(id => Number(getSkill(id).tier.slice(1)) >= 3);
+await test("no externally-writing skill exists in Phase 20 — T3 reads, T4+ stay refused", async () => {
+  const writeTiers = SKILL_IDS.filter(id => Number(getSkill(id).tier.slice(1)) >= 4);
   assert.deepEqual(writeTiers, []);
-  assert.equal(tierAllowed("T3", autonomyConfig()), false);
+  assert.equal(tierAllowed("T3", autonomyConfig()), true);
   assert.equal(tierAllowed("T4", autonomyConfig()), false);
   assert.equal(tierAllowed("T5", autonomyConfig()), false);
 
@@ -348,8 +349,8 @@ try {
 
     const a = tools.json.autonomy;
     assert.equal(a.defaultOff, true);
-    assert.deepEqual(a.builtTiers, ["T0", "T1", "T2"]);
-    assert.deepEqual(a.unbuiltTiers, ["T3", "T4", "T5"],
+    assert.deepEqual(a.builtTiers, ["T0", "T1", "T2", "T3"]);
+    assert.deepEqual(a.unbuiltTiers, ["T4", "T5"],
       "the unbuilt tiers are named, not omitted — the boundary is visible");
     assert.equal(a.skills.length, SKILL_IDS.length);
     for (const skill of a.skills) {
@@ -358,7 +359,8 @@ try {
       assert.ok(skill.killSwitch, `${skill.id} names a kill switch`);
       assert.ok(skill.idempotencyRule, `${skill.id} states how replay is detected`);
       // Tiers this build will not execute are refused even if listed.
-      assert.ok(!["T3", "T4", "T5"].includes(skill.tier));
+      assert.ok(!["T4", "T5"].includes(skill.tier));
+      assert.ok("requiresRung" in skill, `${skill.id} declares its rung gate (or null)`);
     }
     // The tiers are described, so "T2" is never an unexplained string.
     assert.equal(a.tiers.T0, "observe");
@@ -389,7 +391,7 @@ try {
     assert.equal(health.json.autonomy.enabled, true);   // enabled in this harness
     assert.equal(health.json.autonomy.defaultOff, true);
     assert.ok(Array.isArray(health.json.autonomy.builtTiers));
-    assert.equal(health.json.autonomy.builtTiers.includes("T3"), false);
+    assert.equal(health.json.autonomy.builtTiers.includes("T3"), true);
     assert.equal(health.json.autonomy.builtTiers.includes("T4"), false);
   });
 

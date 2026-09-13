@@ -42,7 +42,7 @@ import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { newId, num } from "./db/util.js";
-import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA } from "./db/schema.js";
+import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA } from "./db/schema.js";
 import { appendEvent, snapshot } from "./knowledge/events.js";
 import {
   createKnowledgeStore, TRACKED_FIELDS,
@@ -186,7 +186,7 @@ CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events (created_date DESC)
 `
 // Phase 14 (Dynamic Systems) and Phase 15 (Meta-Cognition). Additive only:
 // new tables, new indexes, and two nullable columns on memories.
-+ PHASE14_SCHEMA + PHASE15_SCHEMA + PHASE16_SCHEMA + PHASE17_SCHEMA + PHASE18_SCHEMA + PHASE19_SCHEMA;
++ PHASE14_SCHEMA + PHASE15_SCHEMA + PHASE16_SCHEMA + PHASE17_SCHEMA + PHASE18_SCHEMA + PHASE19_SCHEMA + PHASE20_SCHEMA;
 
 function isNeon(url) {
   return /\.neon\.tech/i.test(url) || /neon\.database/i.test(url);

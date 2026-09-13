@@ -53,6 +53,7 @@
 // not change — coherence never votes).
 
 import { defineAgent } from "../shared/runtime.js";
+import { parseNoteLocators } from "../autonomy/goalEvidence.js";
 
 const SECRET_PATTERNS = [
   /sk-[A-Za-z0-9]{20,}/,
@@ -179,6 +180,24 @@ function auditMinimumCauseFloors(text) {
   return findings;
 }
 
+/**
+ * Phase 20 — Clause 3, Rule 3: goal-note citations vs. the loaded evidence.
+ * Every [goal_<tail>:nN] in the answer must name a note that was actually
+ * loaded for this turn. Compared case-insensitively (the model may shout);
+ * a cross-goal citation fails the membership test by construction, because
+ * the supplied set only ever holds this turn's goal.
+ */
+function auditGoalNoteCitations(text, record) {
+  const findings = [];
+  const supplied = new Set((record?.goalNoteLocators || []).map(label => String(label).toLowerCase()));
+  for (const { locator } of parseNoteLocators(text)) {
+    if (!supplied.has(String(locator).toLowerCase())) {
+      findings.push(`cites goal note ${locator} but that note was not loaded for this turn`);
+    }
+  }
+  return findings;
+}
+
 function auditSourceCitations(text, record) {
   const findings = [];
   const sourceIds = new Set((record?.sources || []).map(source => String(source?.id || "")).filter(Boolean));
@@ -264,10 +283,12 @@ export const governorAgent = defineAgent({
       const floorFindings = auditMinimumCauseFloors(text);
       const citationFindings = auditAuthorityCitations(text, record);
       const sourceCitationFindings = auditSourceCitations(text, record);
+      const goalNoteCitationFindings = auditGoalNoteCitations(text, record);
       if (floorFindings.length) flags.push("minimum_cause_without_floor");
       if (citationFindings.length) flags.push("authority_citation_unverifiable");
       if (sourceCitationFindings.length) flags.push("source_citation_unverifiable");
-      findings.push(...floorFindings, ...citationFindings, ...sourceCitationFindings);
+      if (goalNoteCitationFindings.length) flags.push("goal_note_citation_unverifiable");
+      findings.push(...floorFindings, ...citationFindings, ...sourceCitationFindings, ...goalNoteCitationFindings);
     }
     // The coherence measurement rides along; it does not vote.
     return {

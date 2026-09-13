@@ -436,6 +436,15 @@ export function createAutonomyStore(run) {
          ORDER BY ordinal DESC LIMIT $2`, [goalId, safeLimit]
       );
       return rows.reverse();
+    },
+    // Phase 20 — resolve a goal-note LOCATOR ([goal_<id>:n<ordinal>]) to its
+    // row. Ordinals are unique per goal, so a citation names exactly one note.
+    async getByOrdinal(goalId, ordinal) {
+      const rows = await run(
+        `SELECT * FROM goal_notes WHERE goal_id=$1 AND ordinal=$2 LIMIT 1`,
+        [goalId, Number(ordinal)]
+      );
+      return rows[0] || null;
     }
   };
 
@@ -618,6 +627,162 @@ export function createAutonomyStore(run) {
     }
   };
 
+  // -------------------------------------------------------------------------
+  // Phase 20 — sub-agents. Narrow workers spawned by a step: a subset of the
+  // goal's skills, a carved sub-budget, and output that enters as evidence
+  // with provenance (pin.subagent_untrusted).
+  // -------------------------------------------------------------------------
+  const GoalSubagent = {
+    async create(data) {
+      const id = data.id || newId("sub");
+      const rows = await run(
+        `INSERT INTO goal_subagents
+          (id, workspace_id, goal_id, agent_id, tick_id, parent_step_id,
+           objective, skills, budget, spent, status, started_ms)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         RETURNING *`,
+        [id, data.workspace_id, data.goal_id, data.agent_id || null,
+         data.tick_id || null, data.parent_step_id || null,
+         String(data.objective || ""), json(data.skills, []),
+         json(data.budget, {}), json(data.spent, {}),
+         data.status || "running", data.started_ms ?? Date.now()]
+      );
+      return rows[0];
+    },
+    async get(id) {
+      const rows = await run(`SELECT * FROM goal_subagents WHERE id=$1`, [id]);
+      return rows[0] || null;
+    },
+    async list(goalId, limit = 100) {
+      const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100));
+      return run(
+        `SELECT * FROM goal_subagents WHERE goal_id=$1 ORDER BY created_date ASC LIMIT $2`,
+        [goalId, safeLimit]
+      );
+    },
+    async finish(id, { status, output = null, spent = null, error = null }) {
+      const rows = await run(
+        `UPDATE goal_subagents
+            SET status = $2, output = COALESCE($3, output),
+                spent = COALESCE($4, spent), error_message = $5,
+                ended_ms = $6, updated_date = now()
+          WHERE id = $1 RETURNING *`,
+        [id, status, output === null ? null : json(output, null),
+         spent === null ? null : json(spent, {}),
+         error ? String(error).slice(0, 400) : null, Date.now()]
+      );
+      return rows[0] || null;
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Phase 20 — promotion requests. The ONLY route from a working note to
+  // durable knowledge, and it is labelled at apply time: a memory lands
+  // evidence_level 'inferred' (never 'direct'), a belief enters as a
+  // hypothesis. Statuses: requested -> approved|refused; approved -> applied.
+  // -------------------------------------------------------------------------
+  const NotePromotion = {
+    async create(data) {
+      const id = data.id || newId("promo");
+      const rows = await run(
+        `INSERT INTO note_promotions
+          (id, workspace_id, goal_id, agent_id, note_id, target, status,
+           reason, decision_source, run_id, message_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         RETURNING *`,
+        [id, data.workspace_id, data.goal_id, data.agent_id || null,
+         data.note_id, data.target || "memory", data.status || "requested",
+         data.reason || null, data.decision_source || null,
+         data.run_id || null, data.message_id || null]
+      );
+      return rows[0];
+    },
+    async get(id) {
+      const rows = await run(`SELECT * FROM note_promotions WHERE id=$1`, [id]);
+      return rows[0] || null;
+    },
+    /**
+     * The open request for this (note, target), if any. A repeat request
+     * resolves to this row instead of queueing a second decision.
+     */
+    async findOpen(noteId, target = "memory") {
+      const rows = await run(
+        `SELECT * FROM note_promotions
+          WHERE note_id=$1 AND target=$2 AND status IN ('requested','approved')
+          ORDER BY created_date DESC LIMIT 1`,
+        [noteId, target]
+      );
+      return rows[0] || null;
+    },
+    /** The latest row for this (note, target) in any status — requests dedupe. */
+    async findLatest(noteId, target = "memory") {
+      const rows = await run(
+        `SELECT * FROM note_promotions
+          WHERE note_id=$1 AND target=$2
+          ORDER BY created_date DESC LIMIT 1`,
+        [noteId, target]
+      );
+      return rows[0] || null;
+    },
+    /** Any terminal application of this (note, target) — promotion applies once. */
+    async findApplied(noteId, target = "memory") {
+      const rows = await run(
+        `SELECT * FROM note_promotions
+          WHERE note_id=$1 AND target=$2 AND status='applied'
+          ORDER BY created_date DESC LIMIT 1`,
+        [noteId, target]
+      );
+      return rows[0] || null;
+    },
+    async list(workspaceId, { status = null, goalId = null, limit = 100 } = {}) {
+      const safeLimit = Math.max(1, Math.min(200, Number(limit) || 100));
+      const where = ["workspace_id=$1"];
+      const params = [workspaceId];
+      if (status) { params.push(status); where.push(`status=$${params.length}`); }
+      if (goalId) { params.push(goalId); where.push(`goal_id=$${params.length}`); }
+      params.push(safeLimit);
+      return run(
+        `SELECT * FROM note_promotions WHERE ${where.join(" AND ")}
+         ORDER BY created_date DESC LIMIT $${params.length}`, params
+      );
+    },
+    async decide(id, { status, reason = null, decisionSource = null, decidedMs = null }) {
+      const rows = await run(
+        `UPDATE note_promotions
+            SET status = $2, reason = $3, decision_source = $4,
+                decided_ms = $5, updated_date = now()
+          WHERE id = $1 RETURNING *`,
+        [id, status, reason, decisionSource, decidedMs ?? Date.now()]
+      );
+      return rows[0] || null;
+    },
+    /**
+     * Stamp the answer that carried this promotion, so the ledger event on the
+     * applied memory/belief points at the run and message that confirmed it.
+     * COALESCE: a stamp never overwrites a stamp.
+     */
+    async stampCarrier(id, { runId = null, messageId = null }) {
+      const rows = await run(
+        `UPDATE note_promotions
+            SET run_id = COALESCE($2, run_id), message_id = COALESCE($3, message_id),
+                updated_date = now()
+          WHERE id = $1 RETURNING *`,
+        [id, runId, messageId]
+      );
+      return rows[0] || null;
+    },
+    async markApplied(id, { memoryId = null, beliefId = null }) {
+      const rows = await run(
+        `UPDATE note_promotions
+            SET status = 'applied', applied_memory_id = $2, applied_belief_id = $3,
+                updated_date = now()
+          WHERE id = $1 RETURNING *`,
+        [id, memoryId, beliefId]
+      );
+      return rows[0] || null;
+    }
+  };
+
   return {
     AutonomyAgent,
     AutonomyGoal,
@@ -628,6 +793,8 @@ export function createAutonomyStore(run) {
     AutonomyOutbox,
     OutboxEvent,
     AutonomyNotice,
-    AutonomyTick
+    AutonomyTick,
+    GoalSubagent,
+    NotePromotion
   };
 }

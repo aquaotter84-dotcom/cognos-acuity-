@@ -65,11 +65,31 @@ Two things the Archivist immediately revealed:
 
 ---
 
-## Status — Phase 19 is built
+## Status — Phases 19–20 are built
 
-This document is the design. As of this revision, Phase 19 of it is **implemented
-and green**: `npm test` runs `test/autonomy.mjs` (35 checks) alongside the existing
-suites, and everything passes.
+This document is the design. As of this revision, Phases 19–20 of it are
+**implemented and green**: `npm test` runs `test/autonomy.mjs` plus
+`test/phase20.mjs` (22 checks) alongside the existing suites, and everything
+passes.
+
+Phase 20 delivered the §10 row in full: narrow sub-agents with carved
+sub-budgets; the promotion path (human confirm + narrow answer-carried,
+landing `inferred` with origin tags); the Goal Card in chat (birth barrier,
+findings with locators, workers, open promotions, carried banner);
+T3 evidence fetch (allowlist + SSRF + staged/Governor-judged + replay);
+`[goal_…:nN]` locators with the Governor citation extension; and the §8.1
+secret-in-note and false-promotion gap tests. Rung 3 is built and stays default
+off behind `COGNOS_AUTONOMY_RESIDENTS` and `COGNOS_AUTONOMY_SEARCH`.
+
+Building Phase 20 found four more guards that could not fire: the Governor
+judged a live scope no authorization row had named (now bound by
+`authorizationCovers` plus a stale-scope rule); repeated secret promotions
+wrote duplicate refused rows (requests are idempotent per note+target);
+`.env.example` documented a kill-switch name nothing reads
+(`COGNOS_SKILL_NOTE_PROMOTE_REQUEST` vs the wired `COGNOS_SKILL_NOTE_PROMOTE` —
+the suite now asserts every registry switch appears under its wired name); and
+the suite hung on its first all-green pass because the harness was never
+stopped. All four are pinned by regressions. Details in `DIVERGENCES.md`.
 
 **What exists:** residents with versioned briefs; goals that do no work until an
 authorization row records consent with scope and budget hashes; a resumable,
@@ -1353,11 +1373,16 @@ Real app + PGlite + scriptable mock model via `test/harness.mjs`, with an
 10f. **Rate:** `maxPerDay` reached → refused; the goal parks rather than queueing
      silently.
 11. Sub-agent output enters as evidence with provenance and cannot widen scope or
-    budget.
+    budget. **Covered by `test/phase20.mjs` §8.11a–c:** worker findings carry
+    the worker id in their origin tag; subset widening and nesting refuse;
+    sub-budgets clamp to the ceilings.
 12. **Notice determinism:** with a mock model emitting adversarial text, no notice
     payload, outbox release, or SSE `token` frame contains a model-generated word.
 13. Promotion labelling: a promoted note carries `evidence_level: "inferred"` and
-    `origin: "autonomy_goal:<id>"` — never `direct`.
+    `origin: "autonomy_goal:<id>"` — never `direct`. **Covered by
+    `test/phase20.mjs` §8.13:** approval applies inferred-with-origin, the
+    quoted text is re-read at apply time, uncited/unrequested findings never
+    move.
 14. Cost: mock usage drives `spent.costUsd` past `maxCostUsd` and the goal parks.
 15. Workspace ceiling: twenty residents cannot exceed `COGNOS_AUTONOMY_MAX_*`.
 16. Attribution: every `goal_events` row has `agent_id` + `goal_id` + `tick_id`.
@@ -1376,8 +1401,8 @@ coverage is visible rather than assumed.
 | Fear | Guarding tests | Verdict |
 |---|---|---|
 | **Runaway spend** | 3 (slice budget), 4 (exhaustion parks), 5 (kill switch), 14 (cost parks), 15 (workspace ceiling), 10f (effect rate) | **Well covered** — six independent brakes, each asserted to *stop* rather than log. |
-| **A secret leaving in a webhook payload** | 10c (`secret_ref` stores the name only; `Authorization` in args refused), 10e (receipt is digest-only), 10b (outbound SSRF) | **Covered, with a gap** — nothing yet asserts that a *source document's* credential text cannot reach a payload via a note. Needs a test: plant a key in a fixture source, run a goal over it, assert it appears in no outbox row. |
-| **A wrong fact promoted to memory** | 13 (promotion is `inferred` + `origin`, never `direct`), 11 (sub-agent output is evidence) | **Covered, with a gap** — nothing yet asserts a *false* finding cannot be promoted. Needs a test: a mock model asserts a falsehood confidently, the goal promotes it, and the memory row still carries `evidence_level: "inferred"` and the goal id. |
+| **A secret leaving in a webhook payload** | 10c (`secret_ref` stores the name only; `Authorization` in args refused), 10e (receipt is digest-only), 10b (outbound SSRF), Phase 20 secret-in-note | **Closed by Phase 20** — `test/phase20.mjs` plants a key in a fixture source, runs a goal over it, and asserts the credential appears in no memory, belief, outbox, receipt, ledger, or telemetry row, and that the queue withholds the body. |
+| **A wrong fact promoted to memory** | 13 (promotion is `inferred` + `origin`, never `direct`), 11 (sub-agent output is evidence), Phase 20 false-promotion | **Closed by Phase 20** — `test/phase20.mjs` has the mock model assert a falsehood confidently and route it through approval and the answer-carried path; every landing still carries `evidence_level: "inferred"` and the goal id, and uncited/unrequested findings never apply. |
 | **Ungoverned prose reaching the user** | 12 (notice determinism), 18 (chat is the only token-emitting route), §4.12.9 (headless-turn equivalence, veto on headless) | **Thinnest of the four** — because the inbound tests live in a separate file that does not exist yet. **They need their own suite: `test/inbound.mjs`.** |
 
 Two gaps and one thin spot, named rather than papered over. The three extra tests
@@ -1410,7 +1435,7 @@ One migration, one law bump, one test file, one identity bump, one
 | Phase | Delivers | Enables |
 |---|---|---|
 | **19** | **BUILT.** Residents, goals, tick + lease, notes, budgets, outbox for T0–T2, Action Governor, heartbeat + graceful shutdown, the Autonomy page, laws 1.4.0, `test/autonomy.mjs` (40) | **Rung 1–2**, default off |
-| **20** | Sub-agents, promotion path, Goal Card in chat, T3 evidence fetch, `[goal_…:nN]` locators + Governor extension | **Rung 3**, default off |
+| **20** | **BUILT.** Sub-agents, promotion path, Goal Card in chat, T3 evidence fetch, `[goal_…:nN]` locators + Governor extension; `test/phase20.mjs` (22); laws 1.5.0, identity 1.4.0, migration `0007` | **Rung 3**, default off |
 | **21** | `webhook.post` (§4.7.1) + delivery adapter, destination allowlists, outbound-SSRF gate, `secret_ref` signing, Action Governor in **shadow**, receipts, reversal | shadow corpus; still not live |
 | **22** | Outbox → `live` based on the shadow evidence record; T5 with per-effect human approval | **Rung 4–5**, default off, separate security review |
 | **23** | Inbound messaging (§4.12): channels, HMAC verification, replay defence, headless turn, pairing tokens, shadow-mode replies | **Rung 5**, default off; requires accepting that the channel is the credential |

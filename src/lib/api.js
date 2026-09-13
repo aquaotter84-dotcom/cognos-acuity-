@@ -117,7 +117,7 @@ export const api = {
 
   listGoals: (params = {}) => req(`/api/autonomy/goals${qs(params)}`),
   createGoal: (data) => req("/api/autonomy/goals", { method: "POST", body: data }),
-  /** goal, events, steps, notes, approvals, outbox — the whole audit trail. */
+  /** goal, events, steps, notes, approvals, outbox, subagents, promotions — the whole audit trail. */
   getGoal: (id) => req(`/api/autonomy/goals/${id}`),
   /** THE BARRIER: authorize | decline | pause | resume | cancel. */
   decideGoal: (id, body) => req(`/api/autonomy/goals/${id}/decision`, { method: "POST", body }),
@@ -128,6 +128,12 @@ export const api = {
   /** Staged effects plus the shadow corpus that earns the next rung. */
   listOutbox: (params = {}) => req(`/api/autonomy/outbox${qs(params)}`),
   decideEffect: (id, body) => req(`/api/autonomy/outbox/${id}/decision`, { method: "POST", body }),
+
+  // --- Phase 20: promotion — the only route from a note to knowledge ----
+  // Listing is always visible; deciding applies the write the moment it lands.
+  listPromotions: (params = {}) => req(`/api/autonomy/promotions${qs(params)}`),
+  /** approve (and apply) | refuse. Only 'requested' rows can be decided. */
+  decidePromotion: (id, body) => req(`/api/autonomy/promotions/${id}/decide`, { method: "POST", body }),
 
   listTicks: (params = {}) => req(`/api/autonomy/ticks${qs(params)}`),
   /** Run one bounded slice now. No-op (frozen) when autonomy is disabled. */

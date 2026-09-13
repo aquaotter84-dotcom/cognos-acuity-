@@ -206,8 +206,10 @@ export function registerSourceRoutes(app, { wrap, db, logger }) {
         tiers: TIERS,
         skills: describeSkills(cfg),
         // The tiers this build will not execute, named rather than omitted, so
-        // the boundary is visible from the outside.
-        unbuiltTiers: ["T3", "T4", "T5"]
+        // the boundary is visible from the outside. Computed from the same
+        // builtTiers the Action Governor enforces — never a second list to
+        // drift.
+        unbuiltTiers: Object.keys(TIERS).filter(t => !cfg.builtTiers.includes(t))
       },
       note: "Agent mode is a bounded read-only subsystem. Research mode proposes a plan and executes only after the user approves each step. It cannot release an answer or write memory. Autonomy skills are separate: they are code-owned, tier-gated, and every effect they produce is staged and judged before anything happens."
     });
