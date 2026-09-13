@@ -63,7 +63,20 @@ export const TRANSITIONS = Object.freeze({
   relationship_weakened: T("relationship", true, "interaction or contradiction lowered strength"),
   relationship_decayed: T("relationship", true, "time lowered strength — no writer involved"),
   relationship_merged: T("relationship", true, "two structures collapsed onto one"),
-  relationship_split: T("relationship", true, "one structure divided into successors")
+  relationship_split: T("relationship", true, "one structure divided into successors"),
+
+  // Phase 23 — trust-annotated knowledge graph ("Atlas"). Nodes and edges are
+  // never deleted: pin/fork/retire/revise are transitions, and every change
+  // writes a revision link to its predecessor. Snapshots are immutable.
+  graph_node_created: T("graph_node", true, "a node entered the atlas"),
+  graph_node_revised: T("graph_node", true, "a successor node superseded this one via a revision edge"),
+  graph_node_pinned: T("graph_node", true, "the user pinned a node as curated truth"),
+  graph_node_retired: T("graph_node", true, "a node was retired — the row stays, status changes"),
+  graph_node_forked: T("graph_node", true, "a node was forked into a successor line"),
+  graph_trust_changed: T("graph_node", true, "a node's trust annotation moved"),
+  graph_edge_created: T("graph_edge", true, "a provenance-carrying edge entered the atlas"),
+  graph_edge_retired: T("graph_edge", true, "an edge was retired — the row stays, status changes"),
+  graph_snapshot_created: T("graph_snapshot", false, "an immutable Merkle snapshot of the atlas was recorded")
 });
 
 export const ENTITY_TYPES = Object.freeze(

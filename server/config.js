@@ -35,6 +35,7 @@ export function getSystemConfig() {
     memoryTokens: process.env.COGNOS_CONTEXT_MEMORY_TOKENS,
     sourceTokens: process.env.COGNOS_CONTEXT_SOURCE_TOKENS,
     supplementalTokens: process.env.COGNOS_CONTEXT_SEARCH_TOKENS,
+    graphTokens: process.env.COGNOS_CONTEXT_GRAPH_TOKENS,
     workspaceTokens: process.env.COGNOS_CONTEXT_WORKSPACE_TOKENS,
     maxUserTokens: process.env.COGNOS_CONTEXT_USER_TOKENS,
     overheadTokens: process.env.COGNOS_CONTEXT_OVERHEAD_TOKENS
@@ -104,6 +105,17 @@ export function getSystemConfig() {
         inheritFactor: 0.70,        // strength a successor link inherits on a split
         maxPairsPerRun: 6,
         maxLinksPerRetirement: 8
+      },
+
+      // Phase 23 — the trust-annotated atlas. Deterministic and model-free:
+      // projection runs inside knowledgeProjection, consultation inside
+      // contextAssembly, and curation through the graph API. All switchable.
+      graph: {
+        enabled: process.env.COGNOS_GRAPH_ENABLED !== "false",
+        consultEnabled: process.env.COGNOS_GRAPH_CONSULT_ENABLED !== "false",
+        projectEnabled: process.env.COGNOS_GRAPH_PROJECT_ENABLED !== "false",
+        maxNodesPerTurn: Math.max(0, Math.min(32, Number(process.env.COGNOS_GRAPH_MAX_NODES_PER_TURN || 8))),
+        maxRelatedDepth: 2
       }
     },
 

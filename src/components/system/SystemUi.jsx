@@ -1,10 +1,11 @@
-import { AlertTriangle, Gauge, GitBranch, History, Link2, Scale } from 'lucide-react';
+import { AlertTriangle, Gauge, GitBranch, History, Link2, Scale, Share2 } from 'lucide-react';
 
 export const SYSTEM_TABS = [
   { id: 'ledger', label: 'Ledger', icon: History },
   { id: 'replay', label: 'Replay', icon: GitBranch },
   { id: 'coherence', label: 'Coherence', icon: Link2 },
   { id: 'telemetry', label: 'Telemetry', icon: Gauge },
+  { id: 'graph', label: 'Graph', icon: Share2 },
   { id: 'laws', label: 'Laws', icon: Scale },
 ];
 

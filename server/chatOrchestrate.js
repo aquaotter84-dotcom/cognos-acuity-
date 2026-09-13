@@ -35,6 +35,7 @@ import { buildEvidencePack } from "./sources/index.js";
 import { buildGoalEvidence, formatGoalEvidence } from "./autonomy/goalEvidence.js";
 import { normalizeMemoryFields } from "./memory/structure.js";
 import { assembleContextWindow } from "./contextWindow.js";
+import { formatGraphContext } from "./knowledge/graph.js";
 
 const rootLogger = createLogger("chatOrchestrate");
 
@@ -47,7 +48,7 @@ const SOVEREIGNTY_REFUSAL =
 // Clause 3 (enforcement): the flags that send a draft back to the Synthesizer
 // once, and — if it still fails — release the fixed epistemic refusal below.
 // Same rule as the leak refusal: fixed text, never model-generated.
-const EPISTEMIC_FLAGS = new Set(["minimum_cause_without_floor", "authority_citation_unverifiable", "source_citation_unverifiable", "goal_note_citation_unverifiable"]);
+const EPISTEMIC_FLAGS = new Set(["minimum_cause_without_floor", "authority_citation_unverifiable", "source_citation_unverifiable", "goal_note_citation_unverifiable", "graph_citation_unverifiable"]);
 const isEpistemicFlag = (f) => EPISTEMIC_FLAGS.has(f);
 
 const EPISTEMIC_REFUSAL =
@@ -427,6 +428,25 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
       const priorHistory = history.slice();
       const newest = priorHistory[priorHistory.length - 1];
       if (newest?.role === "user" && String(newest.content || "") === String(userMessage || "")) priorHistory.pop();
+      // Phase 23 — the Governor consults the atlas for relevant nodes before
+      // the answer seats run. Deterministic keyword overlap, bounded, read-
+      // only. Any failure degrades to no graph context: the atlas informs
+      // the turn, it never blocks one.
+      let graphNodes = [];
+      let graphContext = null;
+      try {
+        const graphCfg = ctx.config?.knowledge?.graph || {};
+        if (graphCfg.enabled !== false && graphCfg.consultEnabled !== false && ctx.db?.Graph?.queryRelevant) {
+          graphNodes = await ctx.db.Graph.queryRelevant(workspaceId, userMessage, {
+            limit: graphCfg.maxNodesPerTurn || 8
+          });
+          graphContext = formatGraphContext(graphNodes, { maxNodes: graphCfg.maxNodesPerTurn || 8 });
+        }
+      } catch (graphError) {
+        ctx.logger.warn("graph consultation failed", { error: String(graphError) });
+        graphNodes = [];
+        graphContext = null;
+      }
       return {
         ...message.content,
         history: priorHistory,
@@ -436,6 +456,8 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
         conversationSummary: conversation?.summary || null,
         councilRecord,
         sourceContext: [evidence.sourceContext, researchContext, goalContext].filter(Boolean).join("\n\n") || null,
+        graphContext,
+        graphNodes,
         sources: evidence.sources,
         goalEvidence,
         sourceEvidence: {
@@ -674,6 +696,7 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
   // structured memory, immutable evidence, and the web briefing inside the
   // configured budget. The seats receive the assembled fields below; the full
   // database rows remain available only to the server-side audit path.
+  // Phase 23 — the trust-annotated atlas rides in its own slice.
   const windowedContext = assembleContextWindow({
     userMessage,
     history: contextResult.history,
@@ -682,6 +705,7 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
     workspace: contextResult.workspace,
     sourceContext: contextResult.sourceContext,
     supplementalContext: webSearchResult.searchResults || "",
+    graphContext: contextResult.graphContext || "",
     config: config.orchestrator.contextWindow
   });
   for (const target of [contextResult, webSearchResult]) {
@@ -691,10 +715,27 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
     target.memories = windowedContext.memories;
     target.workspace = windowedContext.workspace;
     target.sourceContext = windowedContext.sourceContext;
+    target.graphContext = windowedContext.graphContext;
     target.contextWindow = windowedContext.metrics;
   }
   webSearchResult.searchResults = windowedContext.supplementalContext;
   contextResult.supplementalContext = windowedContext.supplementalContext;
+  // The Governor audits graph citations against exactly the rows the window
+  // admitted: a citation to a row the budget clipped is a finding, never a
+  // silent pass. Admitted ids are the [graph_*] tokens in the admitted text.
+  const admittedGraphIds = new Set(
+    [...(windowedContext.graphContext || "").matchAll(/\[(graph_[a-z0-9]+)\]/gi)].map(match => match[1].toLowerCase())
+  );
+  const admittedGraphNodes = (contextResult.graphNodes || []).filter(node => admittedGraphIds.has(String(node.id || "").toLowerCase()));
+  contextResult.graphNodes = admittedGraphNodes;
+  webSearchResult.graphNodes = admittedGraphNodes;
+  emit("graph", {
+    nodesLoaded: admittedGraphNodes.length,
+    nodes: admittedGraphNodes.map(node => ({
+      id: node.id, type: node.type, label: String(node.label || "").slice(0, 120),
+      trust: node.trust, status: node.status
+    }))
+  });
   const admittedCitationLabels = [...new Set(
     [...(windowedContext.sourceContext || "").matchAll(/\[([^\]]+:[^\]]+)\]/g)].map(match => match[1])
   )];
@@ -867,7 +908,10 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
     sourceCitationLabels: contextResult.sourceEvidence?.citationLabels || [],
     councilRecord: contextResult.councilRecord || null,
     goalId: contextResult.goalEvidence?.goalId || null,
-    goalNoteLocators: contextResult.goalEvidence?.locators || []
+    goalNoteLocators: contextResult.goalEvidence?.locators || [],
+    graphNodes: Array.isArray(contextResult.graphNodes)
+      ? contextResult.graphNodes.map(node => ({ id: node.id, trust: node.trust, status: node.status }))
+      : []
   };
   const buildGovernorMsg = (responseText, coherence) => createMessage({
     type: "council.govern",
@@ -1038,7 +1082,11 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
         finalText: finalResponseText,
         // The rejected draft reaches the ledger only as a length and a digest.
         draftText: vetoed ? currentResponse.responseText : null,
-        draftOrigin
+        draftOrigin,
+        // Phase 23 — the atlas projection needs the exchange it stitches.
+        userMessage,
+        memories: contextResult.memories || [],
+        sources: contextResult.sources || []
       }
     }), ctx);
     const telemetryStage = await orchestrator.dispatch("telemetryRecord", createMessage({
@@ -1082,6 +1130,7 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
     coherence: knowledgeDetail.coherence ?? null,
     relationship: knowledgeDetail.relationship ?? null,
     decay: knowledgeDetail.decay ?? null,
+    graph: knowledgeDetail.graph ?? null,
     veto: knowledgeDetail.veto ?? null
   } : null);
 
@@ -1144,7 +1193,16 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
         riskFlags: source.risk_flags || [],
         included: source.included !== false
       })),
-      sourceEvidence: contextResult.sourceEvidence || null
+      sourceEvidence: contextResult.sourceEvidence || null,
+      // Phase 23 — the atlas slice this turn consulted, and what it projected.
+      graph: {
+        nodesLoaded: (contextResult.graphNodes || []).length,
+        nodes: (contextResult.graphNodes || []).map(node => ({
+          id: node.id, type: node.type, trust: node.trust, status: node.status,
+          label: String(node.label || "").slice(0, 120)
+        })),
+        projected: knowledgeDetail?.graph || null
+      }
     }
   };
 }

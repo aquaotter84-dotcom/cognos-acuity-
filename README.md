@@ -38,6 +38,16 @@ On top of the council sit two subsystems that **observe** it and that it may
   executes only what the user approves, with every consent recorded per step.
   Research never releases an answer — the council answers from the approved
   fetch results like any other evidence.
+- **Phase 23, trust-annotated knowledge graph ("Atlas")** — a user-controlled,
+  append-only fabric stitching sessions, sources, and intents. Concept, person,
+  source, event, and intent nodes carry provenance seals and `verified` /
+  `trusted` / `untrusted` / `flagged` trust; every edge links with its own
+  hash. Each turn consults the atlas before drafting and projects the governed
+  exchange back after the ruling — a veto projects nothing. Graph citations
+  (`[graph_…]`) are audited against the nodes the turn actually loaded;
+  invented, retired, or untrusted citations are flagged and redacted. The user
+  pins, forks, revises, retires, and re-trusts rows; immutable Merkle snapshots
+  diff exactly what moved; `/system → Graph` is the window onto all of it.
 
 `/system` in the UI is a read-only window onto the knowledge and reasoning
 records; each completed chat trace also exposes its source and agent provenance.
@@ -284,8 +294,9 @@ The database initializes lazily — the build and a cold boot both succeed with 
 database reachable. The schema is created on the first query that needs it.
 
 The Phase 14/15 tables, Phase 16's nullable performance columns, Phase 17's
-source/agent tables, Phase 18's project/image tables, and Phase 22's structured
-memory columns are part of that same lazy migration. `server/db/schema.js` is
+source/agent tables, Phase 18's project/image tables, Phase 22's structured
+memory columns, and Phase 23's graph tables are part of that same lazy
+migration. `server/db/schema.js` is
 the single source of truth; `migrations/*.sql` is generated from it
 (`npm run migrations:generate`) and can be applied explicitly with
 `npm run migrate` — that script refuses to run any SQL containing `DROP`,
@@ -395,6 +406,8 @@ test/                   harness only — not part of the app
   phase20.mjs           Phase 20: sub-agents, promotion, T3 reads, locators (22)
   phase21.mjs           Phase 21: webhook gates, SSRF, receipts, the evidence
                         gate — with a loopback sink receiving real bytes (35)
+  phase23.mjs           Phase 23: atlas seals, merkle snapshots, curation,
+                        turn consult/project, citation audit, veto (24)
   identity.mjs          the immutable self-model, its prompt, and its API
   integrity.mjs         governed-stream, cancellation, structured-error regressions
   smoke.mjs             the Phase 14/15 acceptance run (170 assertions)
@@ -497,8 +510,9 @@ POST /api/autonomy/tick               run one slice (the heartbeat calls this)
 ```
 
 ```bash
-npm test               # every suite: voice, performance, sources/agent, phase18,
-                       # autonomy, phase20, phase21, identity, integrity, smoke
+npm test               # every suite: voice, phase22, phase23, performance,
+                       # sources/agent, phase18, autonomy, phase20, phase21,
+                       # identity, integrity, smoke
 npm run voice          # speech normalization and chunking regressions
 npm run performance    # latency instrumentation and no-prompt-change regressions
 npm run sources-agent  # extraction, SSRF, prompt injection, citation, agent tests
@@ -508,6 +522,7 @@ npm run integrity      # governed stream, cancellation, structured API errors
 npm run autonomy       # Phase 19: the loop, the barrier, the outbox (42 checks)
 npm run phase20        # Phase 20: sub-agents, promotion, T3 reads (22 checks)
 npm run phase21        # Phase 21: webhook gates, SSRF, receipts, evidence (35)
+npm run phase23        # Phase 23: atlas seals, curation, turn wiring, veto (24)
 npm run smoke          # 170 assertions across the Phase 14/15 success criteria
 npm run demo           # print the artifacts: ledger rows, telemetry, replay, veto
 npm run migrate        # apply migrations/*.sql (refuses non-additive SQL)

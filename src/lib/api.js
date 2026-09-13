@@ -177,7 +177,33 @@ export const api = {
   evaluations: () => req("/api/meta/evaluations"),
   rateTable: () => req("/api/meta/rates"),
   /** The gate: propose an adaptation. Refusals come back 409 with the laws cited. */
-  proposeAdaptation: (body) => req("/api/meta/adaptations", { method: "POST", body })
+  proposeAdaptation: (body) => req("/api/meta/adaptations", { method: "POST", body }),
+
+  // --- Phase 23: the trust-annotated knowledge graph ("Atlas") -------------//
+  // Queries are read-only instruments. Curation routes write new rows with
+  // ledger events — retiring is a transition, never a delete.
+  graphOverview: () => req("/api/graph/overview"),
+  graphNodes: (params = {}) => req(`/api/graph/nodes${qs(params)}`),
+  graphCreateNode: (body) => req("/api/graph/nodes", { method: "POST", body }),
+  graphNode: (id) => req(`/api/graph/nodes/${id}`),
+  graphPinNode: (id, body = {}) => req(`/api/graph/nodes/${id}/pin`, { method: "POST", body }),
+  graphRetireNode: (id, body = {}) => req(`/api/graph/nodes/${id}/retire`, { method: "POST", body }),
+  graphForkNode: (id, body = {}) => req(`/api/graph/nodes/${id}/fork`, { method: "POST", body }),
+  graphReviseNode: (id, body = {}) => req(`/api/graph/nodes/${id}/revise`, { method: "POST", body }),
+  graphTrustNode: (id, body) => req(`/api/graph/nodes/${id}/trust`, { method: "POST", body }),
+  graphEdges: (params = {}) => req(`/api/graph/edges${qs(params)}`),
+  graphCreateEdge: (body) => req("/api/graph/edges", { method: "POST", body }),
+  graphEdge: (id) => req(`/api/graph/edges/${id}`),
+  graphRetireEdge: (id, body = {}) => req(`/api/graph/edges/${id}/retire`, { method: "POST", body }),
+  graphRelated: (nodeId, params = {}) => req(`/api/graph/related/${nodeId}${qs(params)}`),
+  graphQuery: (params = {}) => req(`/api/graph/query${qs(params)}`),
+  graphConflicts: (params = {}) => req(`/api/graph/conflicts${qs(params)}`),
+  graphSnapshots: () => req("/api/graph/snapshots"),
+  graphSnapshot: (id) => req(`/api/graph/snapshots/${id}`),
+  graphCreateSnapshot: (body = {}) => req("/api/graph/snapshots", { method: "POST", body }),
+  graphDiffSnapshots: (a, b) => req(`/api/graph/snapshots/diff${qs({ a, b })}`),
+  graphVerify: () => req("/api/graph/verify"),
+  graphCoverage: () => req("/api/graph/coverage")
 };
 
 /**

@@ -52,6 +52,25 @@
 // Agent execution itself remains inside POST /api/chat; there is no second
 // answer route and no autonomous write endpoint.
 //
+// Phase 23 (Trust-Annotated Knowledge Graph — the Atlas):
+//   GET  /api/graph/overview             node/edge/snapshot/conflict counts
+//   GET/POST /api/graph/nodes            list / create (user-curated)
+//   GET  /api/graph/nodes/:id            node + edges + lineage + seal
+//   POST /api/graph/nodes/:id/pin        pin (mints verified trust)
+//   POST /api/graph/nodes/:id/retire     retire (a transition, never a delete)
+//   POST /api/graph/nodes/:id/fork       fork into a successor line
+//   POST /api/graph/nodes/:id/revise     revise via successor + revision edge
+//   POST /api/graph/nodes/:id/trust      move the trust annotation
+//   GET/POST /api/graph/edges            list / create
+//   POST /api/graph/edges/:id/retire     retire an edge
+//   GET  /api/graph/related/:nodeId      bounded traversal (?depth, ?truthOnly)
+//   GET  /api/graph/query                relevance query (?q, ?truthOnly)
+//   GET  /api/graph/conflicts            contradicts edges for manual resolution
+//   GET/POST /api/graph/snapshots        immutable Merkle snapshots
+//   GET  /api/graph/snapshots/diff       Merkle diff (?a, ?b)
+//   GET  /api/graph/verify               provenance hash-mismatch audit
+//   GET  /api/graph/coverage             session-content coverage audit
+//
 // Access gate: only active when COGNOS_RUNTIME_SECRET is set. No gate otherwise.
 
 import express from "express";
@@ -71,6 +90,7 @@ import { registerSourceRoutes } from "./routes/sources.js";
 import { registerAutonomyRoutes } from "./routes/autonomy.js";
 import { autonomyConfig } from "./autonomy/config.js";
 import { registerProjectRoutes } from "./routes/projects.js";
+import { registerGraphRoutes } from "./routes/graph.js";
 
 const logger = createLogger("server");
 export const app = express();
@@ -160,6 +180,17 @@ app.get("/api/health", (req, res) => {
       rung: autonomyConfig().rung
     },
     gate: Boolean(process.env.COGNOS_RUNTIME_SECRET),
+    // Phase 23 — the trust-annotated atlas. Consulted before the answer seats
+    // run, projected after the Governor rules; curation is user-controlled.
+    graph: {
+      enabled: config.knowledge.graph.enabled !== false,
+      consultEnabled: config.knowledge.graph.consultEnabled !== false,
+      projectEnabled: config.knowledge.graph.projectEnabled !== false,
+      maxNodesPerTurn: config.knowledge.graph.maxNodesPerTurn,
+      nodeTypes: ["concept", "person", "source", "event", "intent"],
+      edgeKinds: ["is-about", "in-source", "refines", "contradicts", "supports", "revision", "fork"],
+      trustLevels: ["verified", "trusted", "untrusted", "flagged"]
+    },
     // Phase 14/15 subsystem state. Additive keys; nothing above changed.
     ledger: config.knowledge.ledgerEnabled,
     coherence: config.knowledge.coherenceEnabled,
@@ -270,6 +301,7 @@ registerKnowledgeRoutes(app, { wrap, db, logger });
 registerMetaRoutes(app, { wrap, db, logger, getSystemConfig });
 registerSourceRoutes(app, { wrap, db, logger });
 registerAutonomyRoutes(app, { wrap, db, logger });
+registerGraphRoutes(app, { wrap, db, logger });
 
 // --- Static frontend (self-hosted only) -------------------------------------
 // On Vercel the built SPA is served by the CDN via vercel.json rewrites, so this

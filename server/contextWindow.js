@@ -18,6 +18,7 @@ const DEFAULTS = Object.freeze({
   memoryTokens: 2_000,
   sourceTokens: 4_800,
   supplementalTokens: 1_800,
+  graphTokens: 1_200,
   workspaceTokens: 450,
   maxUserTokens: 2_600,
   overheadTokens: 1_600
@@ -46,6 +47,7 @@ export function normalizeContextWindowConfig(config = {}) {
     memoryTokens: clamp(config.memoryTokens, DEFAULTS.memoryTokens, 0, 32_000),
     sourceTokens: clamp(config.sourceTokens, DEFAULTS.sourceTokens, 0, 64_000),
     supplementalTokens: clamp(config.supplementalTokens, DEFAULTS.supplementalTokens, 0, 32_000),
+    graphTokens: clamp(config.graphTokens, DEFAULTS.graphTokens, 0, 16_000),
     workspaceTokens: clamp(config.workspaceTokens, DEFAULTS.workspaceTokens, 0, 8_000),
     maxUserTokens: clamp(config.maxUserTokens, DEFAULTS.maxUserTokens, 256, 32_000),
     overheadTokens: clamp(config.overheadTokens, DEFAULTS.overheadTokens, 0, 8_000)
@@ -132,8 +134,12 @@ function selectMemories(memories, tokenBudget) {
 
 function selectBlocks(text, tokenBudget) {
   const source = String(text || "");
-  if (!source || tokenBudget <= 0) return { value: "", used: 0, omitted: 0 };
+  if (!source) return { value: "", used: 0, omitted: 0 };
   const blocks = source.split(/\n{2,}/).map(block => block.trim()).filter(Boolean);
+  // A starved slice still measures what it dropped: the Governor audits
+  // citations against admitted text only, so an uncounted omission would read
+  // as a clean window instead of an empty one.
+  if (tokenBudget <= 0) return { value: "", used: 0, omitted: blocks.length };
   const selected = [];
   let used = 0;
   let omitted = 0;
@@ -181,6 +187,7 @@ export function assembleContextWindow({
   workspace = null,
   sourceContext = "",
   supplementalContext = "",
+  graphContext = "",
   config = {}
 } = {}) {
   const budget = normalizeContextWindowConfig(config);
@@ -211,6 +218,12 @@ export function assembleContextWindow({
   const supplementalBudget = take(Math.min(budget.supplementalTokens, remaining), budget.supplementalTokens);
   const supplemental = trimToTokens(supplementalContext, supplementalBudget);
 
+  // Phase 23 — the trust-annotated atlas rides in its own slice, after the
+  // web briefing. Graph rows are kept whole so [graph_id] citations never
+  // become half a citation; omissions are measured like source omissions.
+  const graphBudget = take(Math.min(budget.graphTokens, remaining), budget.graphTokens);
+  const graphResult = selectBlocks(graphContext, graphBudget);
+
   // The accounting includes the fields that will be placed in the model
   // messages, but not the answer itself. `outputReserveTokens` is reported so
   // operators can compare this window to a provider's total context capacity.
@@ -220,6 +233,7 @@ export function assembleContextWindow({
     + memoryResult.used
     + sourceResult.used
     + estimateTokens(supplemental)
+    + graphResult.used
     + estimateTokens(user)
     + budget.overheadTokens;
 
@@ -231,6 +245,7 @@ export function assembleContextWindow({
     workspace: promptWorkspace,
     sourceContext: sourceResult.value || null,
     supplementalContext: supplemental || null,
+    graphContext: graphResult.value || null,
     metrics: {
       maxInputTokens: budget.maxInputTokens,
       outputReserveTokens: budget.outputReserveTokens,
@@ -246,7 +261,9 @@ export function assembleContextWindow({
       sourceTokens: sourceResult.used,
       sourceBlocksOmitted: sourceResult.omitted,
       supplementalTokens: estimateTokens(supplemental),
-      clipped: selectedContextTokens >= budget.maxInputTokens || sourceResult.omitted > 0
+      graphTokens: graphResult.used,
+      graphBlocksOmitted: graphResult.omitted,
+      clipped: selectedContextTokens >= budget.maxInputTokens || sourceResult.omitted > 0 || graphResult.omitted > 0
     }
   };
 }

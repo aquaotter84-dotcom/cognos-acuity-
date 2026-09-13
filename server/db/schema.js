@@ -839,6 +839,110 @@ CREATE INDEX IF NOT EXISTS memories_layer_idx ON memories (workspace_id, memory_
 CREATE INDEX IF NOT EXISTS memories_key_idx ON memories (workspace_id, memory_key);
 `;
 
+// ---------------------------------------------------------------------------
+// Phase 23 — Persistent, Trust-Annotated Knowledge-Graph Layer ("Atlas").
+//
+// The one-shot evolution: a system-wide, user-controlled, immutable memory
+// fabric that stitches every session, every source, every intent, and every
+// footstep into a single queryable, provenance-driven graph.
+//
+//   * Nodes: Concept, Person, Source, Event, Intent. Edges: is-about,
+//     in-source, refines, contradicts, plus lifecycle kinds (supports,
+//     revision, fork) that chain every curation act to its predecessor.
+//   * Every node and edge carries a provenance block (timestamp, actor,
+//     version, cryptographic hash). Hashes are recomputable; snapshots carry
+//     a Merkle root so concurrent edits merge without data loss and drift is
+//     detectable.
+//   * Nothing is ever deleted. Pin/fork/retire/revise are transitionslogged
+//     in knowledge_events; retiring is a status change, forking is a new node
+//     with a fork edge, revising is a successor plus a revision edge.
+//   * Trust is data, not authority: verified/trusted rows may satisfy a truth
+//     query; untrusted/flagged rows are visible but never load-bearing until
+//     a user approves them. The Governor enforces that boundary.
+// ---------------------------------------------------------------------------
+export const PHASE23_SCHEMA = `
+-- 23.1 Graph nodes: the durable atlas of sessions, sources, intents, people.
+CREATE TABLE IF NOT EXISTS graph_nodes (
+  id                TEXT PRIMARY KEY,
+  workspace_id      TEXT NOT NULL,
+  project_id        TEXT,
+  conversation_id   TEXT,
+  type              TEXT NOT NULL,
+  label             TEXT NOT NULL,
+  node_key          TEXT NOT NULL,
+  content           TEXT NOT NULL,
+  content_sha256    TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'active',
+  trust             TEXT NOT NULL DEFAULT 'untrusted',
+  confidence        NUMERIC NOT NULL DEFAULT 0.5,
+  version           INTEGER NOT NULL DEFAULT 1,
+  predecessor_id    TEXT,
+  successor_id      TEXT,
+  provenance        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source_memory_id  TEXT,
+  source_message_id TEXT,
+  source_run_id     TEXT,
+  source_ids        JSONB NOT NULL DEFAULT '[]'::jsonb,
+  retired_at_ms     BIGINT,
+  created_date      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS graph_nodes_ws_idx ON graph_nodes (workspace_id, status, trust, updated_date DESC);
+CREATE INDEX IF NOT EXISTS graph_nodes_type_idx ON graph_nodes (workspace_id, type, status);
+CREATE INDEX IF NOT EXISTS graph_nodes_key_idx ON graph_nodes (workspace_id, node_key);
+CREATE INDEX IF NOT EXISTS graph_nodes_conv_idx ON graph_nodes (conversation_id, created_date DESC);
+CREATE INDEX IF NOT EXISTS graph_nodes_project_idx ON graph_nodes (project_id, created_date DESC);
+CREATE INDEX IF NOT EXISTS graph_nodes_pred_idx ON graph_nodes (predecessor_id);
+CREATE INDEX IF NOT EXISTS graph_nodes_succ_idx ON graph_nodes (successor_id);
+CREATE INDEX IF NOT EXISTS graph_nodes_sha_idx ON graph_nodes (workspace_id, content_sha256);
+
+-- 23.2 Graph edges: provenance-carrying relations between nodes.
+CREATE TABLE IF NOT EXISTS graph_edges (
+  id                TEXT PRIMARY KEY,
+  workspace_id      TEXT NOT NULL,
+  src_node_id       TEXT NOT NULL,
+  dst_node_id       TEXT NOT NULL,
+  kind              TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'active',
+  trust             TEXT NOT NULL DEFAULT 'untrusted',
+  weight            NUMERIC NOT NULL DEFAULT 0.5,
+  version           INTEGER NOT NULL DEFAULT 1,
+  predecessor_id    TEXT,
+  successor_id      TEXT,
+  provenance        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  edge_sha256       TEXT NOT NULL,
+  source_run_id     TEXT,
+  source_message_id TEXT,
+  retired_at_ms     BIGINT,
+  created_date      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS graph_edges_ws_idx ON graph_edges (workspace_id, kind, status);
+CREATE INDEX IF NOT EXISTS graph_edges_src_idx ON graph_edges (src_node_id, status);
+CREATE INDEX IF NOT EXISTS graph_edges_dst_idx ON graph_edges (dst_node_id, status);
+CREATE INDEX IF NOT EXISTS graph_edges_pair_idx ON graph_edges (workspace_id, kind, src_node_id, dst_node_id);
+CREATE INDEX IF NOT EXISTS graph_edges_trust_idx ON graph_edges (workspace_id, trust, status);
+
+-- 23.3 Immutable snapshots: a Merkle root over the sorted node+edge hashes,
+-- so "what did the atlas look like when we decided that" stays answerable.
+-- Append-only: no accessor UPDATEd or DELETEd these rows.
+CREATE TABLE IF NOT EXISTS graph_snapshots (
+  id                TEXT PRIMARY KEY,
+  workspace_id      TEXT NOT NULL,
+  merkle_root       TEXT NOT NULL,
+  node_count        INTEGER NOT NULL DEFAULT 0,
+  edge_count        INTEGER NOT NULL DEFAULT 0,
+  node_ids          JSONB NOT NULL DEFAULT '[]'::jsonb,
+  edge_ids          JSONB NOT NULL DEFAULT '[]'::jsonb,
+  leaf_hashes       JSONB NOT NULL DEFAULT '[]'::jsonb,
+  provenance        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  note              TEXT,
+  created_date      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS graph_snapshots_ws_idx ON graph_snapshots (workspace_id, created_date DESC);
+CREATE INDEX IF NOT EXISTS graph_snapshots_root_idx ON graph_snapshots (workspace_id, merkle_root);
+`;
+
 export const PHASE_SCHEMAS = [
   { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
   { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
@@ -848,5 +952,6 @@ export const PHASE_SCHEMAS = [
   { id: "0006", phase: 19, name: "phase19_autonomy", sql: PHASE19_SCHEMA },
   { id: "0007", phase: 20, name: "phase20_subagents_promotion", sql: PHASE20_SCHEMA },
   { id: "0008", phase: 21, name: "phase21_webhook_effects", sql: PHASE21_SCHEMA },
-  { id: "0009", phase: 22, name: "phase22_context_and_structured_memory", sql: PHASE22_SCHEMA }
+  { id: "0009", phase: 22, name: "phase22_context_and_structured_memory", sql: PHASE22_SCHEMA },
+  { id: "0010", phase: 23, name: "phase23_trust_annotated_graph", sql: PHASE23_SCHEMA }
 ];
