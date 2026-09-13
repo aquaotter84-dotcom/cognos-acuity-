@@ -23,7 +23,7 @@ const STAGE_LABELS = {
 
 export default function LiveCouncil({ live }) {
   if (!live) return null;
-  const { stages = [], classification, agent, webSearch, plan, critic, governor } = live;
+  const { stages = [], classification, agent, webSearch, plan, critic, governor, contextWindow } = live;
   if (!stages.length) return null;
 
   return (
@@ -47,6 +47,12 @@ export default function LiveCouncil({ live }) {
           </div>
         ))}
 
+        {contextWindow && (
+          <p className="text-muted-foreground/70 pt-1">
+            context: {contextWindow.estimatedInputTokens ?? 0}/{contextWindow.maxInputTokens ?? '?'} estimated tokens
+            {contextWindow.memoryLayers?.length ? ` · memory ${contextWindow.memoryLayers.join(', ')}` : ''}
+          </p>
+        )}
         {agent && agent.mode !== 'off' && (
           <p className="text-muted-foreground/70 pt-1">
             agent: {agent.mode.replace('_', ' ')} · {agent.status} · {(agent.steps || []).filter(step => step.status === 'completed').length}/{(agent.steps || []).length} reads

@@ -19,6 +19,13 @@ On top of the council sit two subsystems that **observe** it and that it may
   adaptive orchestrator in **observe mode only**, an immutable law layer with a
   Policy Engine that gates every architectural adaptation, and an append-only
   Improvement Ledger that records the refusals too.
+- **Phase 22, bounded context + structured memory** — a deterministic admission
+  window keeps more recent dialogue while reserving explicit budgets for
+  conversation summaries, immutable evidence, web briefings, and structured
+  persistent memory. Memory rows retain readable content and also carry a
+  `working` / `episodic` / `semantic` layer, stable key, bounded JSON value,
+  evidence/confidence metadata, and optional expiry. Selection is measured in
+  the council trace and cannot change governance or write by itself.
 - **Phase 17, Governed Sources + Agent Mode** — immutable document and webpage
   snapshots, page/section-aware citation chunks, prompt-injection and SSRF
   boundaries, and explicit per-turn agent modes. Agent mode is a bounded
@@ -241,6 +248,9 @@ npm run dev
 | `COGNOS_COHERENCE_ENABLED` | no | Default `true`. Set `false` to skip the coherence monitor stage. |
 | `COGNOS_TELEMETRY_ENABLED` | no | Default `true`. Set `false` to stop writing reasoning-telemetry records. |
 | `COGNOS_ADAPTIVE_MODE` | no | Default `observe`. `auto` is recorded as *requested* and refused: v1 makes no live switches. |
+| `COGNOS_CONTEXT_MAX_TOKENS` | no | Deterministic context admission budget; default 16,000, clamped to 4,000–128,000. The window includes recent dialogue, summary, structured memory, evidence, search context, and the current request. |
+| `COGNOS_CONTEXT_MAX_HISTORY_MESSAGES` | no | Recent dialogue ceiling before token budgeting; default 40. Older history is omitted first and the omission is reported in the council trace. |
+| `COGNOS_CONTEXT_*_TOKENS` | no | Optional per-layer ceilings for history, summary, memory, source, search, workspace, user input, overhead, and output reserve; all are bounded in `server/contextWindow.js`. |
 | `COGNOS_SOURCES_ENABLED` | no | Default `true`; kill switch for source APIs and source context. Existing immutable rows remain. |
 | `COGNOS_SOURCE_MAX_BYTES` | no | Raw document limit, clamped to 100 KB–8 MB; default 4 MB. |
 | `COGNOS_SOURCE_MAX_TEXT_CHARS` | no | Extracted-text limit, clamped to 50,000–2,000,000; default 750,000. |
@@ -274,9 +284,9 @@ The database initializes lazily — the build and a cold boot both succeed with 
 database reachable. The schema is created on the first query that needs it.
 
 The Phase 14/15 tables, Phase 16's nullable performance columns, Phase 17's
-source/agent tables, and Phase 18's project/image tables are part of that same
-lazy migration. `server/db/schema.js` is the single source of truth;
-`migrations/*.sql` is generated from it
+source/agent tables, Phase 18's project/image tables, and Phase 22's structured
+memory columns are part of that same lazy migration. `server/db/schema.js` is
+the single source of truth; `migrations/*.sql` is generated from it
 (`npm run migrations:generate`) and can be applied explicitly with
 `npm run migrate` — that script refuses to run any SQL containing `DROP`,
 `TRUNCATE`, `DELETE FROM`, `RENAME` or `UPDATE … SET`, because schema changes
@@ -302,6 +312,7 @@ server/
   mock-openai.js        local OpenAI-compatible mock (development aid)
   mock-latency.js       local latency injector (development aid)
   chatOrchestrate.js    the council pipeline (port of the Base44 function)
+  contextWindow.js      deterministic token admission for dialogue, memory, and evidence
   llm.js                model boundary + canonical self-model prompt injection
                         (the one telemetry capture point: callLLM)
   identity.js           immutable identity, architecture, capabilities + limits
@@ -329,7 +340,9 @@ server/
     promote.js  subagent.js  goalEvidence.js  heartbeat.js
   skills/               the code-owned registry (11 skills, T0–T4) + validateArgs
   db/
-    schema.js           additive Phase 14–21 schemas (source of truth)
+    schema.js           additive Phase 14–22 schemas (source of truth)
+  memory/
+    structure.js        bounded layers, stable keys, and JSON memory values
     util.js             newId/num/int/clamp01/nowMs (leaf helpers, no cycles)
   knowledge/            Phase 14
     events.js           ledger vocabulary, append, list, count, foldState

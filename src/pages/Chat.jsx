@@ -252,6 +252,7 @@ export default function Chat() {
           'stage.start': (e) => markStage(e.stage, 'running'),
           'stage.complete': (e) => markStage(e.stage, e.status === 'error' ? 'error' : 'done', e.ms),
           memories: (d) => mergeLive(d),
+          contextWindow: (d) => mergeLive({ contextWindow: d }),
           observer: (d) => mergeLive(d),
           agent: (d) => mergeLive({ agent: d }),
           webSearch: (d) => mergeLive({ webSearch: d }),

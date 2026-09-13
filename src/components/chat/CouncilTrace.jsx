@@ -36,13 +36,13 @@ export default function CouncilTrace({ council }) {
   if (!council) return null;
   const {
     classification, plan, subTasks, critic, revisions, governor, modelUsed, latencyMs,
-    memoriesUsed, webSearch, stageTimings,
+    memoriesUsed, contextWindow, webSearch, stageTimings,
     // Phase 14 — the knowledge layer; Phase 15 — the run's telemetry record.
     coherence, knowledge, telemetry, strategy, runId,
     agent, sources, sourceEvidence
   } = council || {};
-  if (!classification && !plan && !critic && !webSearch && !stageTimings) return null;
-  const hasKnowledgeSection = Boolean(coherence || knowledge || telemetry || strategy || runId);
+  if (!classification && !plan && !critic && !webSearch && !stageTimings && !contextWindow) return null;
+  const hasKnowledgeSection = Boolean(coherence || knowledge || telemetry || strategy || runId || contextWindow);
 
   const score = critic?.score;
   const summary = [
@@ -99,7 +99,7 @@ export default function CouncilTrace({ council }) {
                 return (
                   <div key={m.id} className="flex items-start gap-1.5">
                     {ev && <span className={`mt-0.5 px-1 py-0.5 rounded text-[9px] font-medium uppercase shrink-0 ${evColor}`}>{ev}</span>}
-                    <p className="text-muted-foreground/80 leading-relaxed flex-1">{m.preview}</p>
+                    <p className="text-muted-foreground/80 leading-relaxed flex-1">{m.layer ? <span className="text-primary/70 mr-1">{m.layer}{m.key ? `:${m.key}` : ''}</span> : null}{m.preview}</p>
                   </div>
                 );
               })}
@@ -251,6 +251,14 @@ export default function CouncilTrace({ council }) {
 
           {hasKnowledgeSection && (
             <Section title="Knowledge & telemetry">
+              {contextWindow && (
+                <>
+                  <Field label="context window" value={`${contextWindow.estimatedInputTokens ?? 0}/${contextWindow.maxInputTokens ?? '?'} estimated tokens${contextWindow.clipped ? ' · clipped to budget' : ''}`} />
+                  <Field label="memory layers" value={(contextWindow.memoryLayers || []).join(', ') || 'none'} />
+                  <Field label="short-term history" value={`${contextWindow.historyMessages ?? 0} message(s) · ${contextWindow.historyTokens ?? 0} tokens`} />
+                  {contextWindow.sourceBlocksOmitted > 0 && <Field label="evidence omitted" value={`${contextWindow.sourceBlocksOmitted} block(s) outside budget`} />}
+                </>
+              )}
               {coherence && coherence.checked && (
                 <Field label="coherence" value={`${coherence.verdict}${coherence.beliefsConsidered ? ` (of ${coherence.beliefsConsidered} belief${coherence.beliefsConsidered === 1 ? '' : 's'})` : ''}`} />
               )}
