@@ -172,6 +172,19 @@ export const api = {
   recordRungEvidence: (rung, body = {}) =>
     req(`/api/autonomy/rungs/${encodeURIComponent(rung)}/evidence`, { method: "POST", body }),
 
+  // --- Phase 22 (autonomy row): the earned flip to live --------------------
+  // `listRungs().live` is the readiness report: eight named conditions, each
+  // with a sentence to read when it is unmet. This is the flip itself.
+  /**
+   * Widen or narrow the outbox mode. 409 with `code: 'live_not_earned'` and the
+   * whole readiness report attached when a widening to live has not been earned;
+   * `not_delegated` when the deployment never handed the switch to this UI;
+   * `pinned_by_operator` when an environment value holds the mode down.
+   * Narrowing is refused by nothing.
+   */
+  setOutboxMode: (outboxMode, body = {}) =>
+    req("/api/autonomy/settings", { method: "POST", body: { outboxMode, ...body } }),
+
   // --- Phase 14: the knowledge layer (read-only) ---------------------------
   knowledgeEvents: (params = {}) => req(`/api/knowledge/events${qs(params)}`),
   knowledgeOverview: () => req("/api/knowledge/overview"),

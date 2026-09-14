@@ -135,16 +135,23 @@ eleven skills: four T0, three T1, one T2, two T3, one T4); an outbox that
 stages, judges in shadow or dry-run, and performs only on a live verdict; an
 Action Governor that refuses with a named rule and a cited law; templated
 notices; narrow sub-agents; the promotion path; a rung-evidence gate that
-measures the corpus and records what it found; an in-process heartbeat started
-only by `server/serve.js`; and graceful shutdown that stops the heartbeat, lets
-an in-flight tick park, then closes the pool.
+measures the corpus and records what it found; a guarded, audited flip of the
+outbox mode with a readiness report behind it; one approved live destination
+that a T4 write must match in addition to its scope grant; an in-process
+heartbeat started only by `server/serve.js`; and graceful shutdown that stops
+the heartbeat, lets an in-flight tick park, then closes the pool.
 
 **What is deliberately not built:** T5 (irreversible acts, per-effect human
-approval), inbound messaging, and any live delivery of anything. Those are
-Phases 22–23 and each one needs its own evidence before it goes live. Rung 4's
-adapter exists and is judged end to end, but this deployment has no corpus, so
-`rungEvidenceStatus` reports `justifiedNow: false` and a live verdict refuses
-with `EVIDENCE_GATE_UNMET`.
+approval) and inbound messaging. Those are the rest of Phase 22 and Phase 23,
+and each one needs its own evidence before it goes live. Live T4 delivery is
+*reachable* now, and still not *earned* here: Rung 4's adapter exists and is
+judged end to end, but this deployment has no corpus, so `rungEvidenceStatus`
+reports `justifiedNow: false`, the readiness report returns eight conditions
+with `evidence_recorded` unmet, a flip to `live` refuses with
+`409 live_not_earned`, and a live verdict refuses with `EVIDENCE_GATE_UNMET`.
+`COGNOS_AUTONOMY_LIVE_DESTINATION` is also unset, which fails closed on its own:
+with no approved destination there is nowhere a live delivery is allowed to go,
+whatever the corpus says.
 
 Phase 25 delivered the operator surface the earlier phases assumed but never
 built: **hybrid enablement**, the **conversational resident designer**, and
@@ -159,6 +166,29 @@ four rules that make the designer safe; `test/autonomy-ux.mjs` (17 checks across
 three harnesses: delegated, not delegated, pinned) pins all of it. The
 catalogue the model reads repeats `isSkillEnabled`'s verdict, so a rung that is
 on is not described as off.
+
+Phase 22 (autonomy row) delivered its **first slice**: the outbox mode became a
+*recorded, guarded decision* instead of an environment variable plus a restart,
+and a live T4 delivery became confined to **one destination the deployment
+named**. What was missing before this was not code — `webhook.post`, the
+Action Governor's T4 rules, and the shadow-evidence gate all existed from Phase
+21 — but *permission to perform*, and the only way to grant it said nothing at
+the moment it was granted. `POST /api/autonomy/settings` now accepts
+`{ outboxMode }` and refuses a widening to `live` with `409 live_not_earned`
+until eight named conditions hold; `GET /api/autonomy/rungs` returns the same
+report as `live`, so the answer arrives before the click. Narrowing is refused
+by nothing, because a brake an operator has to earn is not a brake. The mode
+lives in `autonomy_settings.outbox_mode` (migration `0013`) and every flip is an
+append-only `workspace_audit` row carrying the digest of the evidence that
+justified it and the digest — never the URL — of the destination approved at
+that moment. `COGNOS_AUTONOMY_LIVE_DESTINATION` is the second destination gate:
+a live write needs the goal's scope grant **and** the deployment's approval, so
+their intersection is narrower than either alone, and an unset or malformed
+value fails closed. Two pins were added (`pin.live_destination_approved`,
+`pin.live_mode_earned`; laws 1.7.0), identity moved to 1.9.0 to report
+`deliversOnApproval` separately from `deliversNow`, and `test/outbox-live.mjs`
+(18) pins the precedence table, the fail-closed shapes, both gates, the refused
+flip, the earned flip, and the fact that **T5 is still design only**.
 
 **Autonomy is off by default.** `COGNOS_AUTONOMY_ENABLED` unset means the loop is
 frozen: no goal wakes, no notice is written, no tick row is recorded.
@@ -689,6 +719,50 @@ tight — with the count and the verdict distribution recorded as the evidence r
 that justifies it. `phase15.complexity_justification` demands exactly this, and it is
 the difference between "we enabled autonomy" and "we earned autonomy."
 
+**Going live is a recorded decision, and it is refused until it is earned**
+(Phase 22, autonomy row). The evidence row is necessary and was never
+sufficient: the mode itself also has to change, and until this slice the only
+way to change it was `COGNOS_AUTONOMY_OUTBOX_MODE=live` plus a restart — a
+global switch that reported nothing at the moment it was thrown and whose
+consequences arrived later as per-effect refusals. So the mode is now a
+delegated row under an operator pin, in the same shape Phase 25 gave the
+on/off switch:
+
+- **Precedence.** The effective mode is the *narrower* of the environment value
+  and `autonomy_settings.outbox_mode`, with one deliberate asymmetry: a pin may
+  hold the mode **down** and may never be widened from a request, but it may
+  always be **narrowed** — an operator who pinned `live` can still brake from a
+  running system, because a brake they cannot reach is not a brake. Absence of
+  both is `shadow`. An unrecognisable value in either place is not a permission.
+- **The guard.** Widening to `live` needs all eight of: the mode switch
+  delegated (`COGNOS_AUTONOMY_OUTBOX_UI_CONTROL`, a *separate* delegation from
+  the one that hands over whether the loop runs); no pin holding it down;
+  autonomy on; the rung flag on; exactly one approved destination; a `justified`
+  evidence row; that row still satisfying the gate **as configured now**; and a
+  corpus that was **aimed at that destination**. The last is why the destination
+  is named before the corpus is earned — a gate satisfied by deliveries to
+  another endpoint is evidence about that endpoint.
+- **The refusal is the report.** A refused flip returns every unmet condition as
+  a sentence saying what to do, and writes no row and no audit entry: an attempt
+  that changed nothing must not look like a decision somebody made.
+- **The second destination gate.** `COGNOS_AUTONOMY_LIVE_DESTINATION` names one
+  https endpoint. A live T4 release needs it *in addition to* the destination
+  granted in the goal's own scope, and refuses with `DESTINATION_NOT_APPROVED`
+  (`pin.live_destination_approved`) when the goal was granted somewhere the
+  deployment did not name. It is read through `checkWebhookUrl`, so an approval
+  the adapter would refuse is not an approval, and unset or malformed fails
+  closed. Shadow judging is exempt on purpose: the corpus is what earns the
+  rung, and refusing its samples would starve the gate.
+- **What a surface may say about it.** `describeLiveDestination()` is the one
+  definition of the served shape — `configured`, `misconfigured`, `hostname`,
+  `reason`, `env` — and both `/api/autonomy/status` and the readiness report call
+  it. The resolved URL is what the scope matcher and the delivery adapter need;
+  it is not what gets served, on the same reasoning that makes a flip's audit row
+  carry the destination's SHA-256 rather than the destination. What that costs is
+  the ability to read the approved *path* over the API, which matters only when
+  two endpoints share a host; `configured` plus `reason` answers the question an
+  operator actually has.
+
 **Reversal is a new row, never an edit** (`pin.ledger_append_only`, already
 enforced). An `outbox_events` row with `to_status: "reverted"` plus a receipt for
 the reversal attempt; the original stays. `revert_improvement` in the Policy Engine
@@ -1029,7 +1103,13 @@ POST /api/autonomy/outbox/:id/decision    approve | refuse | revert   (T4/T5)
 GET  /api/autonomy/ticks                  tick history: duration, goals, spend, failures
 POST /api/autonomy/tick                   run one slice (ops / cron fallback)
 GET  /api/autonomy/settings               Phase 25: the delegated switch — value, pin, may-the-UI-use-it
-POST /api/autonomy/settings               Phase 25: flip it (409 against a pin, or with no delegation)
+                                          Phase 22: + the outbox mode, its history, and the live-readiness report
+POST /api/autonomy/settings               Phase 25: flip `enabled` (409 against a pin, or with no delegation)
+                                          Phase 22: or flip `outboxMode` — one switch per request; a widening to
+                                          live is refused with 409 live_not_earned until it is earned, and a
+                                          narrowing is refused by nothing
+GET  /api/autonomy/rungs                  Phase 21: built / flag / earned, per rung, with the corpus measured now
+                                          Phase 22: + `live`, the eight-condition readiness report behind the flip
 GET  /api/autonomy/attention              Phase 25: what is waiting on a human, grouped, each with its tab
 POST /api/autonomy/designer               Phase 25: one designer turn → a clamped draft (creates nothing)
 POST /api/autonomy/designer/create        Phase 25: THE explicit click — re-clamps, then creates
@@ -1362,7 +1442,7 @@ The design covers all of it, inbound included. **Enabling** is what walks.
 | **1** | **Durable goals, read-only.** Residents, goals, tick, leases, notes, budgets. T0–T1 only. | `COGNOS_AUTONOMY_ENABLED` | **off** | `test/autonomy.mjs` green |
 | **2** | **+ notices and evidence fetch.** T2–T3. Heartbeat, `safeFetch` inside a URL allowlist, templated notices. | `COGNOS_AUTONOMY_ENABLED` | off | notice-determinism regression; budget-exhaustion proof; graceful-shutdown test |
 | **3** | **+ sub-agents and promotion.** Narrow workers; note→memory/belief with `inferred` labelling. | `COGNOS_AUTONOMY_RESIDENTS` | off | sub-agent-untrusted regression; promotion-labelling regression |
-| **4** | **+ external writes.** T4 behind scope grants, Action Governor verdicts, idempotency, receipts. | `COGNOS_AUTONOMY_EXTERNAL_WRITES` | off | **shadow-mode corpus** (§4.7); idempotent-replay test; reversal-as-new-row test; separate security review |
+| **4** | **+ external writes.** T4 behind scope grants, Action Governor verdicts, idempotency, receipts. | `COGNOS_AUTONOMY_EXTERNAL_WRITES` + `COGNOS_AUTONOMY_LIVE_DESTINATION` | off | **shadow-mode corpus** (§4.7), recorded as an evidence row and aimed at the one approved destination; the earned flip (`test/outbox-live.mjs`); idempotent-replay test; reversal-as-new-row test; separate security review |
 | **5** | **+ inbound messaging.** Bidirectional: channels, headless turn, governed replies, pairing tokens (§4.12). | `COGNOS_INBOUND_ENABLED` | off | headless-turn-equivalence suite; injection-to-action regression; shadow corpus for replies; explicit acknowledgement that *the channel is the credential* |
 | **6** | **+ irreversible acts.** T5, one-by-one human approval, never class-authorized. | `COGNOS_AUTONOMY_IRREVERSIBLE` | off | explicit operator sign-off |
 
@@ -1713,7 +1793,7 @@ One migration, one law bump, one test file, one identity bump, one
 | **20** | **BUILT.** Sub-agents, promotion path, Goal Card in chat, T3 evidence fetch, `[goal_…:nN]` locators + Governor extension; `test/phase20.mjs` (22); laws 1.5.0, identity 1.4.0, migration `0007` | **Rung 3**, default off |
 | **21** | **BUILT.** `webhook.post` (§4.7.1) + delivery adapter (DNS-pinned, per-hop re-validation, one bounded retry), destination grants in scope rows, outbound-SSRF gate, `secret_ref` signing, quiet hours, Action Governor T4 rules in **shadow**, digest-only receipts, reversal that admits it cannot un-send, the rung-evidence gate + its two routes and Autonomy panel; `test/phase21.mjs` (35); laws 1.6.0, identity 1.5.0, migration `0008` | **Rung 4**, default off; a shadow corpus can now be earned but nothing delivers until `live` |
 | **25** | **BUILT.** Hybrid enablement (`COGNOS_AUTONOMY_UI_CONTROL` + `autonomy_settings`), conversational resident designer (clamped drafts, catalogue honesty, budgets down), attention queue with real totals, plain-language statuses; `test/autonomy-ux.mjs` (17); identity 1.8.0, migration `0012`. No new laws. | Operator surface; still **Rung 1–4 default off** |
-| **22** | Outbox → `live` based on the shadow evidence record; T5 with per-effect human approval | **Rung 4–5**, default off, separate security review |
+| **22** | **FIRST SLICE BUILT.** Outbox → `live` from the shadow evidence record, as a guarded and audited flip (`autonomy_settings.outbox_mode`, migration `0013`), plus `COGNOS_AUTONOMY_LIVE_DESTINATION` — one approved endpoint a live T4 write must target *in addition to* its scope grant; `test/outbox-live.mjs` (18); laws 1.7.0, identity 1.9.0. **STILL TO COME: T5 with per-effect human approval.** | **Rung 4** reachable without a restart, default off, separate security review. **Rung 5–6 unchanged** |
 | **23** | Inbound messaging (§4.12): channels, HMAC verification, replay defence, headless turn, pairing tokens, shadow-mode replies | **Rung 5**, default off; requires accepting that the channel is the credential |
 
 ---

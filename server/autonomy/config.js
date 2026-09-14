@@ -20,7 +20,13 @@
 // delegation and the stored switch are resolved in exactly one place. envFlag
 // is imported from there as well: two copies of "what counts as true" is how a
 // kill switch and a feature flag end up disagreeing about the same variable.
-import { envFlag, describeSettings } from "./settings.js";
+import { envFlag, describeSettings, effectiveOutboxMode, outboxModeSource,
+  OUTBOX_MODE_ENV } from "./settings.js";
+// Reused rather than reimplemented: "what may a webhook URL look like" already
+// has one authority, and a second copy of it here is how an approved
+// destination ends up shaped differently from what the adapter would accept.
+import { checkWebhookUrl } from "./webhookPost.js";
+import { destinationAllowed } from "./scopeUrl.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -52,6 +58,106 @@ export function resolveNotices(enabled) {
     misconfigured: mode === "webhook" && !webhook,
     modeSource
   });
+}
+
+/**
+ * Phase 22 (autonomy row) — THE ONE APPROVED DESTINATION.
+ *
+ * A goal's scope grant answers "where did a human authorize THIS goal to act?".
+ * That is necessary and it is not sufficient for a live delivery, because it is
+ * per goal and there can be many of them. This is the deployment's answer to a
+ * narrower question: "which single endpoint may this COGNOS actually send to,
+ * right now?" It is one URL, it is set in the environment, and no request can
+ * widen it.
+ *
+ * Both must hold for a live T4 release — the goal's grant AND this — so the
+ * intersection is strictly narrower than either gate alone. Adding a gate that
+ * can only refuse is the safe direction to be wrong in.
+ *
+ * Fail closed on every branch: unset means no live destination exists, so a
+ * live delivery is refused and a flip to live is refused. A value that is not
+ * a shape the adapter would accept (not https, credentials in the URL, a
+ * literal IP, a local or reserved hostname, a port other than 443) is reported
+ * `misconfigured` and behaves exactly like unset — a malformed brake is not a
+ * brake that happens to allow everything.
+ */
+export const LIVE_DESTINATION_ENV = "COGNOS_AUTONOMY_LIVE_DESTINATION";
+
+export function resolveLiveDestination() {
+  const raw = String(process.env[LIVE_DESTINATION_ENV] || "").trim();
+  if (!raw) {
+    return Object.freeze({
+      configured: false, misconfigured: false, requested: null,
+      url: null, hostname: null, reason: null
+    });
+  }
+  const checked = checkWebhookUrl(raw);
+  if (!checked.ok) {
+    return Object.freeze({
+      configured: false, misconfigured: true, requested: raw.slice(0, 300),
+      url: null, hostname: null, reason: checked.reason
+    });
+  }
+  return Object.freeze({
+    configured: true, misconfigured: false, requested: raw.slice(0, 300),
+    // href with the fragment dropped, which is what checkWebhookUrl returns:
+    // matching a delivery against it is exact-URL matching, so the stored form
+    // has to be the normalized one rather than what the operator typed.
+    url: checked.url.href,
+    hostname: checked.hostname,
+    reason: null
+  });
+}
+
+/**
+ * The PUBLIC shape of an approved destination: what a surface may say about it.
+ *
+ * resolveLiveDestination keeps the normalized URL because the matcher and the
+ * adapter need it. No served object should carry it. Two reasons, and they are
+ * different reasons:
+ *
+ *   - a status route is readable by anyone who can read this deployment's
+ *     configuration, and resolveNotices already sets the precedent of naming a
+ *     webhook channel without publishing its URL;
+ *   - the audit row for a mode flip digests the destination for the same
+ *     discipline (pin.receipt_metadata_only, applied to a configuration value).
+ *
+ * One function so the two surfaces that report it — /api/autonomy/status and
+ * the readiness report on /api/autonomy/rungs — cannot drift apart, which is
+ * how a "hostname only" comment ends up next to a route that publishes the
+ * whole URL.
+ */
+export function describeLiveDestination(liveDestination) {
+  const dest = liveDestination || {};
+  return Object.freeze({
+    configured: dest.configured === true,
+    misconfigured: dest.misconfigured === true,
+    hostname: dest.hostname || null,
+    reason: dest.reason || null,
+    env: LIVE_DESTINATION_ENV
+  });
+}
+
+/**
+ * Does an approved destination cover this delivery URL?
+ *
+ * Exact-URL or host-plus-path-prefix matching, through the SAME matcher the
+ * goal's scope grant uses (scopeUrl.destinationAllowed). Two matchers for two
+ * gates would drift, and a drift here widens a live delivery.
+ */
+export function liveDestinationCovers(liveDestination, candidate) {
+  if (!liveDestination?.configured) {
+    return { allowed: false, reason: liveDestination?.misconfigured
+      ? `the approved destination is misconfigured (${liveDestination.reason})`
+      : `no approved destination is set (${LIVE_DESTINATION_ENV} is unset)` };
+  }
+  if (typeof candidate !== "string" || !candidate.trim()) {
+    return { allowed: false, reason: "the delivery names no destination URL" };
+  }
+  // One entry, matched with the scope matcher. The approved destination is a
+  // single URL rather than a list on purpose: a list is how "one approved
+  // destination" quietly becomes a class grant.
+  return destinationAllowed(candidate, [liveDestination.url]);
 }
 
 /** Per-goal default budget. Overridable per goal — only downward, never above. */
@@ -173,8 +279,17 @@ export function autonomyConfig() {
     // single flag conflating them meant the kill switch was checking a shape
     // the config never produced (so it could never fire).
     notices: resolveNotices(enabled),
-    outboxMode: ["shadow", "dry_run", "live"].includes(process.env.COGNOS_AUTONOMY_OUTBOX_MODE)
-      ? process.env.COGNOS_AUTONOMY_OUTBOX_MODE : "shadow",
+    // Phase 22 (autonomy row) — the mode is a RESOLVED value now, not a raw
+    // environment read: an operator pin, or the delegated row an earned flip
+    // wrote, or the resting state. settings.js owns the precedence, so there is
+    // exactly one place that decides what mode the outbox is in.
+    outboxMode: effectiveOutboxMode(),
+    outboxModeSource: outboxModeSource(),
+    outboxModeEnv: OUTBOX_MODE_ENV,
+    // The one endpoint a live T4 delivery may target. Reported as an object
+    // rather than a boolean because "unset" and "set but malformed" need
+    // different sentences, and both fail closed.
+    liveDestination: resolveLiveDestination(),
 
     // Phase 21 — the webhook adapter's bounds. Every number here is a ceiling
     // on an OUTBOUND request the loop decided to make, so each is derived like

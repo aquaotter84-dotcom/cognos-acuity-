@@ -1207,3 +1207,165 @@ Per the §10 rhythm: migration `0012`, identity `1.8.0` (laws stay `1.6.0` —
 Phase 25 adds no pin), `test/autonomy-ux.mjs` (17 checks, three harnesses:
 delegated / not / pinned), and this section. New environment variable:
 `COGNOS_AUTONOMY_UI_CONTROL`. Rungs 5–6 remain designed and unbuilt.
+
+## Phase 22 (autonomy row) — Earning the flip to live, T4 only — FIRST SLICE BUILT, default off
+
+**The number collision is real and this section is the second Phase 22.**
+Migration `0009` and `test/phase22.mjs` are the README's Phase 22 — bounded
+context plus structured memory — and they shipped. `AUTONOMY.md` §10's Phase 22
+is the autonomy row: *outbox → `live` from the shadow evidence record, plus T5
+with per-effect human approval.* This section is the **first slice of that row**
+and nothing else. T5 remains design only. The new test file is
+`test/outbox-live.mjs`, not `test/phase22.mjs`, precisely so the collision
+cannot produce two files with the same name and different meanings.
+
+**What was true before this.** Live webhooks were not missing code. Phase 21
+built `webhook.post` with DNS pinning, per-hop re-validation, `secret_ref`
+signing, digest-only receipts and destination grants in scope rows; the Action
+Governor judged every T4 effect; `EVIDENCE_GATE_UNMET` refused a live release
+with no recorded corpus. What was missing was **permission to perform**, and the
+only way to grant it was `COGNOS_AUTONOMY_OUTBOX_MODE=live` plus a restart. That
+switch reported nothing at the moment it was thrown. Set it with no corpus and
+the deployment sat in a mode where every effect was individually refused — safe,
+and not honest: an operator flipped a global switch and got no answer until a
+delivery was attempted and refused for a reason the switch had not mentioned.
+
+**Three additions, and deliberately nothing else.**
+
+1. **A readiness report.** `describeLiveReadiness` answers "what would it take to
+   go live *right now*?" as eight named conditions, each carrying a sentence to
+   read when it is unmet and an empty string when it is met — an invariant
+   enforced by the shape of the helper that builds them, not by each condition
+   remembering it. It is served by `GET /api/autonomy/rungs` as `live` and by
+   `GET /api/autonomy/settings`, so the answer arrives *before* the click
+   rather than as a 409 after it, and it is rendered on the Autonomy page's
+   Rung 4 panel as a checklist with a Go live button that is disabled until
+   every box is ticked.
+
+2. **A guarded flip.** `POST /api/autonomy/settings` accepts `{ outboxMode }`
+   and stores it in `autonomy_settings.outbox_mode` (migration `0013`, one
+   nullable column on the table Phase 25 created). Widening to `live` is refused
+   with `409 live_not_earned` and the whole report attached. **Narrowing is
+   refused by nothing** beyond delegation and a pin. A request for the mode
+   already in effect writes no row and records no transition, because a flip
+   that changed nothing must not look like a decision somebody made. One request
+   changes one switch: `{ enabled, outboxMode }` together is a 400, since the
+   two have different guards and accepting both would mean guessing.
+
+3. **One approved destination.** `COGNOS_AUTONOMY_LIVE_DESTINATION` names a
+   single https endpoint. A live T4 release needs it *in addition to* the
+   destination granted in the goal's own scope, and refuses with
+   `DESTINATION_NOT_APPROVED` when the goal was granted somewhere the deployment
+   did not name. Both gates must hold, so their intersection is strictly
+   narrower than either alone — the safe direction for a second gate to be wrong
+   in. It is one URL and not a list, because a list is how "one approved
+   destination" quietly becomes a class grant.
+
+**Precedence, and the one asymmetry.** The effective mode is the *narrower* of
+the environment value and the stored row (`shadow` < `dry_run` < `live` by reach
+into the world), resolved in `settings.js` so there is exactly one place that
+decides it — the same discipline Phase 25 applied to `enabled`. Absence of both
+is `shadow`. The asymmetry: an environment pin holds the mode **down** finally,
+but a pinned `live` can still be **narrowed** by a stored `shadow`. Every other
+pin in this codebase outranks the UI completely; this one may not, because a
+brake an operator cannot reach from a running system is not a brake. The
+trade-off is recorded here rather than left to be discovered: an operator who
+pins `live` has handed the brake to the API, and only the brake.
+
+**Why the corpus has to be aimed at the destination.** Seven of the eight
+conditions are facts about switches and rows. The eighth — `corpus_aimed` — is
+the one that makes the evidence mean something: a gate satisfied by twenty-five
+shadow deliveries to endpoint A is evidence about A's gate, not about B's. So a
+flip is refused when the corpus was earned against other endpoints, and the
+sentence says to name the destination *before* earning the corpus. This is the
+condition that makes the ordering of the two operator actions matter, and it is
+the reason the readiness report counts `aimedAtApproved` and `aimedElsewhere`
+separately rather than reporting one number.
+
+**Shadow is exempt from the destination gate, on purpose.** The shadow corpus is
+what earns the rung; refusing its samples would starve the gate that decides
+whether live is safe. So `DESTINATION_NOT_APPROVED` fires on live verdicts only,
+and the readiness report — not the Governor — is where an operator learns that
+the corpus they earned is aimed somewhere else.
+
+**Two pins, and the two gated actions that now cite them.**
+`pin.live_destination_approved` (a live write goes only where the deployment
+named) and `pin.live_mode_earned` (going live is a recorded decision, never a
+default) join the law layer at 1.7.0. `enable_outbound_channel` and
+`set_autonomy_rung` in the Policy Engine already refused a runtime adaptation
+that tried this; they now cite the specific pins, so a refusal names the
+boundary that was hit instead of only the general one.
+
+**Audit.** Every flip appends to `workspace_audit` as `autonomy.outbox_mode`
+with both values, the effective result, who did it, whether it widened, the rung
+flag, the sample and false-release counts, the evidence row's `metrics_sha256`,
+and the approved destination's **SHA-256 — never the URL**. An audit row is
+readable by anyone who can read the workspace's history; the digest still proves
+*which* endpoint was approved at the moment of the flip without carrying the
+endpoint around forever. That is `pin.receipt_metadata_only`'s discipline
+applied to a configuration value, and `test/outbox-live.mjs` asserts no audit row
+and no mode-history entry contains the endpoint.
+
+**The same discipline on served surfaces, which caught a real inconsistency.**
+The audit-row reasoning is about durability, so a first reading could keep a
+*live* configuration response at full fidelity: it is not stored, and the
+operator typed the value themselves. This slice started out doing exactly that —
+`GET /api/autonomy/status` returned the resolved destination including its URL,
+while the readiness report on `GET /api/autonomy/rungs` returned only the
+hostname, each with a comment defending its own choice. Both surfaces are read by
+the same audience, so the difference was not a distinction, it was a drift: the
+URL was published by whichever route had not thought about it.
+
+Resolved narrow, and through one function rather than two similar blocks.
+`describeLiveDestination()` in `server/autonomy/config.js` is the single
+definition of what a surface may say about an approved destination —
+`configured`, `misconfigured`, `hostname`, `reason`, `env` — and both routes call
+it, so they cannot drift again. `resolveLiveDestination()` still returns the
+normalized URL, because the scope matcher and the delivery adapter need it; it
+simply is not what gets served. What is given up is the ability to see the
+approved *path* from the API, which matters when two endpoints share a host. The
+hostname plus `configured` plus `reason` answers the question an operator
+actually has — did this deployment pick my value up, and if not, why — and
+`test/outbox-live.mjs` now asserts the endpoint appears nowhere in the status
+body, as a privacy regression rather than a convenience assertion.
+
+**What this slice did not do.** No rung was raised, no ceiling lifted, no skill
+added, no budget widened, and T5 was not touched: `tierAllowed` still refuses it
+outright, the outbox route still refuses to approve one, and `auditRelease`
+still counts any T5 release in a corpus as a false release by definition.
+`builtTiers` is still `T0–T4`. Rung 5 inbound messaging is still Phase 23. The
+rest of the Phase 22 autonomy row — T5 with per-effect human approval, never
+class-authorized, default off, separate security review — is still design only.
+
+**Two things found while building it, recorded rather than quietly fixed.**
+
+- **`SHADOW_GATE` freezes at module load.** `minShadowSamples` is read from
+  `COGNOS_AUTONOMY_MIN_SHADOW_SAMPLES` when `config.js` is first imported, so a
+  test file that imports the module statically cannot lower the floor with
+  `bootHarness` afterwards — the override silently does nothing and the suite
+  measures a gate of 25 while asserting a gate of 6. `test/outbox-live.mjs`
+  therefore earns the real 25 samples across five goals, inside the default
+  per-goal ceilings, instead of lowering a floor it could not reach. Worth
+  knowing for any future suite that wants a smaller corpus.
+- **A human Approve can deliver while autonomy is frozen.** `judgeEffect` does
+  not consult `config.enabled`, and the outbox decision route does not either;
+  both check the rung flag, and the Governor checks the evidence row and now the
+  approved destination. So a staged T4 effect can be approved and sent on a
+  deployment whose loop is off. This slice did **not** change that: it is Phase
+  21 behaviour with its own tests, and narrowing it belongs in a reviewed change
+  of its own rather than riding along with a mode switch. What this slice did do
+  is stop the surfaces from implying otherwise — `deliversNow` (does the *loop*
+  perform release verdicts?) is now reported next to `deliversOnApproval` (is an
+  approval a live decision?) on `/api/autonomy/status`, `/api/agent/tools`,
+  `/api/identity` and the Autonomy page, where the pill that used to read
+  *delivers nothing* now reads *an approval can deliver*.
+
+Per the §10 rhythm: migration `0013`, laws `1.7.0` (two new pins), identity
+`1.9.0`, `test/outbox-live.mjs` (18 checks: six pure, twelve against a
+harness that delegated the mode and named one destination), and this section.
+New environment variables: `COGNOS_AUTONOMY_OUTBOX_UI_CONTROL`,
+`COGNOS_AUTONOMY_LIVE_DESTINATION`. `test/phase21.mjs` now names the fixture
+endpoint as its approved destination, which is what a real Rung-4 host does
+before it can earn a flip at all; its law-version assertions became floors
+rather than exact numbers, so a later phase does not have to edit an earlier
+phase's test to say something false about itself.

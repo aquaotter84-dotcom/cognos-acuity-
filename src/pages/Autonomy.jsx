@@ -1230,6 +1230,7 @@ function Outbox({ status, onChanged }) {
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [measuring, setMeasuring] = useState(false);
+  const [flipping, setFlipping] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -1268,12 +1269,40 @@ function Outbox({ status, onChanged }) {
     finally { setMeasuring(false); }
   };
 
+  /**
+   * Widen or narrow the outbox mode. A widening to live is refused unless it has
+   * been earned, and the refusal arrives with the whole readiness report — which
+   * the conditions list below already renders, so the error only has to say that
+   * the flip did not happen and how many things are outstanding. Narrowing is
+   * refused by nothing, so the way back to shadow is always one click.
+   */
+  const flipMode = async (mode) => {
+    setFlipping(true); setError(''); setNotice('');
+    try {
+      const out = await api.setOutboxMode(mode);
+      setNotice(out?.note || `The outbox is now in ${out?.mode || mode} mode.`);
+      await refresh();
+    } catch (e) {
+      const unmet = e?.body?.unmet || [];
+      setError(unmet.length
+        ? `Not live yet — ${unmet.length} thing(s) still unmet, each named below. Nothing was written.`
+        : (e?.message || 'Could not change the outbox mode'));
+      await refresh();
+    } finally { setFlipping(false); }
+  };
+
   const effects = data?.effects || [];
   const corpus = data?.corpus;
   const writes = status?.externalWrites || {};
   const rung = (rungs?.rungs || []).find(r => r.rung === 'external_writes');
   const gate = rungs?.gate || status?.shadowGate || {};
   const measured = rung?.measurement?.metrics;
+  // Phase 22 (autonomy row): the readiness report. Eight named conditions, each
+  // with a sentence to read when it is unmet, so the answer to "what would going
+  // live take?" is on the page before the click rather than in a 409 after it.
+  const live = rungs?.live || null;
+  const mode = status?.outboxMode || 'shadow';
+  const destination = live?.destination || status?.liveDestination || {};
 
   return (
     <div className="space-y-3">
@@ -1295,8 +1324,15 @@ function Outbox({ status, onChanged }) {
             rung {writes.rungEnabled ? 'on' : 'off'}
           </Pill>
           <Pill tone={writes.deliversNow ? 'bad' : 'info'}>outbox {status?.outboxMode || 'shadow'}</Pill>
-          <Pill tone={writes.deliversNow ? 'bad' : 'ok'}>
-            {writes.deliversNow ? 'can deliver' : 'delivers nothing'}
+          {/* Two facts, because they are two facts. `deliversNow` answers "does
+              the LOOP perform a release verdict?" — and an operator's Approve on
+              a staged row is a live decision whatever the loop's mode is, so a
+              shadow deployment that said only "delivers nothing" was describing
+              a system that could still send. */}
+          <Pill tone={writes.deliversNow ? 'bad' : (writes.deliversOnApproval ? 'warn' : 'ok')}>
+            {writes.deliversNow
+              ? 'the loop can deliver'
+              : (writes.deliversOnApproval ? 'an approval can deliver' : 'delivers nothing')}
           </Pill>
           {writes.evidence?.length > 0 && (
             <Pill tone={writes.evidence[0].decision === 'justified' ? 'ok' : 'muted'}>
@@ -1386,6 +1422,92 @@ function Outbox({ status, onChanged }) {
             A count alone can be rationalised; a single false release cannot. Recording an
             insufficient measurement is not a failure — it is the history of having asked.
           </p>
+        </div>
+
+        {/* ------------------------------------------------------ going live
+            Recording the corpus is half of earning a rung; the other half is
+            the flip, and until this panel existed the only way to flip was an
+            environment variable and a restart — a switch that said nothing at
+            the moment you threw it. Everything here is read from the readiness
+            report, so the page and the guard cannot disagree. */}
+        <div className="mt-3 rounded-lg border border-border/70 px-3 py-2.5">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Going live</p>
+          <p className="text-[11px] mt-1 leading-relaxed">
+            {live?.alreadyLive ? (
+              <>The outbox is <span className="font-mono">live</span>: a release verdict is
+                performed rather than only recorded — to one destination, and only for effects
+                the Governor judges one at a time.</>
+            ) : (
+              <>The outbox is <span className="font-mono">{mode}</span>: verdicts are recorded
+                and nothing is performed. Going live is a decision that has to be earned, and
+                this page will refuse it until it is.</>
+            )}
+          </p>
+
+          <p className="text-[10px] mt-1.5 text-muted-foreground">
+            Approved destination:{' '}
+            {destination.configured ? (
+              <span className="font-mono text-foreground/80">{destination.hostname}</span>
+            ) : destination.misconfigured ? (
+              <span className="text-yellow-500">set, but the adapter would refuse it — {destination.reason}</span>
+            ) : (
+              <span className="text-yellow-500">none, so no live delivery has anywhere it is allowed to go</span>
+            )}
+            <span className="text-muted-foreground/70">
+              {' '}— a live write needs this AND the destination granted in the goal's own scope.
+            </span>
+          </p>
+
+          {(live?.conditions || []).length > 0 && (
+            <p className="text-[10px] mt-2 text-muted-foreground">
+              {/* The server reports both counts, so this is a summary of what the
+                  list below already says one line at a time — not a second
+                  opinion computed here. */}
+              {live.met} of {live.total} conditions met
+              {live.ready ? ' — the flip will be accepted.' : ` — ${live.unmet.length} still unmet, each named below.`}
+            </p>
+          )}
+          {(live?.conditions || []).length > 0 && (
+            <ul className="mt-1 space-y-1">
+              {live.conditions.map(c => (
+                <li key={c.id} className="text-[10px] flex items-start gap-1.5">
+                  {c.met
+                    ? <Check className="w-3 h-3 mt-0.5 shrink-0 text-green-500" />
+                    : <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-yellow-500" />}
+                  <span className={c.met ? 'text-muted-foreground' : 'text-foreground/80'}>
+                    {c.label}
+                    {!c.met && c.sentence && (
+                      <span className="text-muted-foreground"> — {c.sentence}</span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2 mt-2.5">
+            {live?.alreadyLive ? (
+              <button onClick={() => flipMode('shadow')} disabled={flipping || !status?.canSetOutboxMode}
+                className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[11px] hover:bg-muted/50 disabled:opacity-40"
+                title="Narrowing needs no evidence. The brake is always one click.">
+                <Undo2 className={`w-3.5 h-3.5 ${flipping ? 'animate-pulse' : ''}`} /> Back to shadow
+              </button>
+            ) : (
+              <button onClick={() => flipMode('live')}
+                disabled={flipping || live?.ready !== true || status?.canSetOutboxMode === false}
+                className="flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-2.5 py-1.5 text-[11px] disabled:opacity-40"
+                title={live?.ready
+                  ? 'Every condition is met. A release verdict will now be performed.'
+                  : 'Not earned yet — every unmet condition is named above'}>
+                <Zap className={`w-3.5 h-3.5 ${flipping ? 'animate-pulse' : ''}`} /> Go live
+              </button>
+            )}
+            <p className="text-[10px] text-muted-foreground max-w-md leading-relaxed">
+              {status?.canSetOutboxMode === false
+                ? `This deployment has not handed the mode switch to this page (${status?.outboxRefusal?.message || 'set COGNOS_AUTONOMY_OUTBOX_UI_CONTROL=true'}).`
+                : 'Going live is refused until it is earned. Going back to shadow never is.'}
+            </p>
+          </div>
         </div>
       </Section>
 

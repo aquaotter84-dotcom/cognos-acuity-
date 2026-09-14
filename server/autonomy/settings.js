@@ -40,6 +40,56 @@ export const AUTONOMY_PIN_ENV = "COGNOS_AUTONOMY_ENABLED";
 export const AUTONOMY_UI_CONTROL_ENV = "COGNOS_AUTONOMY_UI_CONTROL";
 
 /**
+ * Phase 22 (autonomy row) — the outbox MODE switch, same shape as the two
+ * above and deliberately a separate pair of variables.
+ *
+ * `COGNOS_AUTONOMY_OUTBOX_MODE` is the operator's explicit value: shadow,
+ * dry_run or live. `COGNOS_AUTONOMY_OUTBOX_UI_CONTROL` hands the mode switch
+ * to this process's API. They are not the same power as the enablement pair:
+ * `COGNOS_AUTONOMY_UI_CONTROL` lets the UI decide whether the loop RUNS, and
+ * this one lets it decide whether the loop may ACT ON THE WORLD. Delegating
+ * the first must not delegate the second, so neither variable implies the
+ * other.
+ */
+export const OUTBOX_MODE_ENV = "COGNOS_AUTONOMY_OUTBOX_MODE";
+export const OUTBOX_UI_CONTROL_ENV = "COGNOS_AUTONOMY_OUTBOX_UI_CONTROL";
+
+/** The only three modes that exist, ordered by how far they reach. */
+export const OUTBOX_MODES = Object.freeze(["shadow", "dry_run", "live"]);
+
+/**
+ * Reach into the world, as a rank. `shadow` judges and records; `dry_run`
+ * judges, records, and builds the exact request without sending it; `live`
+ * sends. The rank exists so precedence can be expressed as "the narrower of
+ * the two wins" instead of as a table of cases.
+ */
+const MODE_RANK = Object.freeze({ shadow: 0, dry_run: 1, live: 2 });
+
+const rankOf = (mode) => (Object.prototype.hasOwnProperty.call(MODE_RANK, mode) ? MODE_RANK[mode] : 0);
+
+/**
+ * Does moving from one mode to another reach FURTHER into the world? The one
+ * question a guarded flip has to ask, exported so liveOutbox.js and the tests
+ * ask it in the same terms instead of each keeping an ordering of their own.
+ */
+export function isWideningOutboxMode(from, to) {
+  return rankOf(to) > rankOf(from);
+}
+
+/** An explicit, valid mode from the environment, or null when unset/invalid. */
+export function envOutboxMode() {
+  const raw = process.env[OUTBOX_MODE_ENV];
+  if (raw === undefined) return null;
+  const value = String(raw).trim();
+  return OUTBOX_MODES.includes(value) ? value : null;
+}
+
+/** An operator handed the mode switch to this API. */
+export function outboxModeDelegated() {
+  return envFlag(OUTBOX_UI_CONTROL_ENV, false);
+}
+
+/**
  * Read a capability switch from the environment — ALLOW-LIST semantics.
  *
  * `value !== "false"` is wrong for a switch that grants a capability: every
@@ -70,6 +120,7 @@ export function uiControlDelegated() {
 const initialCache = () => ({
   loaded: false,          // has a read ever succeeded in this process?
   enabled: false,         // the delegated value; false until loaded
+  outboxMode: null,       // the delegated mode; null means "never flipped here"
   source: "default",      // what last wrote it: 'ui' | 'boot' | 'default'
   updatedBy: null,
   updatedAtMs: null,
@@ -103,6 +154,69 @@ export function effectiveEnabled() {
   if (pinnedOn()) return true;              // a pin outranks the UI, always
   if (!uiControlDelegated()) return false;  // no delegation: the environment decides
   return cache.loaded === true && cache.enabled === true;
+}
+
+/**
+ * The effective outbox mode, applying precedence.
+ *
+ * The rule is one sentence: **an operator's environment value may hold the
+ * system DOWN, and a delegated row may hold it down further, but nothing here
+ * can hold the system OUT.** So the answer is the narrower of the two, with
+ * one deliberate asymmetry — an environment pin of `live` is still brakeable
+ * by a stored `shadow`, because a brake an operator cannot reach from the
+ * running system is not a brake. Every other pin is final.
+ *
+ * Cases, in the order they resolve:
+ *   env unset,  row null   -> shadow    the resting state; absence is OFF
+ *   env unset,  row live   -> live      an earned, delegated flip
+ *   env shadow, row live   -> shadow    a pin down is final
+ *   env live,   row null   -> live      the Phase 21 behaviour, unchanged
+ *   env live,   row shadow -> shadow    the brake still reaches a pinned-live
+ *
+ * Note what this function does NOT check: the evidence gate, the rung flag and
+ * the approved destination. Those are judged per effect by the Action Governor
+ * and at flip time by liveOutbox.js. A mode of `live` here means "releases are
+ * performed", not "releases are allowed" — the Governor still refuses each one
+ * that has not earned it, which is why an unearned `live` fails closed rather
+ * than failing open.
+ */
+export function effectiveOutboxMode() {
+  const env = envOutboxMode();
+  const stored = cache.loaded === true && OUTBOX_MODES.includes(cache.outboxMode)
+    ? cache.outboxMode : null;
+  if (env === null) return stored ?? "shadow";
+  if (stored !== null && rankOf(stored) < rankOf(env)) return stored;
+  return env;
+}
+
+/** Where the current mode came from — 'env-pin' | 'ui' | 'default-off'. */
+export function outboxModeSource() {
+  const env = envOutboxMode();
+  const effective = effectiveOutboxMode();
+  if (env !== null && env === effective) return "env-pin";
+  if (cache.loaded === true && cache.outboxMode === effective) return "ui";
+  return "default-off";
+}
+
+/**
+ * Why the API may or may not flip the mode, in words an operator can act on.
+ *
+ * This is the SYNCHRONOUS half — delegation and pins. Whether a widening to
+ * `live` has been EARNED is database state, so liveOutbox.js answers that half
+ * and merges its refusal with this one. Narrowing is never refused here: a
+ * delegation is required to write the row at all, but once the row exists the
+ * brake is unconditional.
+ */
+export function outboxModeRefusal() {
+  if (outboxModeDelegated()) return null;
+  const env = envOutboxMode();
+  return {
+    code: "not_delegated",
+    message: `This deployment has not handed the outbox mode to the API. Set ${OUTBOX_UI_CONTROL_ENV}=true and restart; `
+      + (env === null
+        ? `until then the mode is controlled only by ${OUTBOX_MODE_ENV}, and it rests at shadow.`
+        : `until then the mode stays pinned by ${OUTBOX_MODE_ENV}=${env}.`)
+  };
 }
 
 /** Why the UI may or may not use the switch, in words a person can act on. */
@@ -142,6 +256,7 @@ export function describeSettings() {
   const storedByUi = uiControl && cache.loaded === true && cache.source === "ui";
   const source = pinned ? "env-pin" : (storedByUi ? "ui" : "default-off");
   const refusal = toggleRefusal();
+  const outboxRefusal = outboxModeRefusal();
   return Object.freeze({
     enabled,
     pinned,
@@ -151,9 +266,21 @@ export function describeSettings() {
     refusal,
     pinEnv: AUTONOMY_PIN_ENV,
     uiControlEnv: AUTONOMY_UI_CONTROL_ENV,
+    // Phase 22 (autonomy row) — the outbox mode, reported as its own set of
+    // facts. "What mode is the outbox in" and "may this API change it" are
+    // different questions again, and a surface that answers only the first
+    // cannot tell an operator why the control in front of them is disabled.
+    outboxMode: effectiveOutboxMode(),
+    outboxModeSource: outboxModeSource(),
+    outboxModeDelegated: outboxModeDelegated(),
+    canSetOutboxMode: outboxRefusal === null,
+    outboxRefusal,
+    outboxModeEnv: OUTBOX_MODE_ENV,
+    outboxUiControlEnv: OUTBOX_UI_CONTROL_ENV,
     stored: Object.freeze({
       loaded: cache.loaded,
       enabled: cache.enabled,
+      outboxMode: cache.outboxMode,
       source: cache.source,
       updatedBy: cache.updatedBy,
       updatedAtMs: cache.updatedAtMs,
@@ -176,6 +303,7 @@ export async function refreshSettings(db, workspaceId = null) {
     cache = {
       loaded: true,
       enabled: row?.enabled === true,
+      outboxMode: normalizeStoredMode(row?.outbox_mode),
       source: row ? String(row.source || "ui") : "default",
       updatedBy: row?.updated_by || null,
       updatedAtMs: row ? Number(row.updated_ms) || null : null,
@@ -185,6 +313,39 @@ export async function refreshSettings(db, workspaceId = null) {
   } catch (error) {
     cache = { ...cache, stale: true, error: String(error?.message || error).slice(0, 200) };
   }
+  return describeSettings();
+}
+
+/**
+ * A stored mode is only believed if it is one of the three. Anything else —
+ * a column written by an older build, a hand-edited row, a truncated string —
+ * reads as null, which resolves to the resting state. An unrecognised value is
+ * not a permission.
+ */
+function normalizeStoredMode(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return OUTBOX_MODES.includes(text) ? text : null;
+}
+
+/**
+ * Write-through for the mode cache. liveOutbox.js calls this immediately after
+ * committing a row, so the response to a flip — and every synchronous
+ * autonomyConfig() call after it — already sees the new mode. Reading the row
+ * back instead would race the write on a replica and report the state before
+ * the click, which is the same reason setSettingsEnabled writes through.
+ *
+ * This is a cache setter and nothing more: it holds no policy, because the
+ * policy that decided whether the write was allowed has already run.
+ */
+export function applyOutboxModeCache(outboxMode, { updatedBy = null, updatedAtMs = null } = {}) {
+  cache = {
+    ...cache,
+    loaded: true,
+    outboxMode: normalizeStoredMode(outboxMode),
+    updatedBy: updatedBy ?? cache.updatedBy,
+    updatedAtMs: updatedAtMs ?? cache.updatedAtMs
+  };
   return describeSettings();
 }
 

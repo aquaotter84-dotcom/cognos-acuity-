@@ -92,10 +92,44 @@ Project → Settings → Environment Variables (Production **and** Preview):
 | `COGNOS_RUNTIME_SECRET` | optional | set → gate on; unset → app opens straight to chat |
 | `COGNOS_AUTONOMY_ENABLED` | optional | **pin.** Unset = frozen. `true` turns the loop on and the UI cannot turn it off. Heartbeat runs only in `server/serve.js` (not on Vercel). |
 | `COGNOS_AUTONOMY_UI_CONTROL` | optional | **delegation.** Hands the on/off switch to the Autonomy page. Does not enable anything by itself. |
+| `COGNOS_AUTONOMY_EXTERNAL_WRITES` | optional | **Rung 4 kill switch.** Default off. On its own it delivers nothing — see going live below. |
+| `COGNOS_AUTONOMY_OUTBOX_MODE` | optional | **pin over a delegated row.** `shadow` (default) records verdicts and performs nothing; `dry_run` also records the exact request it declined to send; `live` performs. Set, it holds the mode down and the API cannot widen past it — though it can always narrow. Unset, the mode rests at `shadow` and a delegated flip may widen it. |
+| `COGNOS_AUTONOMY_OUTBOX_UI_CONTROL` | optional | **delegation, separate from the one above.** Hands the *outbox mode* switch to `POST /api/autonomy/settings` and the Autonomy page. That is whether the loop may act on the world, not whether it runs. |
+| `COGNOS_AUTONOMY_LIVE_DESTINATION` | optional | **the one approved destination.** A live T4 webhook must target this endpoint *in addition to* the destination granted in the goal's scope. One https URL on 443, no credentials, no literal IP, no local host. Unset, empty or malformed **fails closed**. |
 | `COGNOS_ACCOUNTS_ENABLED` | optional | Optional email/Google accounts. Default on; set `false` to keep unauthenticated single-tenant use. |
 
 None of these are exposed to the browser — there are no `VITE_*` variables in
 this app, so nothing can leak into the bundle by construction.
+
+**Going live on Rung 4 is a sequence, not a switch.** Since the first slice of
+AUTONOMY.md §10's Phase 22, a live external write needs four things to line up,
+and the order matters:
+
+1. Name the destination first: `COGNOS_AUTONOMY_LIVE_DESTINATION=https://host/path`
+   plus `COGNOS_AUTONOMY_EXTERNAL_WRITES=true`, and restart. A corpus earned
+   before the destination existed is aimed at the wrong endpoint and will not
+   justify a flip — that is the `corpus_aimed` condition, and it is deliberate.
+2. Let the loop run in `shadow` and accumulate at least
+   `COGNOS_AUTONOMY_MIN_SHADOW_SAMPLES` (default 25) T4 samples with at least one
+   release verdict and at least one refusal in them. Nothing is delivered.
+3. Record the corpus: the *Measure and record the corpus* button on the Outbox
+   tab, or `POST /api/autonomy/rungs/external_writes/evidence`. An insufficient
+   measurement is recorded too, as the history of having asked.
+4. Flip: delegate with `COGNOS_AUTONOMY_OUTBOX_UI_CONTROL=true`, then *Go live*
+   on the Outbox tab or `POST /api/autonomy/settings` with `{"outboxMode":"live"}`.
+   No restart. `GET /api/autonomy/rungs` returns the same eight conditions as
+   `live`, so you can read what a flip would take before attempting one.
+
+Backing out is one click and needs no evidence: narrowing to `shadow` is refused
+by nothing beyond the delegation. Raising `COGNOS_AUTONOMY_MIN_SHADOW_SAMPLES`
+after a flip invalidates the old justification rather than grandfathering it, so
+the gate can be tightened on a live deployment and the next effect will refuse
+until the corpus is re-earned. Note that `minShadowSamples` is read when
+`server/autonomy/config.js` is first imported — changing it needs a restart.
+
+T5 (payment, publish, delete) is **not** deployable in this revision: it is
+refused by the tier check, by the outbox route, and by any corpus that contains
+one. Inbound messaging is Phase 23.
 
 Document uploads are base64 JSON requests so the platform's request-body cap is
 reached before the server's decoded-byte cap on some plans. Keep the default

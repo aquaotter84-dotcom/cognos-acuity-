@@ -258,8 +258,18 @@ export const GLOSSARY = [
   },
   {
     term: 'Shadow mode',
-    technical: 'COGNOS_AUTONOMY_OUTBOX_MODE=shadow',
+    technical: 'COGNOS_AUTONOMY_OUTBOX_MODE=shadow, or autonomy_settings.outbox_mode',
     body: 'The loop decides everything and delivers nothing. It is how the system earns evidence that its judgements are sound before an outside effect is ever released.',
+  },
+  {
+    term: 'Going live',
+    technical: 'autonomy_settings.outbox_mode = live',
+    body: 'A release verdict is performed instead of only recorded. It is a decision you make, not a mode you inherit: the flip is refused until a recorded shadow corpus still satisfies the gate, the rung is switched on, and the corpus was aimed at the destination you approved. Going back to shadow is never refused — a brake you have to earn is not a brake.',
+  },
+  {
+    term: 'Approved destination',
+    technical: 'COGNOS_AUTONOMY_LIVE_DESTINATION',
+    body: 'The one endpoint this deployment may send to. A live outside write needs it AND the destination granted in the goal\'s own authorization, so both gates have to agree. Unset or malformed means nowhere: nothing is delivered, and the flip to live is refused.',
   },
   {
     term: 'Notice',

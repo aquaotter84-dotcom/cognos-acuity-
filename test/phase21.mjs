@@ -50,6 +50,15 @@ const SECRET_NAME = "COGNOS_TEST_HOOK_SECRET";
 const SECRET_VALUE = "whsec-PHASE21-DO-NOT-STORE-8f2c1a";
 const BODY = JSON.stringify({ event: "goal.completed", note: "phase 21 sample" });
 
+// Phase 22 (autonomy row) added a SECOND destination gate: a live T4 release
+// must target the one endpoint the deployment named in its environment, in
+// addition to the destination granted in the goal's own scope. This suite's
+// deployment names the fixture endpoint — which is what a real Rung-4 host does
+// before it can earn a flip at all. Set before baseCfg is read, so the pure
+// judges below (which never touch the harness) see the same deployment the
+// route-driven tests do.
+process.env.COGNOS_AUTONOMY_LIVE_DESTINATION = DEST;
+
 const baseCfg = autonomyConfig();
 const cfgT4 = (over = {}) => ({
   ...baseCfg,
@@ -850,6 +859,7 @@ const h = await bootHarness({
   COGNOS_AUTONOMY_NOTICE_MODE: "internal",
   COGNOS_AUTONOMY_EXTERNAL_WRITES: "true",
   COGNOS_AUTONOMY_OUTBOX_MODE: "shadow",
+  COGNOS_AUTONOMY_LIVE_DESTINATION: DEST,
   COGNOS_WEBHOOK_TIMEOUT_MS: "1500",
   [SECRET_NAME]: SECRET_VALUE
 });
@@ -1847,7 +1857,16 @@ await test("a webhook effect is never an answer: no message row, no SSE token, n
 });
 
 await test("Phase 21 laws are pinned, and the Policy Engine refuses to open a channel or raise a rung at runtime", async () => {
-  assert.equal(LAW_LAYER_VERSION, "1.6.0");
+  // A floor, not an exact number: Phase 21 shipped the law layer at 1.6.0 and
+  // every phase after it adds pins. Asserting equality here would make each
+  // later phase edit an earlier phase's test to say something false about
+  // itself. Phase 22 (autonomy row) added pin.live_destination_approved and
+  // pin.live_mode_earned and bumped the layer to 1.7.0.
+  {
+    const [maj, min] = LAW_LAYER_VERSION.split(".").map(Number);
+    assert.ok(maj > 1 || (maj === 1 && min >= 6),
+      `the law layer is at least Phase 21's 1.6.0; it is ${LAW_LAYER_VERSION}`);
+  }
   const ids = LAWS.map(l => l.id);
   for (const id of ["pin.external_write_earned", "pin.destination_granted", "pin.receipt_metadata_only"]) {
     assert.ok(ids.includes(id), `${id} is a law`);
@@ -1866,7 +1885,10 @@ await test("Phase 21 laws are pinned, and the Policy Engine refuses to open a ch
   // Every pin is non-modifiable. (Charter and phase_scope laws are too; the
   // prefix is not the only marker, but it is the one an operator reads.)
   assert.ok(LAWS.filter(l => l.id.startsWith("pin.")).every(l => l.runtime_modifiable === false));
-  assert.equal(LAWS.length, 34, "Phase 21 added three laws to Phase 20's thirty-one");
+  // Phase 21 added three laws to Phase 20's thirty-one. Phase 22 (autonomy row)
+  // then added two more for the earned live flip, so this file's own count moves
+  // with the law layer rather than pinning a number that belongs to a later phase.
+  assert.equal(LAWS.length, 36, "34 after Phase 21, +2 for the live-destination and earned-mode pins");
 
   assert.ok(GATED_ACTIONS.enable_outbound_channel, "named, so it is refused with a law rather than as unknown");
   assert.ok(GATED_ACTIONS.set_autonomy_rung);

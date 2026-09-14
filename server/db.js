@@ -42,7 +42,7 @@ import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { newId, num } from "./db/util.js";
-import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA, PHASE24_SCHEMA, PHASE25_SCHEMA } from "./db/schema.js";
+import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA, PHASE24_SCHEMA, PHASE25_SCHEMA, PHASE22B_SCHEMA } from "./db/schema.js";
 import { appendEvent, snapshot } from "./knowledge/events.js";
 import {
   createKnowledgeStore, TRACKED_FIELDS,
@@ -192,7 +192,12 @@ CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events (created_date DESC)
 + PHASE20_SCHEMA + PHASE21_SCHEMA + PHASE22_SCHEMA + PHASE23_SCHEMA + PHASE24_SCHEMA
 // Phase 25 — the delegated autonomy switch. Additive: one new table, and it is
 // inert unless COGNOS_AUTONOMY_UI_CONTROL delegates the switch to the UI.
-+ PHASE25_SCHEMA;
++ PHASE25_SCHEMA
+// Phase 22 (autonomy row) — the delegated OUTBOX MODE, one nullable column on
+// the table above. Ordered after it because it alters it. Inert unless
+// COGNOS_AUTONOMY_OUTBOX_UI_CONTROL delegates the mode switch, and a null reads
+// as the resting state (shadow).
++ PHASE22B_SCHEMA;
 
 function isNeon(url) {
   return /\.neon\.tech/i.test(url) || /neon\.database/i.test(url);

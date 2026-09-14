@@ -1,13 +1,20 @@
 openapi: 3.1.0
 info:
-  title: COGNOS Accounts, Workspaces, and Autonomy (Phases 24–25)
-  version: "25.0"
-  summary: Email + Google sign-in, isolated append-only workspaces, and the Phase 25 autonomy operator surface.
+  title: COGNOS Accounts, Workspaces, and Autonomy (Phases 24–25 + Phase 22 autonomy row)
+  version: "26.0"
+  summary: Email + Google sign-in, isolated append-only workspaces, the Phase 25 autonomy operator surface, and the earned flip of the outbox to live for T4.
   description: |
     Multi-tenant workspace layer over the Phase 23 trust-annotated knowledge
     graph ("Atlas"), plus Phase 25's hybrid enablement, resident designer, and
     attention queue. Autonomy routes create no answers: POST /api/chat remains
     the only user-message-to-answer path.
+
+    v26.0 adds the first slice of AUTONOMY.md §10's Phase 22 (the autonomy row —
+    NOT the README's Phase 22, which is bounded context + structured memory and
+    shipped as migration 0009): the outbox mode became a recorded, guarded
+    decision instead of an environment variable plus a restart, and a live T4
+    delivery became confined to one destination the deployment named. T5 is
+    still design only, and no rung, ceiling, skill or budget moved.
 
     ## Provenance rule
     User facts are asserted ONLY from trusted Atlas rows:
@@ -981,40 +988,82 @@ paths:
   /api/autonomy/status:
     get:
       tags: [autonomy]
-      summary: Built / rung-on / delivers-now, plus hybrid enablement (enabledSource, pinned, uiControl).
+      summary: Built / rung-on / delivers-now, plus hybrid enablement (enabledSource, pinned, uiControl) and the outbox mode.
       responses:
         '200':
-          description: Effective switch, rung flags, counts, and how the switch was decided.
+          description: |
+            Effective switch, rung flags, counts, and how the switch was decided.
+            Phase 22 (autonomy row) adds the outbox mode beside the enablement
+            switch — `outboxMode`, `outboxModeSource`, `outboxModeDelegated`,
+            `canSetOutboxMode`, `outboxRefusal` — and `liveDestination`, which is
+            the approved destination's hostname and configuration state, never
+            its URL (the same shape the readiness report uses; one function
+            defines both).
+
+            `externalWrites` now reports two facts where it reported one.
+            `deliversNow` answers whether the LOOP performs a release verdict;
+            `deliversOnApproval` answers whether a human Approve on a staged row
+            would, which is true whenever Rung 4 is on whatever the loop's mode
+            is. A shadow deployment that reported only `deliversNow: false` was
+            describing a system that could still send.
+      parameters:
+        - name: fresh
+          in: query
+          schema: { type: string }
+          description: Any value re-reads the delegated switches from the database instead of the process cache.
 
   /api/autonomy/settings:
     get:
       tags: [autonomy]
-      summary: The delegated on/off switch — value, pin, whether the UI may use it, recent flips.
+      summary: The delegated on/off switch and the delegated outbox mode — values, pins, whether this API may use either, both flip histories, and the live-readiness report.
       responses:
         '200':
-          description: Settings plus flip history.
+          description: |
+            Settings plus `flips` (autonomy.enabled history), `outboxFlips`
+            (autonomy.outbox_mode history, carrying evidence and destination
+            digests rather than the destination URL). With `?live=1`, also
+            `live` — the same readiness report GET /api/autonomy/rungs returns;
+            it is opt-in because measuring the corpus reads up to a thousand
+            outbox rows.
     post:
       tags: [autonomy]
-      summary: Flip the delegated switch (409 against a pin, or with no delegation).
+      summary: Flip ONE delegated switch — `enabled` (Phase 25) or `outboxMode` (Phase 22, autonomy row). Sending both is a 400.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [enabled]
               properties:
                 enabled:
                   type: boolean
+                  description: The global on/off switch. Refused against a pin or with no delegation.
+                outboxMode:
+                  type: string
+                  enum: [shadow, dry_run, live]
+                  description: |
+                    The outbox mode. Narrowing is refused by nothing beyond
+                    delegation and a pin. Widening to `live` is refused until it
+                    has been EARNED — see the `live_not_earned` response.
                 updated_by:
                   type: string
       responses:
         '200':
-          description: New effective state. Takes effect on the next heartbeat — no restart.
+          description: |
+            New effective state. `enabled` takes effect on the next heartbeat;
+            `outboxMode` is written through, so this response and every
+            synchronous config read after it already see it. For a mode flip:
+            `changed` is false when the requested mode was already in effect,
+            and no row or audit entry was written.
         '400':
-          description: enabled must be a boolean.
+          description: enabled must be a boolean (or send outboxMode); or both switches in one request (one_switch_per_request).
         '409':
-          description: pinned_by_operator or not_delegated.
+          description: |
+            `pinned_by_operator` or `not_delegated` for either switch;
+            `invalid_mode` for a mode that is not one of the three; or
+            `live_not_earned` for a widening to live, with `unmet` naming the
+            conditions and `live` carrying the whole readiness report — each
+            unmet condition as a sentence saying what to do.
 
   /api/autonomy/attention:
     get:
@@ -1156,10 +1205,54 @@ paths:
   /api/autonomy/rungs:
     get:
       tags: [autonomy]
-      summary: Rung flags plus the shadow-corpus measurement.
+      summary: Rung flags, the shadow-corpus measurement per rung, and the live-readiness report behind the mode flip.
       responses:
         '200':
-          description: OK.
+          description: |
+            `rungs` — built / flag / earned per rung with the corpus measured
+            now. `live` — the eight conditions a widening to `live` needs
+            (`delegated`, `not_pinned_down`, `autonomy_on`, `rung_flag`,
+            `destination_approved`, `evidence_recorded`, `evidence_current`,
+            `corpus_aimed`), each met or with a sentence to read; plus the
+            corpus counts split into `aimedAtApproved` and `aimedElsewhere`, and
+            the approved destination's hostname (never its full URL).
+
+            The report is summarized three ways so a surface does not have to
+            count an array it was handed: `ready` (a widening would be accepted),
+            `met` / `total` (how many conditions hold), and `unmet` (the ids that
+            do not). `refusal` is the 409 body a refused flip returns, present
+            whenever `ready` is false, so the answer to "why not?" is readable
+            before the attempt rather than only after it.
+
+  /api/autonomy/rungs/{rung}/evidence:
+    post:
+      tags: [autonomy]
+      summary: Measure the shadow corpus and record it as an append-only evidence row. An insufficient measurement is recorded too.
+      parameters:
+        - name: rung
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [external_writes, irreversible]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                decided_by:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        '201':
+          description: The measurement, the row, and `decision` — justified or insufficient.
+        '404':
+          description: Unknown rung.
+        '409':
+          description: Autonomy is frozen, so there is no corpus to measure.
 
   /api/autonomy/tick:
     post:

@@ -13,7 +13,10 @@
 // manual form uses.
 //
 // Barriers live here:
-//   POST /api/autonomy/settings              — the delegated switch (Phase 25)
+//   POST /api/autonomy/settings              — the delegated switch (Phase 25),
+//                                              and the outbox mode (Phase 22,
+//                                              autonomy row): one request
+//                                              changes one switch
 //   POST /api/autonomy/goals/:id/decision    — a goal does no work until this
 //                                              records consent with scope hashes
 //   POST /api/autonomy/outbox/:id/decision   — a staged effect is approved,
@@ -21,7 +24,7 @@
 //   POST /api/autonomy/promotions/:id/decide — a promotion request is approved
 //                                              (and applied) or refused (Phase 20)
 
-import { autonomyConfig } from "../autonomy/config.js";
+import { autonomyConfig, describeLiveDestination } from "../autonomy/config.js";
 import {
   describeSettings, ensureSettingsLoaded, refreshSettings, setSettingsEnabled,
   listSettingFlips, AUTONOMY_PIN_ENV, AUTONOMY_UI_CONTROL_ENV
@@ -30,6 +33,7 @@ import { designTurn, clampDraft, emptyDraft, DESIGNER_LIMITS, firstGoalScope, cl
 import { scopeHashes, authorizationCovers, isTightening } from "../autonomy/authorize.js";
 import { decideEffect, revertEffect, refuseEffect, shadowCorpus } from "../autonomy/outbox.js";
 import { RUNGS, RUNG_IDS, recordRungEvidence, rungEvidenceStatus } from "../autonomy/evidenceGate.js";
+import { describeLiveReadiness, setOutboxMode, listOutboxModeFlips } from "../autonomy/liveOutbox.js";
 import { decidePromotion } from "../autonomy/promote.js";
 import { describeSkills } from "../skills/index.js";
 import { publicNotice, NOTICE_TEMPLATE_IDS } from "../autonomy/notice.js";
@@ -100,6 +104,19 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       settings: cfg.settings,
       rung: cfg.rung,
       outboxMode: cfg.outboxMode,
+      // Phase 22 (autonomy row) — how the mode came about, and whether this API
+      // may change it. Same three-questions discipline as `enabledSource`:
+      // "what mode is it in", "who decided that" and "may I change it from
+      // here" are not one question.
+      outboxModeSource: cfg.outboxModeSource,
+      outboxModeDelegated: cfg.settings?.outboxModeDelegated === true,
+      canSetOutboxMode: cfg.settings?.canSetOutboxMode === true,
+      outboxRefusal: cfg.settings?.outboxRefusal || null,
+      // The one endpoint a live delivery may target. Hostname only — the
+      // resolved URL is what the matcher and the adapter need, not what a
+      // served object should carry. describeLiveDestination is the same helper
+      // the readiness report uses, so the two surfaces say the same thing.
+      liveDestination: describeLiveDestination(cfg.liveDestination),
       notices: cfg.notices,
       builtTiers: cfg.builtTiers,
       counts: {
@@ -122,7 +139,14 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
         rungEnabled: cfg.rung.externalWrites === true,
         killSwitch: "COGNOS_AUTONOMY_EXTERNAL_WRITES",
         deliversNow: cfg.rung.externalWrites === true && cfg.outboxMode === "live",
+        // An operator's Approve judges the effect in live mode whatever the
+        // loop's mode is, so "the loop delivers nothing" is not the same claim
+        // as "nothing can leave". Both facts, separately.
+        deliversOnApproval: cfg.builtTiers.includes("T4") && cfg.rung.externalWrites === true,
         requiresEvidenceRow: true,
+        requiresApprovedDestination: true,
+        approvedDestinationConfigured: cfg.liveDestination?.configured === true,
+        approvedDestinationMisconfigured: cfg.liveDestination?.misconfigured === true,
         evidence: (evidenceRows || [])
           .filter(row => row.rung === RUNGS.external_writes.rung)
           .slice(0, 5)
@@ -154,9 +178,29 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
   app.get("/api/autonomy/settings", wrap(async (req, res) => {
     await refreshSettings(db);
     const settings = describeSettings();
+    const ws = await db.Workspace.ensureDefault();
+    const cfg = config();
+    // Phase 22 (autonomy row) — the mode switch is reported next to the
+    // enablement switch, with its own history, so one surface answers "what is
+    // on and what may I change?" without a second request.
+    //
+    // The readiness report is behind `?live=1`, on the same convention
+    // `/api/autonomy/status?fresh=1` already sets: measuring the corpus reads up
+    // to a thousand outbox rows, and a switch surface that can be polled should
+    // not do that on every read. GET /api/autonomy/rungs is the canonical home
+    // for the report, and the Autonomy page reads it from there.
+    const [flips, outboxFlips, live] = await Promise.all([
+      listSettingFlips(db, { limit: Number(req.query.limit) || 10 }),
+      listOutboxModeFlips(db, { workspaceId: ws.id, limit: Number(req.query.limit) || 10 }),
+      req.query.live
+        ? describeLiveReadiness({ db, workspaceId: ws.id, config: cfg }).catch(() => null)
+        : Promise.resolve(null)
+    ]);
     res.json({
       ...settings,
-      flips: await listSettingFlips(db, { limit: Number(req.query.limit) || 10 })
+      flips,
+      outboxFlips,
+      live
     });
   }));
 
@@ -171,9 +215,63 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
    */
   app.post("/api/autonomy/settings", wrap(async (req, res) => {
     await ensureSettingsLoaded(db);
+
+    /**
+     * Phase 22 (autonomy row) — THE OUTBOX MODE FLIP, on the same surface as
+     * the enablement switch because both are operator switches over the same
+     * row. One request changes one switch: sending both is a 400 rather than a
+     * guess about which one the caller meant, and the two have different guards
+     * (enablement needs a delegation; widening to live needs to be EARNED).
+     */
+    if (req.body?.outboxMode !== undefined && req.body?.outboxMode !== null) {
+      if (req.body?.enabled !== undefined) {
+        return res.status(400).json({
+          error: "Send either enabled or outboxMode, not both. They are two switches with two different guards.",
+          code: "one_switch_per_request"
+        });
+      }
+      const cfg = config();
+      const outcome = await setOutboxMode({
+        db,
+        outboxMode: req.body.outboxMode,
+        updatedBy: safe(req.body?.updated_by, 60) || "api",
+        config: cfg
+      });
+      if (!outcome.ok) {
+        // 409 with the whole readiness report attached: the refusal is a list
+        // of things an operator can do, not a bare "no".
+        return res.status(409).json({
+          error: outcome.refusal.message,
+          code: outcome.refusal.code,
+          unmet: outcome.refusal.unmet || [],
+          mode: outcome.mode,
+          changed: false,
+          live: outcome.readiness || null,
+          settings: outcome.settings
+        });
+      }
+      if (outcome.changed) {
+        logger.info("outbox mode flipped", {
+          to: outcome.mode, from: outcome.previousMode,
+          widening: outcome.requested === "live",
+          evidence: outcome.readiness?.evidence?.metrics_sha256?.slice(0, 12) || null
+        });
+      }
+      return res.json({
+        outboxMode: outcome.mode,
+        mode: outcome.mode,
+        changed: outcome.changed,
+        previousMode: outcome.previousMode ?? outcome.mode,
+        atMs: outcome.atMs,
+        live: outcome.readiness || null,
+        settings: outcome.settings,
+        note: outcome.note
+      });
+    }
+
     const requested = req.body?.enabled;
     if (typeof requested !== "boolean") {
-      return res.status(400).json({ error: "enabled must be true or false" });
+      return res.status(400).json({ error: "enabled must be true or false, or send outboxMode" });
     }
     const outcome = await setSettingsEnabled(db, {
       enabled: requested,
@@ -776,12 +874,22 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     for (const rung of RUNG_IDS) {
       rungs.push(await rungEvidenceStatus({ db, workspaceId: ws.id, rung, config: cfg }));
     }
+    // Phase 22 (autonomy row) — the fourth question this surface has to answer.
+    // Built, switched on and earned are three facts about the rung; whether a
+    // flip to LIVE would be accepted right now is a fourth, and it is the one an
+    // operator needs before clicking rather than after a refused delivery.
+    const live = await describeLiveReadiness({ db, workspaceId: ws.id, config: cfg });
     res.json({
       rungs,
       outboxMode: cfg.outboxMode,
+      outboxModeSource: cfg.outboxModeSource,
+      canSetOutboxMode: cfg.settings?.canSetOutboxMode === true,
+      outboxRefusal: cfg.settings?.outboxRefusal || null,
       gate: cfg.shadow,
       enabled: cfg.enabled,
-      note: "A rung flag says an operator switched it on. An evidence row says the shadow corpus justified it. A live delivery needs both, and the Action Governor still judges every individual effect."
+      liveDestination: live.destination,
+      live,
+      note: live.note
     });
   }));
 
@@ -889,7 +997,7 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       return res.status(409).json({
         error: `This effect was already judged '${out.row.status}' and this approval delivered nothing. `
           + (out.row.status === "would_release"
-            ? "It was judged in shadow or dry-run mode, where a release verdict is recorded and not performed. Set COGNOS_AUTONOMY_OUTBOX_MODE=live (and, for T4, earn the rung with a recorded evidence row) for an approval to send, or refuse/revert this row."
+            ? "It was judged in shadow or dry-run mode, where a release verdict is recorded and not performed. For an approval to send, widen the outbox to live — earn it with a recorded evidence row and an approved destination, then flip it on the Outbox tab (or set COGNOS_AUTONOMY_OUTBOX_MODE=live and restart) — or refuse/revert this row."
             : "A terminal row is not re-decidable: refuse or revert it, or let the loop stage a new effect."),
         replayed: true,
         row: out.row,
