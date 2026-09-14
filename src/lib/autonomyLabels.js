@@ -65,7 +65,7 @@ export const TIER_LABEL = {
   T2: 'Sends you a templated notice',
   T3: 'Reads one allowlisted page',
   T4: 'Writes outside COGNOS',
-  T5: 'Irreversible — not built yet',
+  T5: 'Irreversible — needs your approval for each one',
 };
 
 export function tierLabel(tier) {
@@ -289,7 +289,7 @@ export const GLOSSARY = [
   {
     term: 'Rung and tier',
     technical: 'rung flags / TIERS T0–T5',
-    body: 'A tier is how far an action reaches: T0 observes, T1 writes inside COGNOS, T2 notifies you, T3 reads an allowlisted page, T4 writes outside, T5 would be irreversible and is not built. A rung is the deployment-level switch for a tier, and it needs recorded evidence before it is earned.',
+    body: 'A tier is how far an action reaches: T0 observes, T1 writes inside COGNOS, T2 notifies you, T3 reads an allowlisted page, T4 writes outside, T5 is irreversible and releases only by your approval of that exact action, one at a time. A rung is the deployment-level switch for a tier; Rung 4 needs recorded evidence before it is earned, and Rung 6 needs your explicit sign-off plus per-effect approval.',
   },
   {
     term: 'The switch',

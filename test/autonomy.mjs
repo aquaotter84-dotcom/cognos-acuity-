@@ -38,25 +38,29 @@ await test("skills are code, not data: the registry is frozen and tiers are decl
     // intersected against this registry before anything runs.
     assert.ok(skill.idempotencyRule, `${id} states how replay is detected`);
   }
-  // Phase 21 builds T0-T4. T4 is ONE adapter and it is off; a T5 skill here
-  // would mean an irreversible act shipped without the Phase 22 approval
-  // surface, which is the boundary this assertion actually guards.
+  // Phase 21 built T0-T4; Phase 22 (autonomy row, second slice) builds T5. T4
+  // is ONE adapter (webhook.post) and T5 is ONE adapter (post.publish); both
+  // are off by default. A second adapter at either tier would mean a new way to
+  // touch the world shipped without its own review.
   const tiers = SKILL_IDS.map(id => getSkill(id).tier);
-  assert.ok(tiers.every(t => ["T0", "T1", "T2", "T3", "T4"].includes(t)),
-    `no tier above T4 may exist yet, got ${tiers.join(",")}`);
+  assert.ok(tiers.every(t => ["T0", "T1", "T2", "T3", "T4", "T5"].includes(t)),
+    `no tier above T5 may exist yet, got ${tiers.join(",")}`);
   assert.ok(tiers.includes("T3"), "Phase 20 builds T3 (external read)");
   assert.ok(tiers.includes("T4"), "Phase 21 builds T4 (external write)");
+  assert.ok(tiers.includes("T5"), "Phase 22 (autonomy row) builds T5 (irreversible)");
 });
 
-await test("exactly one externally-writing skill exists, and it is off", async () => {
-  // Phase 21's whole external-write surface is one adapter. A second entry here
-  // means a new way to touch the world shipped without its own review.
+await test("exactly one externally-writing skill exists per tier, and both are off", async () => {
+  // Phase 21's whole external-write surface is one T4 adapter; Phase 22 adds
+  // one T5 adapter. A second entry at either tier means a new way to touch the
+  // world shipped without its own review.
   const writeTiers = SKILL_IDS.filter(id => Number(getSkill(id).tier.slice(1)) >= 4);
-  assert.deepEqual(writeTiers, ["webhook.post"]);
+  assert.deepEqual(writeTiers, ["webhook.post", "post.publish"]);
   assert.equal(getSkill("webhook.post").tier, "T4");
+  assert.equal(getSkill("post.publish").tier, "T5");
+  assert.equal(getSkill("post.publish").effectType, "irreversible");
   assert.equal(tierAllowed("T3", autonomyConfig()), true);
-  // Built is not enabled: the tier is refused until the rung flag is set, and
-  // T5 stays refused whatever anyone sets.
+  // Built is not enabled: each tier is refused until its own rung flag is set.
   assert.equal(tierAllowed("T4", autonomyConfig()), false);
   assert.equal(tierAllowed("T5", autonomyConfig()), false);
   {
@@ -69,6 +73,18 @@ await test("exactly one externally-writing skill exists, and it is off", async (
     } finally {
       if (previous === undefined) delete process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES;
       else process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES = previous;
+    }
+  }
+  {
+    const previous = process.env.COGNOS_AUTONOMY_IRREVERSIBLE;
+    try {
+      process.env.COGNOS_AUTONOMY_IRREVERSIBLE = "true";
+      assert.equal(tierAllowed("T5", autonomyConfig()), true, "the irreversible rung flag is what opens T5");
+      assert.equal(tierAllowed("T4", autonomyConfig()), false, "and it does not open T4");
+      assert.equal(autonomyConfig().builtTiers.includes("T5"), true);
+    } finally {
+      if (previous === undefined) delete process.env.COGNOS_AUTONOMY_IRREVERSIBLE;
+      else process.env.COGNOS_AUTONOMY_IRREVERSIBLE = previous;
     }
   }
 
@@ -312,7 +328,9 @@ await test("the Action Governor refuses anything it cannot attribute or bound", 
   });
   assert.ok(ruled(conn, "SECRET_IN_PAYLOAD"), JSON.stringify(conn.failed));
 
-  // T5 needs a human approval naming this exact effect, always.
+  // T5 needs a human approval naming this exact effect, always — no class
+  // authorization, no rung flag, no corpus. Without an approval row the
+  // Governor refuses, and the loop can never write the row itself.
   const irreversible = await judgeEffect({ ...base, effect: { effect_type: "send_email", tier: "T5", payload: {} } });
   assert.equal(irreversible.decision, "refuse");
   assert.ok(ruled(irreversible, "T5_NEEDS_HUMAN"), JSON.stringify(irreversible.failed));
@@ -417,27 +435,36 @@ try {
 
     const a = tools.json.autonomy;
     assert.equal(a.defaultOff, true);
-    assert.deepEqual(a.builtTiers, ["T0", "T1", "T2", "T3", "T4"]);
-    assert.deepEqual(a.unbuiltTiers, ["T5"],
-      "the unbuilt tiers are named, not omitted — the boundary is visible");
+    assert.deepEqual(a.builtTiers, ["T0", "T1", "T2", "T3", "T4", "T5"]);
+    assert.deepEqual(a.unbuiltTiers, [],
+      "every tier is built; the remaining boundaries (inbound messaging) are reported elsewhere");
     // The external-write boundary is reported as three separate facts, because
     // "built", "rung on" and "delivers now" are three different questions.
     assert.equal(a.externalWrites.built, true);
     assert.equal(a.externalWrites.rungEnabled, false);
     assert.equal(a.externalWrites.deliversNow, false);
     assert.equal(a.externalWrites.requiresEvidenceRow, true);
+    // The irreversible boundary is its own three facts: built, rung off, and
+    // released only by a per-effect human approval, never by class.
+    assert.equal(a.irreversible.built, true);
+    assert.equal(a.irreversible.rungEnabled, false);
+    assert.equal(a.irreversible.requiresPerEffectHumanApproval, true);
+    assert.equal(a.irreversible.classAuthorized, false);
     assert.equal(a.skills.length, SKILL_IDS.length);
     for (const skill of a.skills) {
       assert.ok(SKILL_IDS.includes(skill.id), `${skill.id} is a registered skill`);
       assert.ok(skill.tierName, `${skill.id} names its tier in words`);
       assert.ok(skill.killSwitch, `${skill.id} names a kill switch`);
       assert.ok(skill.idempotencyRule, `${skill.id} states how replay is detected`);
-      // T5 is not built, so no skill may claim it. A T4 skill may exist and
-      // still be disabled — which is asserted per skill below.
-      assert.ok(skill.tier !== "T5", `${skill.id} claims an unbuilt tier`);
+      // Both external tiers are built and off: a skill may claim T4 or T5 and
+      // still be disabled until its own rung flag is set.
       if (skill.tier === "T4") {
         assert.equal(skill.enabled, false, "T4 is off unless the rung flag is set");
         assert.equal(skill.requiresRung, "externalWrites");
+      }
+      if (skill.tier === "T5") {
+        assert.equal(skill.enabled, false, "T5 is off unless the rung flag is set");
+        assert.equal(skill.requiresRung, "irreversible");
       }
       assert.ok("requiresRung" in skill, `${skill.id} declares its rung gate (or null)`);
     }
@@ -474,7 +501,7 @@ try {
     // Phase 21 builds T4. Health must say so, and must also say that building
     // it did not enable it — a truthful "off" beats a reassuring omission.
     assert.equal(health.json.autonomy.builtTiers.includes("T4"), true);
-    assert.equal(health.json.autonomy.builtTiers.includes("T5"), false);
+    assert.equal(health.json.autonomy.builtTiers.includes("T5"), true);
   });
 
   await test("a resident can be created and its brief change is a new version, not an edit", async () => {

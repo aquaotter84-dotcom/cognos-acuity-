@@ -1,6 +1,6 @@
 # AUTONOMY.md — a design for durable, governed agency in COGNOS
 
-**Status:** design + implementation. Phases 19–21 and 25 of this document are built and green. Rungs 5–6 (inbound, T5) remain designed and unbuilt.
+**Status:** design + implementation. Phases 19–21, 22 (both slices) and 25 of this document are built and green. Rung 6 (T5) is built and default-off; Rung 5 (inbound) remains designed and unbuilt.
 **Read first:** `server/council/laws.js`, `server/identity.js`, `server/agent/runner.js`,
 `server/chatOrchestrate.js`, `DIVERGENCES.md` §14.4.
 
@@ -141,14 +141,16 @@ that a T4 write must match in addition to its scope grant; an in-process
 heartbeat started only by `server/serve.js`; and graceful shutdown that stops
 the heartbeat, lets an in-flight tick park, then closes the pool.
 
-**What is deliberately not built:** T5 (irreversible acts, per-effect human
-approval) and inbound messaging. Those are the rest of Phase 22 and Phase 23,
-and each one needs its own evidence before it goes live. Live T4 delivery is
-*reachable* now, and still not *earned* here: Rung 4's adapter exists and is
-judged end to end, but this deployment has no corpus, so `rungEvidenceStatus`
-reports `justifiedNow: false`, the readiness report returns eight conditions
-with `evidence_recorded` unmet, a flip to `live` refuses with
-`409 live_not_earned`, and a live verdict refuses with `EVIDENCE_GATE_UNMET`.
+**What is deliberately not built:** inbound messaging (Rung 5, Phase 23), and
+the rest of the T5 adapter family. T5 itself — the irreversible tier, released
+only by a per-effect human approval naming the exact outbox row — is built now,
+default-off behind `COGNOS_AUTONOMY_IRREVERSIBLE`, with one adapter
+(`post.publish`). Live T4 delivery is *reachable* now, and still not *earned*
+here: Rung 4's adapter exists and is judged end to end, but this deployment has
+no corpus, so `rungEvidenceStatus` reports `justifiedNow: false`, the readiness
+report returns eight conditions with `evidence_recorded` unmet, a flip to
+`live` refuses with `409 live_not_earned`, and a live verdict refuses with
+`EVIDENCE_GATE_UNMET`.
 `COGNOS_AUTONOMY_LIVE_DESTINATION` is also unset, which fails closed on its own:
 with no approved destination there is nowhere a live delivery is allowed to go,
 whatever the corpus says.
@@ -187,8 +189,31 @@ their intersection is narrower than either alone, and an unset or malformed
 value fails closed. Two pins were added (`pin.live_destination_approved`,
 `pin.live_mode_earned`; laws 1.7.0), identity moved to 1.9.0 to report
 `deliversOnApproval` separately from `deliversNow`, and `test/outbox-live.mjs`
-(18) pins the precedence table, the fail-closed shapes, both gates, the refused
-flip, the earned flip, and the fact that **T5 is still design only**.
+(20) pins the precedence table, the fail-closed shapes, both gates, the refused
+flip, the earned flip, and — now that the second slice is in — the fact that
+T5 is a **different authority**: built, default-off, and refused without a
+human approval naming the exact row, however live the T4 mode is.
+
+Phase 22 (autonomy row) delivered its **second slice**: **T5 — the irreversible
+tier**. One adapter, `post.publish` (`server/skills/postPublish.js`), shares the
+bounded https machinery of `webhook.post` and is governed strictly harder: it is
+**never class-authorized**, and a release needs a **per-effect human approval
+row naming the exact outbox id** — recorded append-only in `effect_approvals`
+(migration `0014`) by the outbox decision route, the only writer, so the loop
+can never approve itself (`pin.irreversible_human_approval`, law layer 1.8.0).
+`COGNOS_AUTONOMY_IRREVERSIBLE` is the rung flag, and it is necessary and not
+sufficient: with it off, `tierAllowed` refuses the tier and `POST
+/api/autonomy/outbox/:id/decision` answers 409 instead of pretending a button
+worked; with it on, a release still refuses with `T5_NEEDS_HUMAN` until the
+approval names the row, and the loop's own shadow judgement refuses a T5 effect
+the same way — so a T5 effect staged by the loop waits, and only a human click
+re-opens the decision. A T5 release does **not** walk Rung 4's shadow-evidence
+gate or the one approved live destination; its release authority is the
+approval, one effect at a time, never a corpus. The re-audit
+(`auditRelease`) counts any T5 release with no naming approval as a false
+release, and identity moved to 1.10.0 to report the irreversible boundary as
+built and off (`unbuiltTiers` is now empty; `irreversibleAutonomousActs` is no
+longer unsupported).
 
 **Autonomy is off by default.** `COGNOS_AUTONOMY_ENABLED` unset means the loop is
 frozen: no goal wakes, no notice is written, no tick row is recorded.
@@ -612,8 +637,8 @@ server/skills/
   index.js          frozen registry: id, tier, argsSchema, effectType, idempotency, killSwitch
   noteAppend.js  evidenceRead.js  memorySearch.js  beliefSearch.js  projectRead.js
   webFetch.js  webSearch.js  noticeEmit.js  sourceSnapshot.js
-  (T4, later) emailSend.js  webhookPost.js  calendarCreate.js  fileWrite.js
-  (T5, later) paymentCreate.js  postPublish.js  recordDelete.js
+  (T4) webhookPost.js            (T4, later) emailSend.js  calendarCreate.js  fileWrite.js
+  (T5) postPublish.js            (T5, later) paymentCreate.js  recordDelete.js
 ```
 
 Each skill declares: `id`, `version`, `argsSchema` (JSON Schema, validated before
@@ -1444,7 +1469,7 @@ The design covers all of it, inbound included. **Enabling** is what walks.
 | **3** | **+ sub-agents and promotion.** Narrow workers; note→memory/belief with `inferred` labelling. | `COGNOS_AUTONOMY_RESIDENTS` | off | sub-agent-untrusted regression; promotion-labelling regression |
 | **4** | **+ external writes.** T4 behind scope grants, Action Governor verdicts, idempotency, receipts. | `COGNOS_AUTONOMY_EXTERNAL_WRITES` + `COGNOS_AUTONOMY_LIVE_DESTINATION` | off | **shadow-mode corpus** (§4.7), recorded as an evidence row and aimed at the one approved destination; the earned flip (`test/outbox-live.mjs`); idempotent-replay test; reversal-as-new-row test; separate security review |
 | **5** | **+ inbound messaging.** Bidirectional: channels, headless turn, governed replies, pairing tokens (§4.12). | `COGNOS_INBOUND_ENABLED` | off | headless-turn-equivalence suite; injection-to-action regression; shadow corpus for replies; explicit acknowledgement that *the channel is the credential* |
-| **6** | **+ irreversible acts.** T5, one-by-one human approval, never class-authorized. | `COGNOS_AUTONOMY_IRREVERSIBLE` | off | explicit operator sign-off |
+| **6** | **+ irreversible acts.** T5, one-by-one human approval, never class-authorized. | `COGNOS_AUTONOMY_IRREVERSIBLE` | off | explicit operator sign-off (`COGNOS_AUTONOMY_IRREVERSIBLE`); a release refused with `T5_NEEDS_HUMAN` until an approval names the exact outbox row; the loop's shadow judgement refuses T5 the same way; approval recorded append-only in `effect_approvals` by the route only (`test/outbox-live.mjs`) |
 
 **Why inbound sits below irreversible acts.** A single irreversible effect is a
 bigger *consequence* than one reply. But inbound is a bigger change to the *product*:
@@ -1793,7 +1818,7 @@ One migration, one law bump, one test file, one identity bump, one
 | **20** | **BUILT.** Sub-agents, promotion path, Goal Card in chat, T3 evidence fetch, `[goal_…:nN]` locators + Governor extension; `test/phase20.mjs` (22); laws 1.5.0, identity 1.4.0, migration `0007` | **Rung 3**, default off |
 | **21** | **BUILT.** `webhook.post` (§4.7.1) + delivery adapter (DNS-pinned, per-hop re-validation, one bounded retry), destination grants in scope rows, outbound-SSRF gate, `secret_ref` signing, quiet hours, Action Governor T4 rules in **shadow**, digest-only receipts, reversal that admits it cannot un-send, the rung-evidence gate + its two routes and Autonomy panel; `test/phase21.mjs` (35); laws 1.6.0, identity 1.5.0, migration `0008` | **Rung 4**, default off; a shadow corpus can now be earned but nothing delivers until `live` |
 | **25** | **BUILT.** Hybrid enablement (`COGNOS_AUTONOMY_UI_CONTROL` + `autonomy_settings`), conversational resident designer (clamped drafts, catalogue honesty, budgets down), attention queue with real totals, plain-language statuses; `test/autonomy-ux.mjs` (17); identity 1.8.0, migration `0012`. No new laws. | Operator surface; still **Rung 1–4 default off** |
-| **22** | **FIRST SLICE BUILT.** Outbox → `live` from the shadow evidence record, as a guarded and audited flip (`autonomy_settings.outbox_mode`, migration `0013`), plus `COGNOS_AUTONOMY_LIVE_DESTINATION` — one approved endpoint a live T4 write must target *in addition to* its scope grant; `test/outbox-live.mjs` (18); laws 1.7.0, identity 1.9.0. **STILL TO COME: T5 with per-effect human approval.** | **Rung 4** reachable without a restart, default off, separate security review. **Rung 5–6 unchanged** |
+| **22** | **BOTH SLICES BUILT.** First: outbox → `live` from the shadow evidence record, as a guarded and audited flip (`autonomy_settings.outbox_mode`, migration `0013`), plus `COGNOS_AUTONOMY_LIVE_DESTINATION` — one approved endpoint a live T4 write must target *in addition to* its scope grant; laws 1.7.0, identity 1.9.0. Second: **T5** — `post.publish` (`server/skills/postPublish.js`, `server/autonomy/externalIrreversible.js`), the irreversible tier, released only by a per-effect human approval naming the exact outbox row, recorded append-only in `effect_approvals` (migration `0014`) by the decision route — never class-authorized, never the loop; `pin.irreversible_human_approval`, laws 1.8.0, identity 1.10.0; `test/outbox-live.mjs` (20) | **Rung 4** reachable without a restart, default off, separate security review. **Rung 6** built and default off (`COGNOS_AUTONOMY_IRREVERSIBLE`). **Rung 5 unchanged** |
 | **23** | Inbound messaging (§4.12): channels, HMAC verification, replay defence, headless turn, pairing tokens, shadow-mode replies | **Rung 5**, default off; requires accepting that the channel is the credential |
 
 ---

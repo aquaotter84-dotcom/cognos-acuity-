@@ -122,15 +122,24 @@ const EXECUTORS = Object.freeze({
     throw new Error(`unknown external_read op: ${String(payload.op || "(none)")}`);
   },
 
-  // Phase 21 — T4 external writes. One adapter is built: `webhook.post`.
+  // Phase 21 — T4 external writes; Phase 22 (autonomy row) — T5 irreversible
+  // publishes. One shared bounded socket for both, because the difference
+  // between a trigger and a committed publish is not the bytes — it is the
+  // governance that released them, which the Action Governor already applied.
   //
   // Every gate ran before this function was reached (destination grant, https
   // shape, header allowlist, body cap, secret_ref resolution, quiet hours, the
-  // shadow-evidence gate for a live release). What is left here is the socket,
-  // and the socket is bounded: DNS-pinned, re-checked per redirect, one attempt
-  // plus one bounded retry, and a receipt that digests the response instead of
-  // keeping it.
-  external_write: {
+  // shadow-evidence gate for a live T4 release, the per-effect human approval
+  // for a T5 release). What is left here is the socket, and the socket is
+  // bounded: DNS-pinned, re-checked per redirect, one attempt plus one bounded
+  // retry, and a receipt that digests the response instead of keeping it.
+  external_write: externalWriteExecutor(),
+  irreversible: externalWriteExecutor()
+});
+
+/** The T4/T5 socket executor. Shared; see the two keys above. */
+function externalWriteExecutor() {
+  return {
     prepare({ effect, config }) {
       const built = buildRequest(effect, config);
       return {
@@ -158,7 +167,7 @@ const EXECUTORS = Object.freeze({
     async perform({ effect, config, signal = null, transport = null, resolve = null }) {
       const built = buildRequest(effect, config);
       if (!built.ok) {
-        throw new Error(`the webhook request could not be built: ${built.errors.join("; ")}`);
+        throw new Error(`the request could not be built: ${built.errors.join("; ")}`);
       }
       const webhook = config?.webhook || {};
       const receipt = await deliverWebhook(built.request, {
@@ -193,8 +202,8 @@ const EXECUTORS = Object.freeze({
         }
       };
     }
-  }
-});
+  };
+}
 
 /** Build the exact request an external write would send. Pure. */
 function buildRequest(effect, config) {
@@ -342,12 +351,25 @@ export async function decideEffect({ db, effectId, goal, authorization = null, c
   // Replay safety: an effect that already reached a terminal state returns its
   // prior verdict instead of running again. One delivery, not two.
   if (["released", "would_release", "refused", "reverted"].includes(effect.status)) {
-    return {
-      ok: true,
-      replayed: true,
-      row: effect,
-      verdict: effect.verdict || { decision: "replay", failed: [], passed: [] }
-    };
+    // The one exception is T5. A T5 effect refused for want of a human approval
+    // is not terminal in the way a refused T4 is: the tier's whole point is
+    // that the approval arrives AFTER the loop's shadow refusal and re-opens
+    // the decision. So a `refused` T5 row whose failures were all
+    // T5_NEEDS_HUMAN falls through and is judged again — with the approval
+    // row, if one now names it; without one, it refuses again for the same
+    // named reason.
+    const awaitingApproval = effect.status === "refused" && effect.tier === "T5"
+      && Array.isArray(effect.verdict?.failed)
+      && effect.verdict.failed.length > 0
+      && effect.verdict.failed.every(f => f?.rule === "T5_NEEDS_HUMAN");
+    if (!awaitingApproval) {
+      return {
+        ok: true,
+        replayed: true,
+        row: effect,
+        verdict: effect.verdict || { decision: "replay", failed: [], passed: [] }
+      };
+    }
   }
 
   const verdict = await judgeEffect({ db, effect, goal, authorization, config, nowMs, mode: effectiveMode });

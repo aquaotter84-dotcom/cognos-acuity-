@@ -358,10 +358,11 @@ export function autonomyConfig() {
     // Phase 21 adds T4 (external WRITE): one adapter, `webhook.post`, judged
     // per delivery against a destination allowlist granted at authorization,
     // and gated behind BOTH its rung flag and a recorded shadow-evidence row.
-    // T5 stays declared and unbuilt — the registry refuses it and the Action
-    // Governor refuses it — because an irreversible act needs per-effect human
-    // approval that Phase 22 has not designed the surface for yet.
-    builtTiers: Object.freeze(["T0", "T1", "T2", "T3", "T4"]),
+    // Phase 22 (autonomy row, second slice) adds T5 (IRREVERSIBLE): one
+    // adapter, `post.publish`, switched off by default, and released only by a
+    // per-effect human approval naming the exact outbox row — never by class,
+    // and never by the loop itself (pin.irreversible_human_approval).
+    builtTiers: Object.freeze(["T0", "T1", "T2", "T3", "T4", "T5"]),
 
     // Phase 20 — sub-agent bounds. The planner proposes its sub-budget in the
     // spawn arguments; these ceilings clamp it. A planner can ask for less
@@ -391,7 +392,10 @@ export function tierAllowed(tier, config) {
   // (phase19.autonomy_default_off) — the flag is the difference, and the
   // shadow-evidence gate inside the Governor is the second half.
   if (tier === "T4" && config.rung?.externalWrites !== true) return false;
-  if (tier === "T5") return false;    // Phase 22
+  // Phase 22 (autonomy row): T5 is BUILT, and still off. The `irreversible`
+  // rung is the operator's sign-off that the tier exists; it is necessary and
+  // not sufficient — a release also needs a per-effect human approval.
+  if (tier === "T5" && config.rung?.irreversible !== true) return false;
   return true;
 }
 

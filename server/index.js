@@ -98,6 +98,7 @@ import { registerKnowledgeRoutes } from "./routes/knowledge.js";
 import { registerMetaRoutes } from "./routes/meta.js";
 import { registerSourceRoutes } from "./routes/sources.js";
 import { registerAutonomyRoutes } from "./routes/autonomy.js";
+import { registerCouncilRoutes } from "./routes/council.js";
 import { autonomyConfig } from "./autonomy/config.js";
 import { registerProjectRoutes } from "./routes/projects.js";
 import { registerGraphRoutes } from "./routes/graph.js";
@@ -342,6 +343,7 @@ registerKnowledgeRoutes(app, { wrap, db, logger });
 registerMetaRoutes(app, { wrap, db, logger, getSystemConfig });
 registerSourceRoutes(app, { wrap, db, logger });
 registerAutonomyRoutes(app, { wrap, db, logger });
+registerCouncilRoutes(app, { wrap, db, logger });
 registerGraphRoutes(app, { wrap, db, logger });
 
 // --- Static frontend (self-hosted only) -------------------------------------

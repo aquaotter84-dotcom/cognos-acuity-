@@ -379,6 +379,22 @@ export const OPERATIONAL_LAWS = Object.freeze([
   }),
 
   Object.freeze({
+    id: "pin.irreversible_human_approval",
+    layer: "operational",
+    name: "An irreversible act is approved one effect at a time, by a human",
+    statement: "A T5 irreversible effect is released only by a human approval row that names that exact outbox id, recorded at decision time. It is never authorizable by class: no rung flag, scope entry, shadow corpus, goal budget, resident brief, or model output is a substitute, and the loop itself can never write an approval row — the only writer is the outbox decision route a human operates. An approval binds the scope it was made under, so it does not outlive the authorization it was recorded against. The rung switch alone is necessary and never sufficient.",
+    forbids: [
+      "releasing a T5 effect without an approval row naming it",
+      "class-authorizing irreversible acts",
+      "the loop writing its own approval",
+      "a rung flag or corpus standing in for a human decision",
+      "an approval outliving the scope it was recorded under"
+    ],
+    source: "Phase 22 (autonomy row); server/autonomy/actionGovernor.js + server/autonomy/store.js",
+    runtime_modifiable: false
+  }),
+
+  Object.freeze({
     id: "phase15.observe_only",
     layer: "phase_scope",
     name: "Adaptation is observed, not applied",
@@ -411,7 +427,7 @@ export const LAWS = Object.freeze([...CHARTER_LAWS, ...OPERATIONAL_LAWS]);
 
 /** Bumped when a law is added or reworded in code. Recorded on improvement rows
  *  so a reviewer can tell which version of the law layer judged a proposal. */
-export const LAW_LAYER_VERSION = "1.7.0";
+export const LAW_LAYER_VERSION = "1.8.0";
 
 const BY_ID = Object.freeze(LAWS.reduce((acc, law) => ({ ...acc, [law.id]: law }), {}));
 

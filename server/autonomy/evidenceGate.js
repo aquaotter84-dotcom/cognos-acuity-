@@ -16,8 +16,8 @@
 //     that fails a re-audit against the deterministic payload rules (a secret in
 //     the payload, a non-https destination, a destination the goal was never
 //     granted, a verdict that says release while listing failed rules, a tier
-//     that is not built, or ANY T5 — an irreversible act is never
-//     class-authorized);
+//     that is not built, or a T5 release with no human approval naming the row —
+//     an irreversible act is never class-authorized);
 //   * the refusal distribution recorded alongside, because "the gate refused
 //     everything" is also a failure — a gate that never releases is not earning
 //     a rung, it is hiding one.
@@ -62,7 +62,7 @@ export const RUNGS = Object.freeze({
     flag: "irreversible",
     killSwitch: "COGNOS_AUTONOMY_IRREVERSIBLE",
     outboxMode: "shadow",
-    note: "Rung 6 — irreversible acts. Designed, not built; any T5 release in a corpus is a false release by definition."
+    note: "Rung 6 — irreversible acts. Built in Phase 22 (autonomy row); a release is a per-effect human approval naming the exact outbox row, never class-authorized."
   })
 });
 
@@ -72,12 +72,13 @@ export const RUNG_IDS = Object.freeze(Object.keys(RUNGS));
 const RELEASE_STATUSES = Object.freeze(["released", "would_release"]);
 
 /**
- * Re-audit one recorded release. Pure: it reads the row it is given, and the
- * goal scope only when the caller supplied it.
+ * Re-audit one recorded release. Pure: it reads the row it is given, the goal
+ * scope when the caller supplied it, and the set of outbox ids a human
+ * approval names (approvals).
  *
  * @returns {string[]} every reason this release should not have happened
  */
-export function auditRelease(row, { goal = null } = {}) {
+export function auditRelease(row, { goal = null, approvals = null } = {}) {
   const reasons = [];
   const payload = parse(row.payload, {});
   const verdict = parse(row.verdict, {});
@@ -95,7 +96,12 @@ export function auditRelease(row, { goal = null } = {}) {
     reasons.push(`the verdict lists ${verdict.failed.length} failed rule(s) but the row is ${row.status}`);
   }
 
-  if (tier === "T5") reasons.push("a T5 effect is never class-authorized; it needs a human approval naming this row");
+  if (tier === "T5") {
+    const approved = approvals instanceof Set ? approvals.has(row.id) : false;
+    if (!approved) {
+      reasons.push("a T5 effect was released without a human approval naming this exact outbox row");
+    }
+  }
 
   const serialized = JSON.stringify(payload);
   for (const pattern of SECRET_PATTERNS) {
@@ -135,7 +141,7 @@ export function auditRelease(row, { goal = null } = {}) {
  * @param {{minShadowSamples:number, maxAcceptableFalseReleases:number}} gate
  * @param {{goalsById?: Object}} [context] goal rows, for the destination check
  */
-export function auditCorpus(rows, gate = {}, { goalsById = null, tiers = null, nowMs = Date.now() } = {}) {
+export function auditCorpus(rows, gate = {}, { goalsById = null, tiers = null, approvals = null, nowMs = Date.now() } = {}) {
   const list = Array.isArray(rows) ? rows : [];
   const tierFilter = Array.isArray(tiers) && tiers.length ? new Set(tiers) : null;
   const byStatus = {};
@@ -162,7 +168,7 @@ export function auditCorpus(rows, gate = {}, { goalsById = null, tiers = null, n
     }
     if (RELEASE_STATUSES.includes(status)) {
       const goal = goalsById && row.goal_id ? goalsById[row.goal_id] : null;
-      const reasons = auditRelease(row, { goal });
+      const reasons = auditRelease(row, { goal, approvals });
       if (reasons.length) falseReleases.push({ id: row.id, tier, status, reasons });
     }
   }
@@ -236,6 +242,21 @@ async function fetchGoals(db, rows) {
 }
 
 /**
+ * The outbox ids a human approval names, for the rows being audited. T5's
+ * release authority is one approval row naming one outbox id, so the
+ * re-audit needs this join — without it, every T5 release would look false.
+ */
+async function fetchApprovals(db, rows) {
+  const ids = [...new Set((rows || []).map(r => r.id).filter(Boolean))];
+  if (!ids.length) return new Set();
+  const rowsOut = await db.query(
+    `SELECT outbox_id FROM effect_approvals
+      WHERE outbox_id = ANY($1::text[]) AND decision='approve'`, [ids]
+  );
+  return new Set((rowsOut || []).map(r => r.outbox_id));
+}
+
+/**
  * Measure a rung right now. Reads only; records nothing.
  */
 export async function measureRung({ db, workspaceId, rung, config, nowMs = Date.now(), limit = 1000 }) {
@@ -244,7 +265,8 @@ export async function measureRung({ db, workspaceId, rung, config, nowMs = Date.
   const gate = config?.shadow || { minShadowSamples: 25, maxAcceptableFalseReleases: 0 };
   const rows = await fetchCorpus(db, workspaceId, [...spec.tiers], limit);
   const goalsById = await fetchGoals(db, rows);
-  const metrics = auditCorpus(rows, gate, { goalsById, tiers: [...spec.tiers], nowMs });
+  const approvals = await fetchApprovals(db, rows);
+  const metrics = auditCorpus(rows, gate, { goalsById, tiers: [...spec.tiers], approvals, nowMs });
   return {
     ok: true,
     rung: spec.rung,

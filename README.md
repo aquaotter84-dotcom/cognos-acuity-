@@ -100,8 +100,10 @@ example, document/link and bounded-agent capabilities can be disabled by runtime
 switches; voice and dictation depend on browser support; database-backed memory
 reports whether persistence is configured. The manifest states unavailable
 capabilities rather than inventing them: private-network browsing,
-consequential writes from a chat turn, irreversible autonomous acts,
-pixel-level vision inside answer drafts, and image editing are not present.
+consequential writes from a chat turn, pixel-level vision inside answer
+drafts, and image editing are not present. Irreversible autonomous acts are
+now built but reported honestly as default-off: a T5 effect releases only by a
+per-effect human approval naming the exact outbox row, never autonomously.
 Optional email/Google accounts and durable autonomy are runtime switches,
 reported off until an operator enables them.
 Image ingestion is supported but bounded: an image original is the
@@ -207,7 +209,7 @@ consequence:
 | T2 | notify — templated, deterministic content only | `notice.emit` | built |
 | T3 | external read | `web.fetch`, `web.search` | built (`web.fetch` by the goal's URL allowlist, `web.search` additionally rung-gated) |
 | T4 | **external write** | `webhook.post` | **built in Phase 21, off.** Live delivery is now earnable and flippable without a restart (Phase 22, autonomy row) — gated on a recorded corpus aimed at one approved destination |
-| T5 | irreversible — payment, publish, delete | — | designed, not built (Phase 22, autonomy row — **not** the bounded-context Phase 22 above) |
+| T5 | irreversible — payment, publish, delete | `post.publish` | **built in Phase 22 (autonomy row), off.** Never class-authorized: a release needs a per-effect human approval naming the exact outbox row, recorded append-only in `effect_approvals` — not a corpus, a rung flag, or the loop itself |
 
 Rung 4 is what Phase 21 added, and it is the sharpest edge in the system: the
 first time COGNOS can act on something rather than look at it. One adapter, POST
@@ -276,9 +278,13 @@ with `DESTINATION_NOT_APPROVED` (`pin.live_destination_approved`). Both gates
 must hold, so their intersection is narrower than either alone. Shadow judging
 is untouched, because the shadow corpus is what earns the rung.
 
-This slice adds no rung, no skill, no ceiling and no budget. **T5 is still
-design only**: `tierAllowed` refuses it outright, the outbox route refuses to
-approve one, and any T5 release in a corpus is a false release by definition.
+This slice adds no rung, no skill, no ceiling and no budget. **T5 is a different
+authority that this slice does not touch**: it is built, default-off, and
+released only by a per-effect human approval naming the exact outbox row. With
+the rung off `tierAllowed` refuses it and the outbox route refuses to approve
+one; even with the rung on, the Governor refuses with `T5_NEEDS_HUMAN` until an
+approval names the row, and any T5 release with no naming approval is a false
+release by definition.
 
 ## Turning it on from the UI, and designing a resident (Phase 25)
 
@@ -345,6 +351,64 @@ the machine vocabulary demoted into a **Technical details** disclosure rather
 than deleted, and a glossary behind the **?** button. Labels live in
 `src/lib/autonomyLabels.js` so the same status cannot read one way on the page
 and another way in chat.
+
+## Toggle switches for the Critic and Governor, and forgoing goal authorization (Phase 26)
+
+Phase 25 gave the *autonomy* switch a face. Phase 26 gives the council's two
+safety seats one, and adds the option to forgo the goal-consent click. The
+pattern is the same three-question discipline everywhere — *is it on? did an
+operator pin it? may I change it from here?* — and the same precedence, resolved
+in exactly one place per switch.
+
+### The Critic and the Governor (Settings → Governance)
+
+The Critic and the Governor both rest **on**; they are brakes, not powers. Their
+kill switches (`COGNOS_CRITIC_ENABLED`, `COGNOS_GOVERNOR_ENABLED`) always existed;
+what is new is a UI toggle with the same guardrails as the autonomy switch:
+
+| Variable | Meaning |
+|---|---|
+| `COGNOS_GOVERNOR_ENABLED` / `COGNOS_CRITIC_ENABLED` set in the environment | A **pin**. It outranks the UI: `false` pins the seat off, any other explicit value holds it on, and `POST /api/council/settings` answers 409. |
+| `COGNOS_COUNCIL_UI_CONTROL=true` | A **delegation**. Settings → Governance gets two real toggles. Delegation is not disablement — both seats stay on until someone flips one. |
+| neither | The seats rest on, and the page says exactly what to set to hand them over. |
+
+The delegated values live in `council_settings` (migration `0015`), one row per
+workspace. A missing row reads **on** — the fail-closed direction for a safety
+mechanism is the opposite of autonomy's fail-closed direction. Precedence is
+resolved in `server/council/settings.js`, which `getSystemConfig()` asks, so the
+council dispatch, the identity report and the answer prompt all read the same
+value. Every flip is appended to `workspace_audit` as `council.governor` /
+`council.critic` with its from/to values and who did it.
+
+Turning the **Governor** off removes the deterministic final veto — empty
+responses, potential secret leakage, minimum-cause floors and citation audits.
+The switch says that out loud and keeps saying it while the seat is off. Turning
+the **Critic** off removes the quality gate and the bounded revision loop. Neither
+toggle touches the law layer: `pin.governor_sovereign` still forbids a model or a
+subsystem from weakening the Governor, and the Policy Engine still refuses a
+runtime adaptation that proposes to. This is an operator's kill switch with a
+record, never a model's.
+
+### Forgoing goal authorization (Autonomy → Goal authorization)
+
+By default a new goal is created `awaiting_authorization` and does no work until
+you authorize its exact scope and budget. Phase 26 adds the option to forgo that
+**one** click:
+
+| Variable | Meaning |
+|---|---|
+| `COGNOS_AUTONOMY_AUTO_AUTHORIZE` set in the environment | A **pin**. Explicit `false` pins it off, an explicit affirmative pins it on, unset is not a pin. |
+| `COGNOS_AUTONOMY_AUTO_AUTHORIZE_UI_CONTROL=true` | A **delegation**. The Autonomy page gets an *Auto-authorize new goals* switch. Separate from `COGNOS_AUTONOMY_UI_CONTROL` (whether the loop runs) and `COGNOS_AUTONOMY_OUTBOX_UI_CONTROL` (whether it may act on the world). |
+| neither | Goals keep waiting, and the page says what to set to hand the switch over. |
+
+When on, a newly created goal starts `active` instead of waiting — but the
+**consent record is never skipped**. The scope and budget hashes are still
+computed and stored in `goal_authorizations` with `decision_source: "auto"` so an
+audit can always tell an automatic authorization from a human one. The allowlist
+and ceilings still bind at every later step, and every staged effect still waits
+for its own human approval. *Forgo authorization* removes the goal-consent
+click and nothing else: research-plan step consent, promotion confirms and
+outbox effect approvals are untouched.
 
 ## Model-gateway resilience
 
@@ -423,6 +487,11 @@ npm run dev
 | `COGNOS_AUTONOMY_EXTERNAL_WRITES` | no | **Rung 4.** Default off. On its own it still delivers nothing: the outbox mode, a recorded evidence row, and one approved destination also apply. |
 | `COGNOS_AUTONOMY_MIN_SHADOW_SAMPLES` | no | Same-tier samples a corpus needs before a rung can be recorded as justified. Default 25; zero false releases is not configurable. |
 | `COGNOS_AUTONOMY_QUIET_HOURS` | no | `22-7` refuses external deliveries inside the window (a wrapping window is a window). Notices are exempt; unset or malformed is never active. |
+| `COGNOS_AUTONOMY_AUTO_AUTHORIZE` | no | **Forgo goal authorization — a pin.** Explicit `false` pins it off, an explicit affirmative pins it on, unset is not a pin. When on, a new goal is authorized automatically (scope/budget hashes recorded under `decision_source: "auto"`); staged effects still wait for their own approval. |
+| `COGNOS_AUTONOMY_AUTO_AUTHORIZE_UI_CONTROL` | no | **Delegation, not permission.** Set `true` to hand the auto-authorize switch to the Autonomy page. Separate from `COGNOS_AUTONOMY_UI_CONTROL` (loop runs) and `COGNOS_AUTONOMY_OUTBOX_UI_CONTROL` (acts on the world). |
+| `COGNOS_GOVERNOR_ENABLED` | no | **A pin over the Governor seat.** Unset, the Governor rests **on**. `false` pins it off; any other explicit value holds it on. The UI cannot override a pin. Turning it off removes the deterministic veto (empty responses, secret leakage, citation audits). |
+| `COGNOS_CRITIC_ENABLED` | no | **A pin over the Critic seat.** Same semantics as the Governor pin: unset rests **on**, `false` pins off. |
+| `COGNOS_COUNCIL_UI_CONTROL` | no | **Delegation, not disablement.** Set `true` to hand the Critic/Governor toggles to Settings → Governance. Both seats stay on until someone flips one; every flip is audited. |
 | `COGNOS_WEBHOOK_MAX_BODY_BYTES` | no | Webhook body cap in **bytes**, clamped to ≤ 32768; default 32768. |
 | `COGNOS_WEBHOOK_TIMEOUT_MS` | no | Per-delivery deadline, clamped 500–30000; default 8000. |
 | `COGNOS_WEBHOOK_MAX_REDIRECTS` | no | Clamped 0–2; default 2. Every hop is re-validated and re-resolved. |

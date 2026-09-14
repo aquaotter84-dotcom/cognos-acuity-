@@ -232,6 +232,17 @@ export function registerSourceRoutes(app, { wrap, db, logger }) {
           maxBodyBytes: cfg.webhook.maxBodyBytes,
           timeoutMs: cfg.webhook.timeoutMs,
           quietHours: cfg.quietHours
+        },
+        // Phase 22 (autonomy row, second slice): the irreversible boundary, its
+        // own three facts. Built, default-off, and released only by a
+        // per-effect human approval naming the exact outbox row.
+        irreversible: {
+          built: cfg.builtTiers.includes("T5"),
+          rungEnabled: cfg.rung.irreversible === true,
+          killSwitch: "COGNOS_AUTONOMY_IRREVERSIBLE",
+          requiresPerEffectHumanApproval: true,
+          classAuthorized: false,
+          adapters: cfg.builtTiers.includes("T5") ? ["post.publish"] : []
         }
       },
       note: "Agent mode is a bounded read-only subsystem. Research mode proposes a plan and executes only after the user approves each step. It cannot release an answer or write memory. Autonomy skills are separate: they are code-owned, tier-gated, and every effect they produce is staged and judged before anything happens."

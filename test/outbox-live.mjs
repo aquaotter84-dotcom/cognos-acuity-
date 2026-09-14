@@ -18,8 +18,9 @@
 //   * a live delivery is confined to the approved destination IN ADDITION TO
 //     the goal's scope grant, and an unset or malformed approval fails closed;
 //   * shadow judging is untouched, because the corpus is what earns the rung;
-//   * T5 is still refused outright, and nothing here widened a rung, a ceiling,
-//     a skill or a budget.
+//   * T5 is a DIFFERENT authority that this slice does not touch: it is built,
+//     default-off, and released only by a per-effect human approval naming the
+//     exact outbox row — never by a corpus, a rung flag alone, or a class grant.
 //
 // Deterministic and local, on the same two seams Phase 21 uses: live deliveries
 // go to a loopback sink through the injected transport, and the resolver is a
@@ -329,8 +330,9 @@ await test("the two new pins are laws, and the Policy Engine cites them at runti
   assert.ok(channel.violations.some(v => v.law === "pin.live_destination_approved"),
     JSON.stringify(channel.violations));
 
-  // T5 is untouched by this slice: still refused outright, still never
-  // class-authorized, and still a false release by definition in any corpus.
+  // T5 is a different authority than the corpus this slice earned: it is
+  // judged, and refused without a human approval naming this exact effect —
+  // a corpus, a rung flag, or a class grant never stands in for that.
   const t5 = await judgeEffect({
     db: fakeDb(evidence(500)), effect: { ...effectAt(APPROVED), tier: "T5", skill_id: "webhook.post" },
     goal: governedGoal, authorization: governedAuth, config: cfgWith(), mode: "live"
@@ -373,12 +375,12 @@ async function makeAgent() {
 
 /** Both endpoints are granted in scope, so the only thing separating them is
  *  the deployment's approval — which is exactly the distinction under test. */
-async function makeGoal(agentId, { destinations = [APPROVED, ELSEWHERE], title = "Live gate goal" } = {}) {
+async function makeGoal(agentId, { destinations = [APPROVED, ELSEWHERE], title = "Live gate goal", effects = null } = {}) {
   const made = await h.raw("/api/autonomy/goals", {
     method: "POST",
     body: {
       title, objective: "Prove the earned-live gates.", agent_id: agentId,
-      scope: { effectsAllowed: ["notify", { effect: "webhook.post", destinations }] }
+      scope: { effectsAllowed: effects || ["notify", { effect: "webhook.post", destinations }] }
     }
   });
   assert.equal(made.status, 201, JSON.stringify(made.json));
@@ -756,7 +758,7 @@ await test("an operator pin holds the mode down and cannot be widened, but can a
 await test("nothing in this slice widened a rung, a ceiling, a skill or a budget", async () => {
   const status = await h.raw("/api/autonomy/status");
   const cfg = status.json;
-  assert.deepEqual(cfg.builtTiers, ["T0", "T1", "T2", "T3", "T4"], "T5 is still not built");
+  assert.deepEqual(cfg.builtTiers, ["T0", "T1", "T2", "T3", "T4", "T5"], "T5 is built (Phase 22)");
   assert.equal(cfg.rung.irreversible, false, "and its rung is still off");
   assert.equal(cfg.rung.inbound, false, "Rung 5 is still Phase 23");
   assert.equal(cfg.ceilings.maxCostPerDayUsd, 2, "the workspace ceiling did not move");
@@ -765,20 +767,23 @@ await test("nothing in this slice widened a rung, a ceiling, a skill or a budget
   assert.equal(cfg.defaultOff, true, "the resting state is still frozen");
   assert.ok(!cfg.skills.some(s => s.tier === "T5" && s.enabled), "no T5 skill became reachable");
 
-  // A T5 effect is still refused outright, in the mode this slice just earned.
+  // A T5 effect is BUILT and still refused: the rung is off and no human
+  // approval names it. The live mode this slice earned is irrelevant to T5 —
+  // its release authority is one-by-one human approval, never a corpus.
   const { default: db } = await import("../server/db.js");
-  const { stageEffect } = await import("../server/autonomy/outbox.js");
+  const { stageEffect, decideEffect } = await import("../server/autonomy/outbox.js");
   const agent = await makeAgent();
-  const goal = await makeGoal(agent.id, { title: "T5 still refused" });
+  const goal = await makeGoal(agent.id, { title: "T5 refused without approval",
+    effects: ["notify", { effect: "post.publish", destinations: [APPROVED] }] });
   const goalRow = await db.AutonomyGoal.get(goal.id);
   const authorization = await db.GoalAuthorization.current(goal.id, Date.now());
   const staged = await stageEffect({
     db, workspaceId: goalRow.workspace_id, agentId: agent.id, goalId: goal.id,
-    skillId: "webhook.post", effectType: "irreversible", tier: "T5",
+    skillId: "post.publish", effectType: "irreversible", tier: "T5",
+    destination: APPROVED,
     payload: { url: APPROVED, method: "POST", headers: {}, body: BODY("t5"), secretRef: null },
     keyPayload: { url: APPROVED, body: BODY("t5") }, mode: "live"
   });
-  const { decideEffect } = await import("../server/autonomy/outbox.js");
   const decided = await decideEffect({
     db, effectId: staged.row.id, goal: goalRow, authorization, config: autonomyConfig(), mode: "live"
   });
@@ -787,11 +792,135 @@ await test("nothing in this slice widened a rung, a ceiling, a skill or a budget
     JSON.stringify(decided.verdict.failed));
   assert.equal(decided.executed, false);
 
-  // And the route still refuses to stage one at all.
+  // And the route still refuses an approval while the rung is off, and writes
+  // no approval row — the button must not look like it worked.
   const approve = await h.raw(`/api/autonomy/outbox/${staged.row.id}/decision`, {
     method: "POST", body: { decision: "approve" }
   });
   assert.equal(approve.status, 409);
+  assert.equal(approve.json.killSwitch, "COGNOS_AUTONOMY_IRREVERSIBLE");
+  assert.equal(await count("effect_approvals", " WHERE outbox_id=$1", [staged.row.id]), 0);
+});
+
+await test("T5 releases only by a per-effect human approval, and only once", async () => {
+  const { default: db } = await import("../server/db.js");
+  const { stageEffect, decideEffect } = await import("../server/autonomy/outbox.js");
+  const { auditRelease } = await import("../server/autonomy/evidenceGate.js");
+  const prev = process.env.COGNOS_AUTONOMY_IRREVERSIBLE;
+  process.env.COGNOS_AUTONOMY_IRREVERSIBLE = "true";
+  const sink = await startSink();
+  try {
+    const agent = await makeAgent();
+    const goal = await makeGoal(agent.id, { title: "T5 approval goal",
+      effects: ["notify", { effect: "post.publish", destinations: [APPROVED] }] });
+    const goalRow = await db.AutonomyGoal.get(goal.id);
+    const authorization = await db.GoalAuthorization.current(goal.id, Date.now());
+    const body = BODY("t5-approved");
+
+    // The loop stages the publish and judges it in shadow: refused, because no
+    // approval row names it and the loop can never write one.
+    const staged = await stageEffect({
+      db, workspaceId: goalRow.workspace_id, agentId: agent.id, goalId: goal.id,
+      skillId: "post.publish", effectType: "irreversible", tier: "T5",
+      destination: APPROVED,
+      payload: { url: APPROVED, method: "POST", headers: {}, body, secretRef: null },
+      keyPayload: { url: APPROVED, body }, mode: "shadow"
+    });
+    const shadow = await decideEffect({
+      db, effectId: staged.row.id, goal: goalRow, authorization,
+      config: autonomyConfig(), mode: "shadow"
+    });
+    assert.equal(shadow.verdict.decision, "refuse");
+    assert.ok(shadow.verdict.failed.some(f => f.rule === "T5_NEEDS_HUMAN"),
+      JSON.stringify(shadow.verdict.failed));
+
+    // The one release authority: a human approval naming THIS exact row.
+    await db.EffectApproval.append({
+      workspace_id: goalRow.workspace_id, outbox_id: staged.row.id,
+      goal_id: goal.id, agent_id: agent.id, decision: "approve",
+      scope_sha256: authorization.scope_sha256, decided_by: "operator"
+    });
+
+    // With the approval, a live judgement releases and publishes — once, to the
+    // sink, through the injected transport.
+    sink.seen.length = 0;
+    const live = await decideEffect({
+      db, effectId: staged.row.id, goal: goalRow, authorization,
+      config: autonomyConfig(), mode: "live",
+      transport: sinkTransport(sink), resolve: publicResolve
+    });
+    assert.equal(live.verdict.decision, "release", JSON.stringify(live.verdict.failed));
+    assert.equal(live.executed, true);
+    assert.equal(sink.seen.length, 1, "one approval, one publish");
+    assert.equal(sink.seen[0].body, body, "the published body is the staged one");
+
+    // A second approval of the same row replays the receipt; it does not
+    // publish again.
+    const again = await decideEffect({
+      db, effectId: staged.row.id, goal: goalRow, authorization,
+      config: autonomyConfig(), mode: "live",
+      transport: sinkTransport(sink), resolve: publicResolve
+    });
+    assert.equal(again.replayed, true);
+    assert.equal(sink.seen.length, 1, "the replayed release published nothing again");
+
+    // And the re-audit now counts this release as honest: the approval names it.
+    const released = await db.AutonomyOutbox.get(staged.row.id);
+    assert.equal(released.status, "released");
+    assert.equal(auditRelease(released, { approvals: new Set([released.id]) }).length, 0,
+      "a T5 release with a naming approval is not a false release");
+  } finally {
+    if (prev === undefined) delete process.env.COGNOS_AUTONOMY_IRREVERSIBLE;
+    else process.env.COGNOS_AUTONOMY_IRREVERSIBLE = prev;
+    await sink.stop();
+  }
+});
+
+await test("the approval route records the human decision and still judges everything else", async () => {
+  const { default: db } = await import("../server/db.js");
+  const { stageEffect } = await import("../server/autonomy/outbox.js");
+  const prev = process.env.COGNOS_AUTONOMY_IRREVERSIBLE;
+  process.env.COGNOS_AUTONOMY_IRREVERSIBLE = "true";
+  try {
+    const agent = await makeAgent();
+    const goal = await makeGoal(agent.id, { title: "T5 route approval goal",
+      effects: ["notify", { effect: "post.publish", destinations: [APPROVED] }] });
+    const goalRow = await db.AutonomyGoal.get(goal.id);
+    const staged = await stageEffect({
+      db, workspaceId: goalRow.workspace_id, agentId: agent.id, goalId: goal.id,
+      skillId: "post.publish", effectType: "irreversible", tier: "T5",
+      destination: UNGRANTED,
+      payload: { url: UNGRANTED, method: "POST", headers: {}, body: BODY("t5-route"), secretRef: null },
+      keyPayload: { url: UNGRANTED, body: BODY("t5-route") }, mode: "shadow"
+    });
+
+    // The approval names the exact row, so the Governor gets PAST the human
+    // gate — and then refuses on the destination the goal was never granted.
+    // That is the point: approval is necessary and never sufficient.
+    const approve = await h.raw(`/api/autonomy/outbox/${staged.row.id}/decision`, {
+      method: "POST", body: { decision: "approve", reason: "operator review" }
+    });
+    assert.equal(approve.status, 409, JSON.stringify(approve.json));
+    const rules = (approve.json.verdict?.failed || []).map(f => f.rule);
+    assert.ok(rules.includes("DESTINATION_NOT_IN_SCOPE"), JSON.stringify(rules));
+    assert.ok(!rules.includes("T5_NEEDS_HUMAN"), "the naming approval cleared the human gate");
+    assert.ok(!rules.includes("TIER_NOT_ALLOWED"), "the rung is on, so the tier is allowed");
+
+    // The route recorded the approval: one row, naming this exact effect, with
+    // the scope it was recorded under.
+    const approvalRow = await db.EffectApproval.current(staged.row.id);
+    assert.ok(approvalRow, "the route recorded a human approval naming this row");
+    assert.equal(approvalRow.decision, "approve");
+    assert.equal(approvalRow.scope_sha256, (await db.GoalAuthorization.current(goal.id, Date.now())).scope_sha256);
+
+    // And the refused row is still refused: approval got it past the human
+    // gate, not past the Governor.
+    const row = await db.AutonomyOutbox.get(staged.row.id);
+    assert.equal(row.status, "refused");
+  } finally {
+    if (prev === undefined) delete process.env.COGNOS_AUTONOMY_IRREVERSIBLE;
+    else process.env.COGNOS_AUTONOMY_IRREVERSIBLE = prev;
+  }
 });
 
 await test("the readiness report is readable before anything is flipped, and reads as sentences", async () => {

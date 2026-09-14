@@ -1294,6 +1294,7 @@ function Outbox({ status, onChanged }) {
   const effects = data?.effects || [];
   const corpus = data?.corpus;
   const writes = status?.externalWrites || {};
+  const irreversible = status?.irreversible || {};
   const rung = (rungs?.rungs || []).find(r => r.rung === 'external_writes');
   const gate = rungs?.gate || status?.shadowGate || {};
   const measured = rung?.measurement?.metrics;
@@ -1556,11 +1557,17 @@ function Outbox({ status, onChanged }) {
                       {effect.status === 'staged' && (
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button onClick={() => decide(effect.id, 'approve')} disabled={busy}
-                            title={effect.tier === 'T4' && !writes.rungEnabled
-                              ? 'Rung 4 is off: this approval would be refused. The effect stays staged and judged in shadow.'
-                              : 'Ask the Action Governor to release this effect'}
-                            className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] disabled:opacity-40 ${
+                            title={
                               effect.tier === 'T4' && !writes.rungEnabled
+                                ? 'Rung 4 is off: this approval would be refused. The effect stays staged and judged in shadow.'
+                                : effect.tier === 'T5' && !irreversible.rungEnabled
+                                  ? 'Rung 6 is off: this approval would be refused. Irreversible effects release only by your approval of this exact action, and only after the rung is switched on.'
+                                  : effect.tier === 'T5'
+                                    ? 'Approve this exact irreversible effect. It releases one at a time, never by class, and only after the Action Governor also rules it safe.'
+                                    : 'Ask the Action Governor to release this effect'
+                            }
+                            className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] disabled:opacity-40 ${
+                              (effect.tier === 'T4' && !writes.rungEnabled) || (effect.tier === 'T5' && !irreversible.rungEnabled)
                                 ? 'border border-border text-muted-foreground'
                                 : 'bg-primary text-primary-foreground'
                             }`}>
@@ -1625,7 +1632,8 @@ function Outbox({ status, onChanged }) {
 
 // ----------------------------------------------------------------- overview
 function Overview({ status, residents, goals, onTick, ticking, onToggle, toggling, bannerError,
-  attention, attentionLoading, onJump, onDesign, onSeedArchivist, seedingArchivist }) {
+  attention, attentionLoading, onJump, onDesign, onSeedArchivist, seedingArchivist,
+  onAutoAuthorize, autoAuthBusy }) {
   const ceilings = status?.ceilings || {};
   const counts = status?.counts || {};
   const skills = status?.skills || [];
@@ -1644,6 +1652,48 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
           </p>
         ) : null}
       />
+
+      {/* Phase 26 — forgo goal authorization. A delegated switch, reported as its
+          own three facts (on / pinned / may-I-change-it), so the toggle can
+          explain itself instead of lying. */}
+      <Section title="Goal authorization" subtitle="Whether a new goal waits for you before it runs" icon={ShieldCheck}>
+        <div className="rounded-lg border border-border/70 px-3 py-2.5">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-xs font-medium flex items-center gap-2 flex-wrap">
+                Auto-authorize new goals
+                {status?.settings?.autoAuthorize
+                  ? <Pill tone="warn">forgoing the consent click</Pill>
+                  : <Pill tone="ok">you authorize each goal</Pill>}
+                {status?.settings?.autoAuthorizePinned && <Pill tone="info">pinned by an operator</Pill>}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                {status?.settings?.autoAuthorize
+                  ? 'New goals start active when created — their scope and budget hashes are still recorded, the allowlist and ceilings still bind, and every staged effect still waits for its own approval.'
+                  : 'A new goal is created waiting for you. It does no work until you authorize its scope and budget.'}
+              </p>
+            </div>
+            <button
+              role="switch"
+              aria-checked={status?.settings?.autoAuthorize === true}
+              aria-label="Auto-authorize new goals"
+              disabled={!status?.settings?.canSetAutoAuthorize || autoAuthBusy}
+              onClick={() => onAutoAuthorize(!status?.settings?.autoAuthorize)}
+              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 disabled:opacity-50 ${status?.settings?.autoAuthorize ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+              title={status?.settings?.canSetAutoAuthorize
+                ? (status?.settings?.autoAuthorize ? 'Turn auto-authorize off' : 'Turn auto-authorize on')
+                : (status?.settings?.autoAuthorizeRefusal?.message || 'Auto-authorize is not delegated to this page')}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-background shadow transition-transform ${status?.settings?.autoAuthorize ? 'translate-x-5' : ''}`} />
+            </button>
+          </div>
+          {!status?.settings?.canSetAutoAuthorize && (
+            <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">
+              {status?.settings?.autoAuthorizeRefusal?.message || 'This deployment has not handed the auto-authorize switch to this page.'}
+            </p>
+          )}
+        </div>
+      </Section>
 
       {/* What is waiting on you, above the numbers. The numbers are context; this is the question. */}
       <AttentionPanel data={attention} onJump={onJump} loading={attentionLoading} />
@@ -1784,7 +1834,7 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
             <p className="text-[10px] text-muted-foreground pt-1">
               Built tiers: <span className="font-mono">{(status?.builtTiers || []).join(', ') || '—'}</span>.
               Tiers in words: {Object.entries(TIER_LABEL).map(([t, l]) => `${t} ${l}`).join(' · ')}.
-              T5 is declared and not built.
+              T5 is built and default-off: it releases only by your approval of that exact action, one at a time, never by class.
             </p>
           </div>
         </details>
@@ -1803,6 +1853,7 @@ export default function Autonomy() {
   const [attentionLoading, setAttentionLoading] = useState(true);
   const [ticking, setTicking] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [autoAuthBusy, setAutoAuthBusy] = useState(false);
   const [error, setError] = useState('');
   const [bannerError, setBannerError] = useState('');
   const [designerOpen, setDesignerOpen] = useState(false);
@@ -1867,6 +1918,26 @@ export default function Autonomy() {
       setBannerError(e?.message || 'Could not change the switch.');
       await refreshAll();
     } finally { setToggling(false); }
+  };
+
+  /**
+   * Phase 26 — forgo goal authorization. The server decides (a pin or no
+   * delegation answers 409), and the toggle flips back to the truth on refusal
+   * instead of staying where the click put it.
+   */
+  const handleAutoAuthorize = async (next) => {
+    if (autoAuthBusy) return;
+    setAutoAuthBusy(true); setBannerError('');
+    try {
+      const out = await api.setAutoAuthorize(next);
+      await refreshAll();
+      if (out.changed === false) {
+        setBannerError(`Auto-authorize was already ${out.autoAuthorize ? 'on' : 'off'}.`);
+      }
+    } catch (e) {
+      setBannerError(e?.message || 'Could not change auto-authorize.');
+      await refreshAll();
+    } finally { setAutoAuthBusy(false); }
   };
 
   /**
@@ -1987,6 +2058,7 @@ export default function Autonomy() {
               attention={attention} attentionLoading={attentionLoading}
               onJump={setTab} onDesign={() => setDesignerOpen(true)}
               onSeedArchivist={seedArchivist} seedingArchivist={seedingArchivist}
+              onAutoAuthorize={handleAutoAuthorize} autoAuthBusy={autoAuthBusy}
             />
           ) : tab === 'residents' ? (
             <Residents status={status} frozen={frozen} onDesign={() => setDesignerOpen(true)} onChanged={refreshAll} />

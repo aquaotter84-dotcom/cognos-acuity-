@@ -202,6 +202,8 @@ await test("the executability probe holds the global switch open and nothing els
   assert.equal(isSkillEnabled("webhook.post", probe), cfg.rung.externalWrites === true,
     "T4 still needs its rung flag even in a draft");
   assert.equal(isSkillEnabled("web.search", probe), cfg.rung.search === true, "and T3 search still needs its rung");
+  assert.equal(isSkillEnabled("post.publish", probe), cfg.rung.irreversible === true,
+    "and T5 still needs its rung — a draft cannot sneak an irreversible skill through");
   // Unset notice mode + the probe's hypothetical "on" → internal, so notice.emit
   // survives a draft made while frozen. Explicit none still drops it.
   const previousNotice = process.env.COGNOS_AUTONOMY_NOTICE_MODE;

@@ -900,6 +900,29 @@ export function createAutonomyStore(run) {
       return rows[0] || null;
     },
 
+    /**
+     * Upsert ONLY the auto-authorize switch — Phase 26. A third writer on the
+     * same row as `set` and `setOutboxMode`, and like them it touches exactly
+     * the column it owns: flipping auto-authorize must not touch `enabled` or
+     * `outbox_mode`. Null is the resting state and reads as off.
+     */
+    async setAutoAuthorizeGoals({ workspace_id, auto_authorize, updated_by = null, updated_ms = null }) {
+      const atMs = Number(updated_ms) || Date.now();
+      const rows = await run(
+        `INSERT INTO autonomy_settings (workspace_id, enabled, auto_authorize_goals, source, updated_by, updated_ms)
+         VALUES ($1, FALSE, $2, 'ui', $3, $4)
+         ON CONFLICT (workspace_id) DO UPDATE
+           SET auto_authorize_goals = EXCLUDED.auto_authorize_goals,
+               updated_by = EXCLUDED.updated_by,
+               updated_ms = EXCLUDED.updated_ms,
+               updated_date = now()
+         RETURNING *`,
+        [workspace_id, auto_authorize === true,
+         updated_by ? String(updated_by).slice(0, 120) : null, atMs]
+      );
+      return rows[0] || null;
+    },
+
     async set({ workspace_id, enabled, source = "ui", updated_by = null, updated_ms = null }) {
       const atMs = Number(updated_ms) || Date.now();
       const rows = await run(
@@ -911,6 +934,93 @@ export function createAutonomyStore(run) {
                updated_date = now()
          RETURNING *`,
         [workspace_id, enabled === true, String(source).slice(0, 40),
+         updated_by ? String(updated_by).slice(0, 120) : null, atMs]
+      );
+      return rows[0] || null;
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Phase 22 (autonomy row, second slice) — T5 per-effect human approval.
+  //
+  // APPEND ONLY: there is no update or delete accessor, and the only writer is
+  // the outbox decision route — the loop never writes here, so an approval can
+  // never originate from the thing being approved (pin.irreversible_human_approval).
+  // -------------------------------------------------------------------------
+  const EffectApproval = {
+    async append(data) {
+      const id = data.id || newId("eappr");
+      const rows = await run(
+        `INSERT INTO effect_approvals
+          (id, workspace_id, outbox_id, goal_id, agent_id, decision,
+           scope_sha256, reason, decided_by, decided_ms)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [id, data.workspace_id, data.outbox_id, data.goal_id || null,
+         data.agent_id || null, data.decision, data.scope_sha256 || null,
+         data.reason || null, data.decided_by || "operator",
+         num(data.decided_ms, Date.now())]
+      );
+      return rows[0];
+    },
+    /** The most recent approval naming this exact outbox id, or null. */
+    async current(outboxId) {
+      const rows = await run(
+        `SELECT * FROM effect_approvals
+          WHERE outbox_id=$1 AND decision='approve'
+          ORDER BY decided_ms DESC LIMIT 1`, [outboxId]
+      );
+      return rows[0] || null;
+    },
+    /** Every decision on one effect, oldest first — the one-by-one record. */
+    async list(outboxId, limit = 50) {
+      const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+      return run(
+        `SELECT * FROM effect_approvals WHERE outbox_id=$1
+         ORDER BY decided_ms ASC LIMIT $2`, [outboxId, safeLimit]
+      );
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Phase 26 — the delegated council switches (Critic, Governor).
+  //
+  // One row per workspace, same shape as AutonomySettings but with the resting
+  // state INVERTED: these are safety mechanisms, so a missing row reads as ON.
+  // The row is inert unless COGNOS_COUNCIL_UI_CONTROL delegates the switches,
+  // and server/council/settings.js owns the precedence (env pin > stored row >
+  // default-on) — this store is a plain read/write.
+  // -------------------------------------------------------------------------
+  const CouncilSettings = {
+    /** The stored row, or null. Null means "nobody has used the switches yet". */
+    async get(workspaceId) {
+      const rows = await run(
+        `SELECT * FROM council_settings WHERE workspace_id = $1`, [workspaceId]
+      );
+      return rows[0] || null;
+    },
+
+    /**
+     * Upsert the two governance switches. One row, two columns, two switches —
+     * the caller decides which column to touch. A first-ever insert lands both
+     * at their defaults (ON), which is the resting state.
+     */
+    async set({ workspace_id, governorEnabled = null, criticEnabled = null,
+      updated_by = null, updated_ms = null }) {
+      const atMs = Number(updated_ms) || Date.now();
+      const rows = await run(
+        `INSERT INTO council_settings
+            (workspace_id, governor_enabled, critic_enabled, source, updated_by, updated_ms)
+         VALUES ($1, COALESCE($2, TRUE), COALESCE($3, TRUE), 'ui', $4, $5)
+         ON CONFLICT (workspace_id) DO UPDATE
+           SET governor_enabled = COALESCE($2, council_settings.governor_enabled),
+               critic_enabled   = COALESCE($3, council_settings.critic_enabled),
+               updated_by       = EXCLUDED.updated_by,
+               updated_ms       = EXCLUDED.updated_ms,
+               updated_date     = now()
+         RETURNING *`,
+        [workspace_id,
+         governorEnabled === null ? null : (governorEnabled === true),
+         criticEnabled === null ? null : (criticEnabled === true),
          updated_by ? String(updated_by).slice(0, 120) : null, atMs]
       );
       return rows[0] || null;
@@ -931,6 +1041,8 @@ export function createAutonomyStore(run) {
     GoalSubagent,
     NotePromotion,
     RungEvidence,
-    AutonomySettings
+    AutonomySettings,
+    EffectApproval,
+    CouncilSettings
   };
 }

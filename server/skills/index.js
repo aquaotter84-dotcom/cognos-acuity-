@@ -22,9 +22,14 @@
 // Phase 21 adds T4 (external WRITE) — one adapter, `webhook.post`. It is the
 // only externally-writing skill in the registry, it is off unless the rung flag
 // is set, and even then the Action Governor refuses a LIVE release until a
-// recorded shadow corpus justifies it. T5 (irreversible) stays refused until
-// Phase 22, because an irreversible act needs per-effect human approval and
-// that surface is not built.
+// recorded shadow corpus justifies it.
+//
+// Phase 22 (autonomy row, second slice) adds T5 (IRREVERSIBLE) — one adapter,
+// `post.publish`. It is off unless the `irreversible` rung is switched on, and
+// even then the Action Governor refuses every release until a human approval
+// row names that exact outbox id (pin.irreversible_human_approval). A rung
+// flag, a scope entry and a shadow corpus are all necessary and none of them
+// is ever sufficient.
 
 import { appendNote } from "./noteAppend.js";
 import { readEvidence } from "./evidenceRead.js";
@@ -37,6 +42,7 @@ import { spawnSubagent } from "./subagentSpawn.js";
 import { fetchUrl } from "./webFetch.js";
 import { searchWebSkill } from "./webSearch.js";
 import { postWebhook } from "./webhookPost.js";
+import { publishPost } from "./postPublish.js";
 
 /** Effect tiers. The Action Governor speaks this vocabulary. */
 export const TIERS = Object.freeze({
@@ -224,6 +230,32 @@ export const SKILL_REGISTRY = Object.freeze({
       reason: { type: "string", max: 300, required: false }
     },
     execute: postWebhook
+  }),
+
+  // --- T5: irreversible (Phase 22, autonomy row — second slice) -------------
+  // The first act this loop may take that cannot be taken back: publishing
+  // content to a granted destination. It is delivered with the same bounded
+  // https machinery as a T4 webhook, and it is governed strictly harder: the
+  // `irreversible` rung must be on AND a human approval row must name this
+  // exact outbox id, one at a time, never by class (pin.irreversible_human_approval).
+  "post.publish": def({
+    tier: "T5",
+    effectType: "irreversible",
+    killSwitch: "COGNOS_SKILL_POST_PUBLISH",
+    requiresRung: "irreversible",
+    maxPayloadBytes: 40_960,
+    timeoutMs: 12_000,
+    summary: "Publish one body to one destination granted in the goal's scope. Irreversible: it runs only after a human approves this exact effect, one at a time, never by class.",
+    idempotencyRule: "keyed by (goal, url, body): the same publish stages once, and a released key returns its receipt instead of publishing again",
+    args: {
+      url: { type: "string", max: 2000, required: true },
+      method: { type: "enum", values: ["POST"], required: false },
+      headers: { type: "object", required: false },
+      body: { type: "string", max: 32_768, required: true },
+      secret_ref: { type: "string", max: 64, required: false },
+      reason: { type: "string", max: 300, required: false }
+    },
+    execute: publishPost
   })
 });
 
@@ -280,7 +312,10 @@ export function isSkillEnabled(id, config = null) {
   // skill that declares requiresRung; this repeats the question at the tier so
   // a future T4 skill cannot forget to declare one and slip through.
   if (skill.tier === "T4" && rung.externalWrites !== true) return false;
-  if (skill.tier === "T5") return false;   // not built (Phase 22)
+  // Phase 22 (autonomy row): T5 is BUILT and still off. The rung flag is the
+  // operator's sign-off that the tier exists; it is necessary and not
+  // sufficient — a release still needs a per-effect human approval.
+  if (skill.tier === "T5" && rung.irreversible !== true) return false;
   return true;
 }
 

@@ -30,12 +30,12 @@
 //      additionally requires that the earned corpus was aimed at it — evidence
 //      about endpoint A does not justify sending to endpoint B.
 //
-// WHAT THIS DOES NOT ADD. T5. An irreversible act needs per-effect human
-// approval naming the exact outbox row, and that surface is not designed;
-// `tierAllowed` still refuses T5 outright and `auditRelease` still counts any
-// T5 release in a corpus as a false release by definition. No rung is widened
-// here, no ceiling is raised, no skill is added, and no law is relaxed. The
-// resting state is still shadow.
+// WHAT THIS DOES NOT ADD. T5. An irreversible act is a different authority
+// than a live T4 delivery: it releases only by a per-effect human approval
+// naming the exact outbox row (pin.irreversible_human_approval), one at a
+// time, never by class — so it never passes through this module's corpus gate
+// at all. No rung is widened here, no ceiling is raised, no skill is added,
+// and no law is relaxed. The resting state is still shadow.
 //
 // WHY A MODULE AND NOT A ROUTE. The guard is policy, and policy in a route
 // handler is policy that only one caller has to obey. settings.js holds the

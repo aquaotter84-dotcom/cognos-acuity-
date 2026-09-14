@@ -459,7 +459,9 @@ await test("the Action Governor judges a T4 write harder than a read of the same
   assert.ok(rulesOf(rungOff).includes("TIER_NOT_ALLOWED"), JSON.stringify(rungOff.failed));
   assert.equal(tierAllowed("T4", cfgT4({ rung: { ...baseCfg.rung, externalWrites: false } })), false);
   assert.equal(tierAllowed("T4", cfgT4()), true);
-  assert.equal(tierAllowed("T5", cfgT4()), false, "T5 is not built in Phase 21");
+  // T5 is built (Phase 22) but still refused: the irreversible rung is off,
+  // and even switched on it is necessary and never sufficient.
+  assert.equal(tierAllowed("T5", cfgT4()), false, "T5 is off unless the irreversible rung flag is set");
 
   const notifyOnly = { id: goal.id, workspace_id: "ws1", spent: {}, budget: goal.budget,
     scope: { effectsAllowed: ["notify"] } };
@@ -563,7 +565,7 @@ await test("a recorded release is re-auditable: every way it could be false has 
     [row({ payload: { url: "not a url" } }), /does not parse/],
     [row({ payload: { body: BODY } }), /no destination URL/],
     [row({ destination: "https://other.example.com/x" }), /does not match the payload URL/],
-    [row({ tier: "T5" }), /never class-authorized/],
+    [row({ tier: "T5" }), /released without a human approval naming this exact outbox row/],
     [row({ skill_id: "webhook.delete" }), /no skill named .* code-owned registry/],
     [row({ tier: "T3" }), /does not match the skill's T4/],
     [row({ verdict: { decision: "refuse", failed: [{ rule: "UNSAFE_URL" }] } }), /verdict says 'refuse'/],
@@ -574,6 +576,16 @@ await test("a recorded release is re-auditable: every way it could be false has 
     const reasons = auditRelease(candidate, { goal: clean });
     assert.ok(reasons.some(r => pattern.test(r)), `${pattern} -> ${JSON.stringify(reasons)}`);
   }
+
+  // A T5 release is false only when no human approval names it. The same row
+  // with an approval audits clean on that axis — one-by-one approval is the
+  // release authority, never a class grant.
+  const t5row = row({ skill_id: "post.publish", tier: "T5", effect_type: "irreversible",
+    destination: null, payload: { url: DEST, method: "POST", headers: {}, body: BODY } });
+  assert.ok(auditRelease(t5row, { goal: clean })
+    .some(r => /released without a human approval naming this exact outbox row/.test(r)));
+  assert.equal(auditRelease(t5row, { goal: clean, approvals: new Set(["fx_1"]) })
+    .some(r => /released without a human approval/.test(r)), false);
 });
 
 await test("a corpus counts only its own tier, and one that never releases or never refuses proves nothing", async () => {
@@ -953,8 +965,9 @@ await test("the deployment reports Rung 4 as three separate facts: built, switch
   const tools = await h.raw("/api/agent/tools");
   assert.equal(tools.json.autonomy.externalWrites.built, true);
   assert.equal(tools.json.autonomy.externalWrites.deliversNow, false);
-  assert.ok(tools.json.autonomy.unbuiltTiers.includes("T5"), "T5 stays named as unbuilt");
-  assert.ok(!tools.json.autonomy.unbuiltTiers.includes("T4"));
+  assert.ok(tools.json.autonomy.builtTiers.includes("T5"), "T5 is built in Phase 22");
+  assert.ok(!tools.json.autonomy.builtTiers.includes("T6"), "no tier above T5 exists");
+  assert.deepEqual(tools.json.autonomy.unbuiltTiers, [], "nothing remains unbuilt at the tier ladder");
 
   const identity = await h.raw("/api/identity");
   const runtime = identity.json.runtime || {};
@@ -975,7 +988,8 @@ await test("the deployment reports Rung 4 as three separate facts: built, switch
   assert.equal(t4.measurement.metrics.samples >= 0, true);
   assert.equal(rungs.json.outboxMode, "shadow");
   const t5 = rungs.json.rungs.find(r => r.rung === "irreversible");
-  assert.equal(t5.flag, false, "Rung 6 is designed, not built");
+  assert.equal(t5.tier, "T5");
+  assert.equal(t5.flag, false, "Rung 6 is built and still off — explicit operator sign-off is its entry criterion");
   assert.equal(t5.measurement.satisfied, false);
 });
 
@@ -1886,9 +1900,10 @@ await test("Phase 21 laws are pinned, and the Policy Engine refuses to open a ch
   // prefix is not the only marker, but it is the one an operator reads.)
   assert.ok(LAWS.filter(l => l.id.startsWith("pin.")).every(l => l.runtime_modifiable === false));
   // Phase 21 added three laws to Phase 20's thirty-one. Phase 22 (autonomy row)
-  // then added two more for the earned live flip, so this file's own count moves
-  // with the law layer rather than pinning a number that belongs to a later phase.
-  assert.equal(LAWS.length, 36, "34 after Phase 21, +2 for the live-destination and earned-mode pins");
+  // then added two more for the earned live flip and one more for T5's
+  // per-effect human approval, so this file's own count moves with the law
+  // layer rather than pinning a number that belongs to a later phase.
+  assert.equal(LAWS.length, 37, "34 after Phase 21, +2 live-mode pins, +1 T5 approval pin");
 
   assert.ok(GATED_ACTIONS.enable_outbound_channel, "named, so it is refused with a law rather than as unknown");
   assert.ok(GATED_ACTIONS.set_autonomy_rung);

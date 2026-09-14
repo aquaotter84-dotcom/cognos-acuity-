@@ -1215,7 +1215,7 @@ Migration `0009` and `test/phase22.mjs` are the README's Phase 22 — bounded
 context plus structured memory — and they shipped. `AUTONOMY.md` §10's Phase 22
 is the autonomy row: *outbox → `live` from the shadow evidence record, plus T5
 with per-effect human approval.* This section is the **first slice of that row**
-and nothing else. T5 remains design only. The new test file is
+and nothing else. T5 shipped later as **Phase 22C** (below). The new test file is
 `test/outbox-live.mjs`, not `test/phase22.mjs`, precisely so the collision
 cannot produce two files with the same name and different meanings.
 
@@ -1335,7 +1335,8 @@ outright, the outbox route still refuses to approve one, and `auditRelease`
 still counts any T5 release in a corpus as a false release by definition.
 `builtTiers` is still `T0–T4`. Rung 5 inbound messaging is still Phase 23. The
 rest of the Phase 22 autonomy row — T5 with per-effect human approval, never
-class-authorized, default off, separate security review — is still design only.
+class-authorized, default off, separate security review — was design only when
+this slice shipped; it is now **Phase 22C** (below), built and green.
 
 **Two things found while building it, recorded rather than quietly fixed.**
 
@@ -1369,3 +1370,118 @@ endpoint as its approved destination, which is what a real Rung-4 host does
 before it can earn a flip at all; its law-version assertions became floors
 rather than exact numbers, so a later phase does not have to edit an earlier
 phase's test to say something false about itself.
+
+## Phase 22C (autonomy row) — T5, irreversible acts, per-effect human approval — BUILT, default off
+
+The second half of the autonomy-row Phase 22. The first slice earned the flip to
+live for **T4** and left T5 design-only; this slice builds T5 and keeps it
+strictly off until a human approves one effect at a time.
+
+**T5 is one adapter, judged harder than a webhook.** `post.publish` is a second,
+stricter https adapter for irreversible acts (payment, publish, delete). It is
+shaped like `webhook.post` — the same SSRF/DNS/redirect checks, `secret_ref`
+signing, digest-only receipts — but it is never deliverable by the loop:
+`tierAllowed` refuses it unless `COGNOS_AUTONOMY_IRREVERSIBLE` is on, and even
+with the rung on the Action Governor refuses with `T5_NEEDS_HUMAN` until an
+approval row names that exact outbox id. `pin.irreversible_human_approval` writes
+the whole thing down: a T5 release is approved **one effect at a time, by a
+human**, never by class — no rung flag, scope entry, shadow corpus, goal budget,
+resident brief or model output is a substitute, and the loop can never write its
+own approval row (the only writer is the outbox decision route).
+
+**The approval binds the scope it was recorded under.** `effect_approvals`
+(migration `0014`) is append-only: the human decision carries the scope SHA-256
+and budget SHA-256 at decision time, so an approval cannot outlive the
+authorization it was made against, and a replayed or widened effect is judged
+against the row that actually exists rather than a remembered yes. A T5 release
+with no naming approval counts as a false release by definition, so it can never
+silently earn a corpus the way a shadow T4 sample can.
+
+**Why this does not weaken anything.** T5 is built and green, default off, and
+release remains a per-effect human approval naming the exact outbox row. The rung
+alone is necessary and never sufficient. Laws move to `1.8.0` (adding
+`pin.irreversible_human_approval`), identity to `1.10.0` (the `irreversible`
+runtime block: `built`, `rungEnabled`, `requiresPerEffectHumanApproval: true`,
+`classAuthorized: false`, `adapters: ["post.publish"]`), and `test/outbox-live.mjs`
+grew to 20 checks — including the ones that prove a T5 release with a naming
+approval is **not** a false release, and that the same approval clears
+`T5_NEEDS_HUMAN` exactly once. `builtTiers` is now `T0–T5`; `unbuiltTiers` is
+empty for the first time.
+
+## Phase 26 — Delegated Critic/Governor switches and "forgo goal authorization" — BUILT, default on / default off
+
+Phase 26 is user-friendliness work with no new rung, skill, law, or write. It
+adds three delegated switches, all on the same model Phase 25 established for
+autonomy's on/off switch: **a pin outranks the UI, a delegation hands the switch
+over, a stored row holds the delegated value, and every flip is audited.**
+
+### The Critic and Governor toggles
+
+The Critic and Governor kill switches (`COGNOS_CRITIC_ENABLED`,
+`COGNOS_GOVERNOR_ENABLED`) predate this work; what was missing was a face. The
+pattern from Phase 25 is reused, with the resting state **inverted** because
+these are brakes rather than powers:
+
+- An environment value is a **pin**. `false` pins a seat off; any other explicit
+  value holds it on; unset is not a pin. `POST /api/council/settings` answers
+  `409 pinned_by_operator` rather than pretend.
+- `COGNOS_COUNCIL_UI_CONTROL=true` is a **delegation**. It hands both toggles to
+  Settings → Governance. Delegation is not disablement.
+- Neither set: both seats rest **on** — an unread `council_settings` row
+  (migration `0015`) reads on, which is the fail-closed direction for a safety
+  mechanism, the mirror image of autonomy's fail-closed off.
+
+Precedence is resolved in exactly one place, `server/council/settings.js`, which
+`getSystemConfig()` asks, so the council dispatch, the identity route and the
+answer prompt all read the same effective value. A flip is write-through to a
+process-local cache and appended to `workspace_audit` as `council.governor` /
+`council.critic` with from/to values and who did it. The UI names what turning
+the Governor off actually removes — the deterministic veto over empty responses,
+secret leakage, minimum-cause floors and citation audits — and keeps saying so
+while it is off.
+
+The Governor is still sovereign at the law layer. `pin.governor_sovereign` is
+untouched: no model or subsystem may weaken or bypass the Governor, and the
+Policy Engine still refuses a runtime adaptation that proposes to disable a seat.
+This is an operator's kill switch with a record, never a model's. Laws stay
+`1.8.0` — Phase 26 adds no pin.
+
+### Forgo goal authorization
+
+By default a new goal is created `awaiting_authorization` and does no work until
+a human authorizes its exact scope and budget. Phase 26 adds the option to forgo
+that **one** click, on its own pair of variables so it can never ride along with
+the loop's on/off switch or the outbox mode:
+
+- `COGNOS_AUTONOMY_AUTO_AUTHORIZE` is a **pin** (explicit `false` off, explicit
+  affirmative on, unset not a pin).
+- `COGNOS_AUTONOMY_AUTO_AUTHORIZE_UI_CONTROL=true` is a **delegation**, separate
+  from `COGNOS_AUTONOMY_UI_CONTROL` and `COGNOS_AUTONOMY_OUTBOX_UI_CONTROL`.
+- The stored value is one nullable column, `autonomy_settings.auto_authorize_goals`
+  (migration `0016`), null reads off.
+
+The consent **record** is never skipped, only the click. When on, the goal
+creation routes (the manual form and the designer's `create_first_goal`) perform
+the same authorize step the human decision route performs, with one deliberate
+difference: `decision_source: "auto"` instead of `"app"`. The scope and budget
+hashes are computed and stored, the allowlist and ceilings still bind at every
+later step, and staged effects still wait for their own human approval. The
+switch touches nothing else — research-plan step consent, promotion confirms and
+outbox effect approvals (T2+, T4, T5) are unchanged, because the human barriers
+this work was not allowed to weaken are not weakened.
+
+Identity moves to `1.11.0`: the governance block now reports the three facts for
+each seat (`*Pinned`, `uiControl`, `governorOffRemovesVeto`) alongside the
+effective on/off, and the autonomy block reports `autoAuthorize` with its own
+pin/delegation facts. `test/council-ux.mjs` (9 checks, three harnesses:
+delegated / not / pinned, plus pure pin-precedence probes) pins it all down —
+including that a stored `TRUE` cannot beat a pinned `FALSE`, and that an
+auto-authorized goal carries `decision_source: "auto"` in both
+`goal_authorizations` and the `goal_authorized` event.
+
+Per the §10 rhythm: migrations `0015`/`0016`, identity `1.11.0` (laws stay
+`1.8.0`), `test/council-ux.mjs`, and this section. New environment variables:
+`COGNOS_COUNCIL_UI_CONTROL`, `COGNOS_AUTONOMY_AUTO_AUTHORIZE`,
+`COGNOS_AUTONOMY_AUTO_AUTHORIZE_UI_CONTROL` (the Critic/Governor pins
+`COGNOS_CRITIC_ENABLED`/`COGNOS_GOVERNOR_ENABLED` predate this phase and are
+re-documented in `.env.example` under their pin semantics).
