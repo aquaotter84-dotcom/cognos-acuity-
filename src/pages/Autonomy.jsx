@@ -1747,6 +1747,56 @@ export default function Autonomy() {
     } finally { setToggling(false); }
   };
 
+  /**
+   * One click to a first resident. It CREATES; it does not authorize. The goal
+   * lands awaiting_authorization and stays there until a decision on the Goals
+   * tab records consent in goal_authorizations — which is why this ends by
+   * taking you there rather than by reporting success.
+   *
+   * Idempotent at this layer: a second click finds the Archivist already there
+   * instead of writing a duplicate resident or goal. The brief comes from the
+   * same module the seed script uses, so the two cannot drift.
+   */
+  const seedArchivist = async () => {
+    if (seedingArchivist || frozen) return;
+    setSeedingArchivist(true); setError('');
+    try {
+      let resident = residents.find(r => r.slug === ARCHIVIST.slug);
+      if (!resident) {
+        resident = await api.createResident({
+          name: ARCHIVIST.name,
+          slug: ARCHIVIST.slug,
+          purpose: ARCHIVIST.purpose,
+          brief: ARCHIVIST.brief,
+          skill_allowlist: ARCHIVIST.skill_allowlist,
+          heartbeat_interval_ms: ARCHIVIST.heartbeat_interval_ms,
+          enabled: ARCHIVIST.enabled,
+        });
+      }
+
+      const existing = await api.listGoals().catch(() => []);
+      const already = existing.find(
+        g => g.title === ARCHIVIST.goalTitle && g.agent_id === resident?.id
+      );
+      if (!already) {
+        await api.createGoal({
+          title: ARCHIVIST.goalTitle,
+          objective: ARCHIVIST.goalObjective,
+          agent_id: resident?.id,
+        });
+      }
+
+      await Promise.all([refreshAll(), refreshAttention()]);
+      // The thing worth looking at is the goal waiting on you, not this page.
+      setTab('goals');
+    } catch (e) {
+      // A refusal here is usually "autonomy is off" or a brief that exceeded a
+      // ceiling; both arrive with their own words, so pass them through.
+      setError(e?.message || 'Could not create the Archivist');
+      await refreshAll().catch(() => {});
+    } finally { setSeedingArchivist(false); }
+  };
+
   return (
     <div className="flex flex-col h-full min-h-0">
       <header
@@ -1815,38 +1865,6 @@ export default function Autonomy() {
               attention={attention} attentionLoading={attentionLoading}
               onJump={setTab} onDesign={() => setDesignerOpen(true)}
               onSeedArchivist={seedArchivist} seedingArchivist={seedingArchivist}
-            />
-          ) : tab === 'residents' ? (
-            <Residents status={status} frozen={frozen} onDesign={() => setDesignerOpen(true)} onChanged={refreshAll} />
-          ) : tab === 'goals' ? (
-            <Goals status={status} frozen={frozen} residents={residents} onChanged={refreshAttention} />
-          ) : tab === 'notices' ? (
-            <Notices onChanged={refreshAttention} />
-          ) : tab === 'promotions' ? (
-            <Promotions frozen={frozen} onChanged={refreshAttention} />
-          ) : (
-            <Outbox status={status} onChanged={refreshAttention} />
-          )}
-        </div>
-      </div>
-
-      <DesignerDrawer
-        open={designerOpen}
-        onClose={() => setDesignerOpen(false)}
-        status={status}
-        onCreated={() => { refreshAll(); refreshAttention(); }}
-        onEnabledChange={() => { refreshAll(); refreshAttention(); }}
-      />
-      <HelpDrawer open={helpOpen} onClose={() => setHelpOpen(false)} />
-    </div>
-  );
-}
-tatus={status} residents={residents} goals={goals}
-              onTick={runTick} ticking={ticking}
-              onToggle={handleToggle} toggling={toggling}
-              bannerError={bannerError}
-              attention={attention} attentionLoading={attentionLoading}
-              onJump={setTab} onDesign={() => setDesignerOpen(true)}
             />
           ) : tab === 'residents' ? (
             <Residents status={status} frozen={frozen} onDesign={() => setDesignerOpen(true)} onChanged={refreshAll} />
