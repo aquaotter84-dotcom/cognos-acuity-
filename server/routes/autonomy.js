@@ -31,6 +31,7 @@ import {
 } from "../autonomy/settings.js";
 import { designTurn, clampDraft, emptyDraft, DESIGNER_LIMITS, firstGoalScope, clampProposedUrls } from "../autonomy/designer.js";
 import { scopeHashes, authorizationCovers, isTightening } from "../autonomy/authorize.js";
+import { validateDestinationGrant } from "../autonomy/scopeUrl.js";
 import { decideEffect, revertEffect, refuseEffect, shadowCorpus } from "../autonomy/outbox.js";
 import { RUNGS, RUNG_IDS, recordRungEvidence, rungEvidenceStatus } from "../autonomy/evidenceGate.js";
 import { describeLiveReadiness, setOutboxMode, listOutboxModeFlips } from "../autonomy/liveOutbox.js";
@@ -51,6 +52,56 @@ const parseJson = (value, fallback) => {
   if (typeof value === "object") return value;
   try { return JSON.parse(value); } catch { return fallback; }
 };
+
+/**
+ * Phase 27 — validating a destination GRANT at the one moment it can still be
+ * fixed. A scope's destination entries are the operator's own grant: nothing
+ * is clamped or dropped. But scope is immutable after creation
+ * (pin.goal_scope_immutable), so an entry that could never do anything — a
+ * shape destinationsForScope would silently ignore, or a URL the adapter would
+ * refuse — must not be WELDED IN with a 201: the goal would look keyed while
+ * it never was, and the shadow corpus would stay empty behind a lock whose key
+ * the operator believes exists.
+ *
+ * So the create routes REFUSE a malformed grant with every bad entry named,
+ * and normalize valid entries (exact URLs to href form, fragment dropped) so
+ * what the row grants is exactly what the matcher will compare attempts
+ * against. Judges keep tolerating odd scope defensively; grants get sentences.
+ *
+ * Returns the list of problems (empty when the grant is clean). Valid
+ * destination lists are normalized in place while checking — the caller
+ * refuses outright on any problem, so an in-place edit can only ever coexist
+ * with a scope whose every entry survived.
+ */
+function destinationGrantProblems(scope) {
+  const problems = [];
+  const entries = Array.isArray(scope?.effectsAllowed) ? scope.effectsAllowed : [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    if (!Object.prototype.hasOwnProperty.call(entry, "destinations")) continue;
+    const name = [entry.effect, entry.skill, entry.effectType, entry.skillId]
+      .find(v => typeof v === "string") || "(unnamed effect)";
+    if (!Array.isArray(entry.destinations)) {
+      problems.push(`${name} — destinations must be a list of URLs or host entries; a grant with none grants nothing`);
+      continue;
+    }
+    const check = validateDestinationGrant(entry.destinations);
+    if (check.ok) {
+      // Store what the matcher compares: exact URLs in fragment-free href form.
+      entry.destinations = check.destinations;
+    }
+    for (const error of check.errors.slice(0, 6)) problems.push(`${name} — ${error}`);
+  }
+  return problems;
+}
+
+const invalidGrantResponse = (res, problems, extra = {}) => res.status(400).json({
+  error: `The destination grant cannot be written as asked: ${problems.join("; ")}. `
+    + `Fix the list and create it again — scope cannot be widened or repaired afterwards. Nothing was created.`,
+  code: "invalid_destination_grant",
+  problems,
+  ...extra
+});
 
 /**
  * Phase 26 — record consent for a goal without a human click.
@@ -606,6 +657,41 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       });
     }
 
+    // Phase 27 — webhook destination grants, resolved BEFORE anything writes.
+    // grant_destinations is the operator's own list (never the model's draft),
+    // so it is refused with named reasons rather than clamped: every refusal
+    // returns the draft untouched, so a bad click costs nothing.
+    let webhookDestinations = [];
+    if (req.body?.grant_destinations !== undefined && req.body?.grant_destinations !== null) {
+      if (!Array.isArray(req.body.grant_destinations)) {
+        return invalidGrantResponse(res, ["grant_destinations must be a list — the webhook destinations this first goal may POST to"], { draft });
+      }
+      const check = validateDestinationGrant(req.body.grant_destinations);
+      if (!check.ok) return invalidGrantResponse(res, check.errors, { draft });
+      webhookDestinations = check.destinations;
+    }
+    if (webhookDestinations.length && req.body?.create_first_goal !== true) {
+      return res.status(400).json({
+        error: "Webhook destinations are granted into the first goal's scope — but this create does not make one. "
+          + "Create the first goal too, or drop the destinations. Nothing was created.",
+        code: "grant_without_goal",
+        draft
+      });
+    }
+    if (webhookDestinations.length && !(draft.skills || []).includes("webhook.post")) {
+      // The skill could not survive the clamp (rungs are read, not faked) or
+      // was never in the draft: either way a grant without the skill is a key
+      // nobody can use, and naming WHY is the refusal that teaches.
+      const dropped = clamped.droppedSkills.find(d => d.id === "webhook.post");
+      return res.status(400).json({
+        error: "Webhook destinations were named, but this resident cannot use webhook.post"
+          + (dropped ? ` — ${dropped.note}` : ": it is not in the draft's skill allowlist.")
+          + " A grant with no skill to use it earns nothing. Name the skill if it can run here, or drop the destinations. Nothing was created.",
+        code: "grant_without_skill",
+        draft
+      });
+    }
+
     const version = existingVersion + 1;
     const conversation = await db.Conversation.create({
       workspace_id: ws.id, title: draft.name.slice(0, 50), last_message_preview: ""
@@ -632,9 +718,12 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       // URLs become urlAllowlist + external_read only when the operator ticks
       // them here — a draft URL is not a grant, and a URL the clamp dropped
       // cannot be smuggled back in through grant_urls.
+      // Phase 27: webhook destinations likewise become a write grant only from
+      // the operator's own list, validated above — looking somewhere and
+      // acting there stay different authorities.
       const proposed = new Set(draft.proposedUrls || []);
       const selected = clampProposedUrls(req.body?.grant_urls).filter(url => proposed.has(url));
-      const scope = firstGoalScope({ skills: draft.skills, grantUrls: selected });
+      const scope = firstGoalScope({ skills: draft.skills, grantUrls: selected, webhookDestinations });
       goal = await db.AutonomyGoal.create({
         workspace_id: ws.id,
         agent_id: agent.id,
@@ -842,6 +931,12 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       ...parseJson(agent?.default_scope, {}),
       ...(req.body?.scope || {})
     };
+
+    // Phase 27 — the destination grant is the key the shadow corpus is earned
+    // with, and it is malformed before it is ever judged. Refuse it with every
+    // bad entry named, at the one moment it can still be corrected.
+    const grantProblems = destinationGrantProblems(scope);
+    if (grantProblems.length) return invalidGrantResponse(res, grantProblems);
 
     const goal = await db.AutonomyGoal.create({
       workspace_id: ws.id,

@@ -35,6 +35,7 @@
 import { callLLM } from "../llm.js";
 import { SKILL_IDS, SKILL_REGISTRY, TIERS, getSkill, isSkillEnabled } from "../skills/index.js";
 import { DEFAULT_GOAL_BUDGET, resolveNotices } from "./config.js";
+import { validateDestinationGrant } from "./scopeUrl.js";
 
 /** The needle test/mockModel.mjs keys on to script this role. */
 export const DESIGNER_NEEDLE = "You are the COGNOS Resident Designer";
@@ -166,14 +167,28 @@ export function extractHttpsUrls(text) {
  * Scope for a designer-created first goal. Always starts at notify-only.
  * Operator-ticked https URLs become urlAllowlist + external_read, and only
  * when web.fetch survived the skill clamp. Proposed URLs are not a grant.
+ *
+ * Phase 27: operator-named webhook DESTINATIONS likewise become a write grant
+ * (`{ effect: "webhook.post", destinations }`), and the gating mirrors the
+ * read side exactly: only when webhook.post survived the skill clamp. A scope
+ * that granted a destination without the skill would be a key the resident
+ * could never use — a read allowlist never widens into a write destination,
+ * and looking somewhere is a different authority from acting there
+ * (§4.7.1). The callers validate the list first (validateDestinationGrant)
+ * and refuse with named reasons; the clamp here is defense in depth, never
+ * the surface the operator reads.
  */
-export function firstGoalScope({ skills = [], grantUrls = [] } = {}) {
+export function firstGoalScope({ skills = [], grantUrls = [], webhookDestinations = [] } = {}) {
   const urls = clampProposedUrls(grantUrls);
   const effectsAllowed = ["notify"];
   const scope = { effectsAllowed };
   if (urls.length && (skills || []).includes("web.fetch")) {
     effectsAllowed.push("external_read");
     scope.urlAllowlist = urls;
+  }
+  const destinations = validateDestinationGrant(webhookDestinations).destinations;
+  if (destinations.length && (skills || []).includes("webhook.post")) {
+    effectsAllowed.push({ effect: "webhook.post", destinations });
   }
   return scope;
 }

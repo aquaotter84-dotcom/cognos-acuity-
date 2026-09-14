@@ -1485,3 +1485,66 @@ Per the §10 rhythm: migrations `0015`/`0016`, identity `1.11.0` (laws stay
 `COGNOS_AUTONOMY_AUTO_AUTHORIZE_UI_CONTROL` (the Critic/Governor pins
 `COGNOS_CRITIC_ENABLED`/`COGNOS_GOVERNOR_ENABLED` predate this phase and are
 re-documented in `.env.example` under their pin semantics).
+
+---
+
+## Phase 27 — The destination grant (the Rung 4 key path) — BUILT, default off
+
+### The divergence this closes
+
+§4.7.1, §5 and the rung table make a shadow corpus **aimed at a granted
+destination** the entry criterion for Rung 4, and the implementation enforced
+exactly that at every one of its rungs: `DESTINATION_NOT_IN_SCOPE` refused
+writes aimed anywhere ungranted, the live flip's `corpus_aimed` condition
+refused a corpus aimed nowhere approved, and the scope-hash binding refused a
+goal acting under a scope it was never authorized beneath. What was missing was
+upstream of all of it: **no operator surface could make the grant those gates
+read.** The manual goal form sent no `scope` at all (the route accepted it and
+merged it; the UI never sent it), and the designer's `firstGoalScope` granted
+`notify` plus optional `external_read` — read pages only. The lock was complete
+and the key path unbuilt: `corpus_aimed` could never be met from the UI, the
+corpus could never be clicked in, and the rung could never be earned from an
+operator's hand. Silence was the failure mode — a goal that could never hold a
+key looks exactly like a goal that has one.
+
+### What changed
+
+- **A grant-side gate.** `validateDestinationGrant` in
+  `server/autonomy/scopeUrl.js` validates a destination list the way the
+  corpus will: exact URLs through the adapter's own `checkWebhookUrl` (so a
+  grant can never be looser than a delivery), host and host+path-prefix entries
+  against the adapter's blocked-host boundary, bounded and named per bad entry.
+  The adapter exports `isLocalOrReservedHost` so the grant path uses the
+  adapter's own rule rather than growing a second copy that could drift.
+- **The goal form sends scope.** An optional *Webhook destinations* editor on
+  Autonomy → Goals lands the entries as
+  `{ effect: "webhook.post", destinations: [...] }` in the scope the operator
+  then authorizes, rendered in plain words above the JSON at the consent
+  barrier. `POST /api/autonomy/goals` refuses a malformed grant with 400 and
+  every bad entry named, and normalizes valid ones (fragment-free hrefs) so
+  the stored grant is exactly what the matcher compares attempts against.
+  Scope is immutable after creation (pin.goal_scope_immutable): refusing at the
+  only moment a grant can still be fixed is the whole point of the gate.
+- **The designer grants writes as deliberately as reads.** The drawer shows the
+  destination editor whenever the clamped draft's allowlist includes
+  `webhook.post`; `/api/autonomy/designer/create` accepts `grant_destinations`
+  next to `grant_urls`, and `firstGoalScope` welds the grant only when
+  `webhook.post` survived the clamp — a grant without the skill is 400 with
+  the sentence why, a grant with no first goal is 400, a bad entry is 400, and
+  every refusal returns the draft untouched so a bad click costs nothing.
+
+### What execution showed
+
+`test/phase27.mjs` (6 checks), which proves the wire and the lock in the same
+breath: the grant-refusal matrices; `firstGoalScope` granting only with
+`webhook.post` and never widening reads into writes; both routes refusing
+malformed, skill-less and goal-less grants with sentences and no rows created;
+and the end-to-end proof this whole phase exists for — a goal granted the
+approved destination actually fills the corpus aimed at it (the readiness
+report's `corpus_aimed` condition, previously unreachable, reads met), while
+the identical attempt with **no** grant is still refused by name. Wiring the
+key loosened nothing.
+
+Per the §10 rhythm: no migration, no law bump, no identity bump, no new
+environment variables — this phase moves no constraint, it closes one.
+`test/phase27.mjs` and this section.
