@@ -54,6 +54,17 @@ export const AUTONOMY_UI_CONTROL_ENV = "COGNOS_AUTONOMY_UI_CONTROL";
 export const OUTBOX_MODE_ENV = "COGNOS_AUTONOMY_OUTBOX_MODE";
 export const OUTBOX_UI_CONTROL_ENV = "COGNOS_AUTONOMY_OUTBOX_UI_CONTROL";
 
+/**
+ * Phase 26 — "forgo goal authorization", the same shape as the pairs above and
+ * deliberately a third pair of variables. `COGNOS_AUTONOMY_AUTO_AUTHORIZE` is
+ * the operator's explicit value (only explicit affirmatives enable);
+ * `COGNOS_AUTONOMY_AUTO_AUTHORIZE_UI_CONTROL` hands the switch to the API.
+ * Delegating the on/off switch — or the outbox mode — does NOT delegate this
+ * one: it is a different power, and none of the three variables implies another.
+ */
+export const AUTO_AUTHORIZE_PIN_ENV = "COGNOS_AUTONOMY_AUTO_AUTHORIZE";
+export const AUTO_AUTHORIZE_UI_CONTROL_ENV = "COGNOS_AUTONOMY_AUTO_AUTHORIZE_UI_CONTROL";
+
 /** The only three modes that exist, ordered by how far they reach. */
 export const OUTBOX_MODES = Object.freeze(["shadow", "dry_run", "live"]);
 
@@ -117,10 +128,67 @@ export function uiControlDelegated() {
   return envFlag(AUTONOMY_UI_CONTROL_ENV, false);
 }
 
+/**
+ * Phase 26 — a tri-state pin read: `null` when unset, otherwise a boolean.
+ * Unlike the on/off pin (where any explicit value enables), auto-authorize is
+ * an affirmative feature, so only explicit affirmatives pin ON; an explicit
+ * "false" pins OFF, and an unset or empty value is not a pin at all.
+ */
+function affirmPin(name) {
+  const raw = process.env[name];
+  if (raw === undefined || String(raw).trim() === "") return null;
+  return envFlag(name, false);
+}
+
+/** An operator pinned "forgo goal authorization" on or off in the environment. */
+export function autoAuthorizePinned() {
+  return affirmPin(AUTO_AUTHORIZE_PIN_ENV);
+}
+
+/** An operator handed the auto-authorize switch to the UI. */
+export function autoAuthorizeDelegated() {
+  return envFlag(AUTO_AUTHORIZE_UI_CONTROL_ENV, false);
+}
+
+/**
+ * The effective auto-authorize value, applying precedence. Off is the resting
+ * state: an unread row is not a permission. A pin outranks the UI in both
+ * directions — an operator who pinned it on cannot be overridden off, and one
+ * who pinned it off cannot be overridden on.
+ */
+export function effectiveAutoAuthorize() {
+  const pinned = autoAuthorizePinned();
+  if (pinned !== null) return pinned;
+  if (!autoAuthorizeDelegated()) return false;
+  return cache.loaded === true && cache.autoAuthorize === true;
+}
+
+/**
+ * Why the API may or may not flip auto-authorize, in words an operator can act
+ * on. The same two refusals as the on/off switch: a pin the UI cannot
+ * override, and a deployment that never delegated the switch.
+ */
+export function autoAuthorizeRefusal() {
+  if (autoAuthorizePinned() !== null) {
+    return {
+      code: "pinned_by_operator",
+      message: `An operator pinned auto-authorize with ${AUTO_AUTHORIZE_PIN_ENV}, and the UI cannot override a pin. Remove that variable and restart to hand the switch back.`
+    };
+  }
+  if (!autoAuthorizeDelegated()) {
+    return {
+      code: "not_delegated",
+      message: `This deployment has not handed the auto-authorize switch to the UI. Set ${AUTO_AUTHORIZE_UI_CONTROL_ENV}=true and restart; until then a goal is created awaiting_authorization, and nothing changes without a human decision.`
+    };
+  }
+  return null;
+}
+
 const initialCache = () => ({
   loaded: false,          // has a read ever succeeded in this process?
   enabled: false,         // the delegated value; false until loaded
   outboxMode: null,       // the delegated mode; null means "never flipped here"
+  autoAuthorize: false,   // the delegated "forgo goal authorization" value
   source: "default",      // what last wrote it: 'ui' | 'boot' | 'default'
   updatedBy: null,
   updatedAtMs: null,
@@ -277,6 +345,15 @@ export function describeSettings() {
     outboxRefusal,
     outboxModeEnv: OUTBOX_MODE_ENV,
     outboxUiControlEnv: OUTBOX_UI_CONTROL_ENV,
+    // Phase 26 — "forgo goal authorization", reported as its own set of facts
+    // again: is it on, did an operator pin it, and may the UI change it.
+    autoAuthorize: effectiveAutoAuthorize(),
+    autoAuthorizePinned: autoAuthorizePinned() !== null,
+    autoAuthorizeDelegated: autoAuthorizeDelegated(),
+    canSetAutoAuthorize: autoAuthorizeRefusal() === null,
+    autoAuthorizeRefusal: autoAuthorizeRefusal(),
+    autoAuthorizePinEnv: AUTO_AUTHORIZE_PIN_ENV,
+    autoAuthorizeUiControlEnv: AUTO_AUTHORIZE_UI_CONTROL_ENV,
     stored: Object.freeze({
       loaded: cache.loaded,
       enabled: cache.enabled,
@@ -304,6 +381,7 @@ export async function refreshSettings(db, workspaceId = null) {
       loaded: true,
       enabled: row?.enabled === true,
       outboxMode: normalizeStoredMode(row?.outbox_mode),
+      autoAuthorize: row?.auto_authorize_goals === true,
       source: row ? String(row.source || "ui") : "default",
       updatedBy: row?.updated_by || null,
       updatedAtMs: row ? Number(row.updated_ms) || null : null,
@@ -420,6 +498,58 @@ export async function setSettingsEnabled(db, { enabled, workspaceId = null, upda
     // A failed audit row does not undo a switch the operator just flipped, and
     // pretending otherwise would be worse than the gap. The flip is still
     // visible in autonomy_settings.updated_ms/updated_by.
+  }
+
+  return { ok: true, refusal: null, previous, settings: describeSettings(), atMs };
+}
+
+/**
+ * Flip the auto-authorize switch — Phase 26. The third writer on the same row,
+ * with the same two refusals and the same write-through. Off is the resting
+ * state, so the only direction that needs care is ON: it removes the goal
+ * consent click and nothing else, and it is recorded as its own audit action.
+ */
+export async function setAutoAuthorize(db, { enabled, workspaceId = null, updatedBy = "ui" } = {}) {
+  const refusal = autoAuthorizeRefusal();
+  if (refusal) {
+    return { ok: false, refusal, settings: describeSettings() };
+  }
+  const next = enabled === true;
+  const wsId = workspaceId || (await db.Workspace.ensureDefault()).id;
+  const previous = describeSettings();
+  const atMs = Date.now();
+
+  const row = await db.AutonomySettings.setAutoAuthorizeGoals({
+    workspace_id: wsId, auto_authorize: next, updated_by: updatedBy, updated_ms: atMs
+  });
+
+  cache = {
+    ...cache,
+    loaded: true,
+    autoAuthorize: row ? row.auto_authorize_goals === true : next,
+    updatedBy: row?.updated_by || updatedBy,
+    updatedAtMs: row ? Number(row.updated_ms) || atMs : atMs,
+    stale: false,
+    error: null
+  };
+
+  try {
+    await db.WorkspaceAudit.append({
+      workspaceId: wsId,
+      action: "autonomy.auto_authorize",
+      resourceId: null,
+      detail: {
+        from: previous.autoAuthorize === true,
+        to: next,
+        via: "ui",
+        updatedBy,
+        pinned: previous.autoAuthorizePinned === true,
+        delegated: previous.autoAuthorizeDelegated === true
+      },
+      tsMs: atMs
+    });
+  } catch {
+    // A failed audit row does not undo a switch the operator just flipped.
   }
 
   return { ok: true, refusal: null, previous, settings: describeSettings(), atMs };

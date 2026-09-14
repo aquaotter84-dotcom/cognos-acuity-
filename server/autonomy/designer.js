@@ -208,8 +208,9 @@ export function emptyDraft() {
  * right now, could this deployment execute this skill?" Every rung, notice
  * channel and kill switch is still honoured — webhook.post still needs its rung
  * flag and its evidence, web.search still needs the search rung, notice.emit
- * still needs a notice channel, T5 is still refused. Only the global on/off is
- * held open.
+ * still needs a notice channel, post.publish still needs the irreversible rung
+ * (and even then releases only by a per-effect human approval). Only the global
+ * on/off is held open.
  *
  * This is a DESCRIPTION device. Nothing executes a skill through it, and the
  * tick and the Action Governor keep reading the real config.
@@ -303,7 +304,7 @@ function clampSkills(proposed, probe, adjustments) {
         }
       }
       if (skill.tier === "T4" && !why.length) why.push("external writes are built but switched off here");
-      if (skill.tier === "T5") why.push("irreversible effects are not built yet");
+      if (skill.tier === "T5") why.push("irreversible effects are built but release only by a per-effect human approval, one at a time, never by class");
       dropped.push({ id, reason: "not_executable_here", tier: skill.tier, tierName: TIERS[skill.tier] || skill.tier,
         requiresRung: skill.requiresRung || null, killSwitch: skill.killSwitch,
         note: `${id} (${skill.tier}) cannot run in this deployment: ${why.join("; ") || "it is switched off"}.` });

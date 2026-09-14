@@ -1082,8 +1082,8 @@ CREATE TABLE IF NOT EXISTS autonomy_settings (
 // memory) and shipped; AUTONOMY.md §10's Phase 22 is the autonomy row —
 // outbox → live from the shadow evidence record, plus T5. This block is the
 // FIRST SLICE of that autonomy row and nothing else: it makes a live T4
-// delivery earnable and flippable. T5 is still design only, and no column here
-// could hold one.
+// delivery earnable and flippable. T5 is left to the SECOND SLICE (PHASE22C,
+// migration 0014, immediately below); no column here could hold one.
 //
 // One nullable column on the table Phase 25 already created. Null means
 // "nobody has flipped the mode from here", which resolves to the resting
@@ -1106,6 +1106,80 @@ export const PHASE22B_SCHEMA = `
 ALTER TABLE autonomy_settings ADD COLUMN IF NOT EXISTS outbox_mode TEXT;
 `;
 
+// ---------------------------------------------------------------------------
+// Phase 22 (autonomy row, second slice) — T5 irreversible effects: per-effect
+// human approval.
+//
+// T5 is the first tier an autonomous loop may touch that cannot be taken back
+// (payment, publish, delete, access grant). Its one release rule is the reason
+// this table exists: a T5 effect is released ONLY by a human approval row
+// naming that exact outbox id, recorded at decision time — never by a class
+// grant, a scope entry, a rung flag, a corpus, or anything the loop itself can
+// write (pin.irreversible_human_approval).
+//
+// The row is append-only: there is no update or delete accessor. The only
+// writer is the outbox decision route (a human click), so an approval can
+// never originate from the loop. `scope_sha256` binds the approval to the
+// scope the effect was staged under, so a decision does not outlive the
+// authorization it was made against.
+// ---------------------------------------------------------------------------
+export const PHASE22C_SCHEMA = `
+CREATE TABLE IF NOT EXISTS effect_approvals (
+  id             TEXT PRIMARY KEY,
+  workspace_id   TEXT NOT NULL,
+  outbox_id      TEXT NOT NULL,
+  goal_id        TEXT,
+  agent_id       TEXT,
+  decision       TEXT NOT NULL,
+  scope_sha256   TEXT,
+  reason         TEXT,
+  decided_by     TEXT,
+  decided_ms     BIGINT NOT NULL,
+  created_date   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS effect_approvals_outbox_idx
+  ON effect_approvals (outbox_id, decided_ms DESC);
+CREATE INDEX IF NOT EXISTS effect_approvals_ws_idx
+  ON effect_approvals (workspace_id, decided_ms DESC);
+`;
+
+// ---------------------------------------------------------------------------
+// Phase 26 — the delegated COUNCIL switches (Critic, Governor).
+//
+// One row per workspace, holding ONLY the two governance switches an operator
+// handed to the UI. The resting state is ON for both, because they are safety
+// mechanisms: an unread row reads as on (fail closed toward safety), unlike the
+// autonomy switch where an unread row reads off. The row is inert unless
+// COGNOS_COUNCIL_UI_CONTROL delegates the switches, and an environment pin
+// (COGNOS_CRITIC_ENABLED / COGNOS_GOVERNOR_ENABLED set explicitly) outranks it.
+// ---------------------------------------------------------------------------
+export const PHASE26_SCHEMA = `
+CREATE TABLE IF NOT EXISTS council_settings (
+  workspace_id      TEXT PRIMARY KEY,
+  governor_enabled  BOOLEAN NOT NULL DEFAULT TRUE,
+  critic_enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+  source            TEXT NOT NULL DEFAULT 'ui',
+  updated_by        TEXT,
+  updated_ms        BIGINT NOT NULL,
+  created_date      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+`;
+
+// ---------------------------------------------------------------------------
+// Phase 26 (second half) — "forgo goal authorization": one nullable column on
+// autonomy_settings. A null reads as off, which is the resting state. Inert
+// unless COGNOS_AUTONOMY_AUTO_AUTHORIZE_UI_CONTROL delegates the switch, and an
+// environment pin (COGNOS_AUTONOMY_AUTO_AUTHORIZE) outranks it. When on, a
+// newly created goal is authorized automatically — the scope/budget hashes are
+// still computed and stored, the allowlist and ceilings still bind, and staged
+// effects still wait for their own human approval. It forgoes the GOAL consent
+// click and nothing else.
+// ---------------------------------------------------------------------------
+export const PHASE26B_SCHEMA = `
+ALTER TABLE autonomy_settings ADD COLUMN IF NOT EXISTS auto_authorize_goals BOOLEAN;
+`;
+
 export const PHASE_SCHEMAS = [
   { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
   { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
@@ -1119,5 +1193,8 @@ export const PHASE_SCHEMAS = [
   { id: "0010", phase: 23, name: "phase23_trust_annotated_graph", sql: PHASE23_SCHEMA },
   { id: "0011", phase: 24, name: "phase24_accounts_and_workspaces", sql: PHASE24_SCHEMA },
   { id: "0012", phase: 25, name: "phase25_autonomy_settings", sql: PHASE25_SCHEMA },
-  { id: "0013", phase: 22, name: "phase22b_live_outbox_destination", sql: PHASE22B_SCHEMA }
+  { id: "0013", phase: 22, name: "phase22b_live_outbox_destination", sql: PHASE22B_SCHEMA },
+  { id: "0014", phase: 22, name: "phase22c_irreversible_effects", sql: PHASE22C_SCHEMA },
+  { id: "0015", phase: 26, name: "phase26_council_settings", sql: PHASE26_SCHEMA },
+  { id: "0016", phase: 26, name: "phase26_auto_authorize_goals", sql: PHASE26B_SCHEMA }
 ];

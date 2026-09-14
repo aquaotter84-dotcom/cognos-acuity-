@@ -27,7 +27,7 @@
 import { autonomyConfig, describeLiveDestination } from "../autonomy/config.js";
 import {
   describeSettings, ensureSettingsLoaded, refreshSettings, setSettingsEnabled,
-  listSettingFlips, AUTONOMY_PIN_ENV, AUTONOMY_UI_CONTROL_ENV
+  setAutoAuthorize, listSettingFlips, AUTONOMY_PIN_ENV, AUTONOMY_UI_CONTROL_ENV
 } from "../autonomy/settings.js";
 import { designTurn, clampDraft, emptyDraft, DESIGNER_LIMITS, firstGoalScope, clampProposedUrls } from "../autonomy/designer.js";
 import { scopeHashes, authorizationCovers, isTightening } from "../autonomy/authorize.js";
@@ -51,6 +51,43 @@ const parseJson = (value, fallback) => {
   if (typeof value === "object") return value;
   try { return JSON.parse(value); } catch { return fallback; }
 };
+
+/**
+ * Phase 26 — record consent for a goal without a human click.
+ *
+ * This is the SAME authorize step POST /api/autonomy/goals/:id/decision
+ * performs, with one deliberate difference: `decision_source` is "auto" rather
+ * than "app", so an audit can always tell an automatic authorization from a
+ * human one. Nothing else is skipped — the scope and budget hashes are computed
+ * and stored, the allowlist and ceilings still bind at every later step, and
+ * staged effects still wait for their own human approval. "Forgo goal
+ * authorization" removes the consent CLICK, never the consent RECORD.
+ */
+async function autoAuthorizeGoal(db, goal) {
+  const scope = parseJson(goal.scope, {});
+  const budget = parseJson(goal.budget, {});
+  const hashes = scopeHashes({ goalId: goal.id, scope, budget });
+  const authorization = await db.GoalAuthorization.append({
+    goal_id: goal.id,
+    scope_sha256: hashes.scopeSha256,
+    budget_sha256: hashes.budgetSha256,
+    decision: "authorize",
+    reason: "auto-authorized: forgo goal authorization is on",
+    decided_ms: Date.now(),
+    expires_at_ms: null,
+    decision_source: "auto"
+  });
+  const updated = await db.AutonomyGoal.setStatus(goal.id, {
+    status: "active", parkReason: null, startedMs: Date.now()
+  });
+  await db.AutonomyGoal.nextRunAt(goal.id, Date.now());
+  await db.GoalEvent.append({
+    goal_id: goal.id, agent_id: goal.agent_id || null,
+    event_type: "goal_authorized", from_status: goal.status, to_status: "active",
+    detail: { reason: "auto-authorized", decision_source: "auto", ...hashes }
+  });
+  return { authorization, goal: updated };
+}
 
 export function registerAutonomyRoutes(app, { wrap, db, logger }) {
   const config = () => autonomyConfig();
@@ -158,6 +195,18 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
             falseReleases: parseJson(row.metrics, {}).falseReleaseCount ?? null
           }))
       },
+      // Phase 22 (autonomy row, second slice) — T5. Built, default-off, and
+      // released only by a per-effect human approval. Reported separately from
+      // `externalWrites` because the two tiers have different release
+      // authorities: T4 is corpus-earned, T5 is approved one effect at a time.
+      irreversible: {
+        built: cfg.builtTiers.includes("T5"),
+        rungEnabled: cfg.rung.irreversible === true,
+        killSwitch: "COGNOS_AUTONOMY_IRREVERSIBLE",
+        requiresPerEffectHumanApproval: true,
+        classAuthorized: false,
+        adapters: cfg.builtTiers.includes("T5") ? ["post.publish"] : []
+      },
       skills: describeSkills(cfg),
       noticeTemplates: NOTICE_TEMPLATE_IDS,
       law: "phase19.autonomy_default_off",
@@ -222,14 +271,20 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
      * row. One request changes one switch: sending both is a 400 rather than a
      * guess about which one the caller meant, and the two have different guards
      * (enablement needs a delegation; widening to live needs to be EARNED).
+     *
+     * Phase 26 adds a third switch to the same surface — auto-authorize — with
+     * its own guard, so the same one-request-one-switch rule now counts three.
      */
+    const switchCount = [req.body?.enabled !== undefined,
+      req.body?.outboxMode !== undefined && req.body?.outboxMode !== null,
+      req.body?.autoAuthorize !== undefined].filter(Boolean).length;
+    if (switchCount > 1) {
+      return res.status(400).json({
+        error: "Send exactly one switch per request: enabled, outboxMode, or autoAuthorize. Each has its own guard.",
+        code: "one_switch_per_request"
+      });
+    }
     if (req.body?.outboxMode !== undefined && req.body?.outboxMode !== null) {
-      if (req.body?.enabled !== undefined) {
-        return res.status(400).json({
-          error: "Send either enabled or outboxMode, not both. They are two switches with two different guards.",
-          code: "one_switch_per_request"
-        });
-      }
       const cfg = config();
       const outcome = await setOutboxMode({
         db,
@@ -269,9 +324,49 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       });
     }
 
+    /**
+     * Phase 26 — THE AUTO-AUTHORIZE FLIP. "Forgo goal authorization": when on,
+     * a newly created goal is authorized automatically (its scope/budget hashes
+     * recorded with decision_source 'auto') instead of waiting in
+     * awaiting_authorization. It forgoes the GOAL consent click and nothing
+     * else — allowlists, ceilings and the per-effect Governor still bind, and
+     * staged effects still wait for their own human approval. Its guard is its
+     * own delegation; the enablement and outbox delegations do not imply it.
+     */
+    if (req.body?.autoAuthorize !== undefined) {
+      const requestedAuth = req.body.autoAuthorize;
+      if (typeof requestedAuth !== "boolean") {
+        return res.status(400).json({ error: "autoAuthorize must be true or false" });
+      }
+      const outcome = await setAutoAuthorize(db, {
+        enabled: requestedAuth,
+        updatedBy: safe(req.body?.updated_by, 60) || "ui"
+      });
+      if (!outcome.ok) {
+        return res.status(409).json({
+          error: outcome.refusal.message,
+          code: outcome.refusal.code,
+          settings: outcome.settings
+        });
+      }
+      logger.info("auto-authorize switch flipped from the UI", {
+        to: requestedAuth, from: outcome.previous?.autoAuthorize === true
+      });
+      res.json({
+        settings: outcome.settings,
+        autoAuthorize: outcome.settings.autoAuthorize,
+        changed: outcome.previous?.autoAuthorize === true !== requestedAuth,
+        atMs: outcome.atMs,
+        note: outcome.settings.autoAuthorize
+          ? "On. New goals are authorized automatically when created — the scope and budget hashes are still recorded, and every staged effect still waits for its own approval."
+          : "Off. A new goal is created awaiting_authorization and does no work until you authorize it."
+      });
+      return;
+    }
+
     const requested = req.body?.enabled;
     if (typeof requested !== "boolean") {
-      return res.status(400).json({ error: "enabled must be true or false, or send outboxMode" });
+      return res.status(400).json({ error: "enabled must be true or false, or send outboxMode or autoAuthorize" });
     }
     const outcome = await setSettingsEnabled(db, {
       enabled: requested,
@@ -559,23 +654,37 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       });
     }
 
+    // Phase 26 — forgo goal authorization. The designer's first goal goes
+    // straight to active when the switch is on; the record is the same as a
+    // human authorize except decision_source 'auto'.
+    let authorization = null;
+    if (goal && cfg.settings.autoAuthorize === true) {
+      const out = await autoAuthorizeGoal(db, goal);
+      goal = out.goal;
+      authorization = out.authorization;
+    }
+
     await db.WorkspaceAudit.append({
       workspaceId: ws.id,
       action: "autonomy.resident_designed",
       resourceId: agent.id,
       detail: {
         slug, skills: draft.skills, droppedSkills: clamped.droppedSkills.map(d => d.id),
-        firstGoal: goal?.id || null, via: "designer"
+        firstGoal: goal?.id || null, via: "designer",
+        autoAuthorized: authorization ? true : false
       }
     }).catch(() => {});
 
     res.status(201).json({
       agent, goal, hashes,
+      authorization,
       droppedSkills: clamped.droppedSkills,
       adjustments: clamped.adjustments,
-      status: goal ? "awaiting_authorization" : "created",
+      status: goal ? (authorization ? "active" : "awaiting_authorization") : "created",
       note: goal
-        ? "Created. Its first goal is waiting for your authorization — it does no work until you give it."
+        ? (authorization
+          ? "Created and auto-authorized — forgo goal authorization is on. Every staged effect still waits for its own approval."
+          : "Created. Its first goal is waiting for your authorization — it does no work until you give it.")
         : "Created."
     });
   }));
@@ -751,6 +860,17 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       event_type: "goal_created", to_status: "awaiting_authorization",
       detail: { title, ...hashes }
     });
+
+    // Phase 26 — forgo goal authorization. When delegated AND on, the goal is
+    // authorized here instead of waiting; the record is identical to a human
+    // authorize except decision_source 'auto'. The resting state is unchanged.
+    if (cfg.settings.autoAuthorize === true) {
+      const out = await autoAuthorizeGoal(db, goal);
+      return res.status(201).json({
+        goal: out.goal, hashes, authorization: out.authorization, status: "active",
+        note: "Auto-authorized: forgo goal authorization is on. The scope and budget hashes are recorded, and every staged effect still waits for its own approval."
+      });
+    }
     res.status(201).json({ goal, hashes, status: "awaiting_authorization" });
   }));
 
@@ -967,10 +1087,15 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
         killSwitch: "COGNOS_AUTONOMY_EXTERNAL_WRITES"
       });
     }
-    if (effect.tier === "T5") {
+    // T5 is the one tier where an approval is not optional: an irreversible
+    // effect has no class authorization, so the rung switch is necessary and
+    // never sufficient. Approving while the rung is off would be a button that
+    // looks like it worked; say so instead, and leave the row staged and judged.
+    if (effect.tier === "T5" && cfg.rung.irreversible !== true) {
       return res.status(409).json({
-        error: "T5 (irreversible) effects are not built. Phase 22 adds them with per-effect human approval.",
-        tier: effect.tier
+        error: "Rung 6 (irreversible acts) is off. Set COGNOS_AUTONOMY_IRREVERSIBLE=true to make an approval mean anything; the effect stays staged and judged in shadow, and even then it releases only by a per-effect human approval naming this exact row.",
+        tier: effect.tier,
+        killSwitch: "COGNOS_AUTONOMY_IRREVERSIBLE"
       });
     }
 
@@ -984,6 +1109,24 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
         error: "The goal's scope or budget changed since authorization; re-authorize it"
       });
     }
+
+    // Phase 22 (autonomy row) — per-effect human approval. Recorded BEFORE the
+    // decision because the Action Governor's T5 rule is "a human approval row
+    // names this exact outbox id". The row is append-only and the only writer
+    // is this route, so the loop can never approve itself.
+    if (effect.tier === "T5") {
+      await db.EffectApproval.append({
+        workspace_id: ws.id,
+        outbox_id: effect.id,
+        goal_id: goal.id,
+        agent_id: effect.agent_id || null,
+        decision: "approve",
+        scope_sha256: authorization?.scope_sha256 || null,
+        reason: safe(req.body?.reason, 300) || null,
+        decided_by: "operator"
+      });
+    }
+
     const out = await decideEffect({
       db, effectId: effect.id, goal, authorization, config: cfg, mode: "live"
     });

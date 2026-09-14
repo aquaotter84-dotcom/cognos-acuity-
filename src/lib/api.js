@@ -185,6 +185,23 @@ export const api = {
   setOutboxMode: (outboxMode, body = {}) =>
     req("/api/autonomy/settings", { method: "POST", body: { outboxMode, ...body } }),
 
+  // --- Phase 26: forgo goal authorization ------------------------------
+  /**
+   * Flip auto-authorize. 409 with the reason in words when pinned or not
+   * delegated. When on, newly created goals start active with their scope and
+   * budget hashes recorded under decision_source 'auto'; staged effects still
+   * wait for their own approval.
+   */
+  setAutoAuthorize: (autoAuthorize, body = {}) =>
+    req("/api/autonomy/settings", { method: "POST", body: { autoAuthorize, ...body } }),
+
+  // --- Phase 26: the delegated council switches (Critic, Governor) -------
+  /** What is on, what is pinned, whether the UI may flip, and recent flips. */
+  councilSettings: (params = {}) => req(`/api/council/settings${qs(params)}`),
+  /** Flip one seat. 409 with the reason in words when pinned or not delegated. */
+  setCouncilSwitch: (which, enabled, body = {}) =>
+    req("/api/council/settings", { method: "POST", body: { switch: which, enabled, ...body } }),
+
   // --- Phase 14: the knowledge layer (read-only) ---------------------------
   knowledgeEvents: (params = {}) => req(`/api/knowledge/events${qs(params)}`),
   knowledgeOverview: () => req("/api/knowledge/overview"),

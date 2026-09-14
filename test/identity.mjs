@@ -65,7 +65,8 @@ check("capabilities distinguish availability and include honest limits", () => {
   assert.match(COGNOS_IDENTITY.boundaries.join(" "), /A chat turn has no write tools and no write budget/i);
   assert.match(COGNOS_IDENTITY.boundaries.join(" "), /shadow-recorded until a measured corpus is stored as an evidence row/i);
   assert.match(COGNOS_IDENTITY.boundaries.join(" "), /a delivered webhook cannot be un-sent/i);
-  assert.match(COGNOS_IDENTITY.boundaries.join(" "), /Irreversible autonomous acts \(T5\) are designed and not built/i);
+  assert.match(COGNOS_IDENTITY.boundaries.join(" "), /Irreversible acts \(T5\) are built and default-off/i);
+  assert.match(COGNOS_IDENTITY.boundaries.join(" "), /per-effect human approval naming the exact outbox row/i);
   // The manifest names the subsystems it gained, or the About page renders a
   // capability list that does not describe the build.
   for (const id of ["durable_autonomy", "external_effects", "accounts"]) {
@@ -103,18 +104,27 @@ check("the runtime reports autonomy as built and OFF, never as absent or enabled
   assert.equal(a.designer.notAnAnswerPath, true);
   assert.equal(a.outboxMode, "shadow");
   assert.equal(a.builtTiers.includes("T4"), true, "T4 is built");
-  assert.deepEqual(a.unbuiltTiers, ["T5"], "and T5 is not");
+  assert.equal(a.builtTiers.includes("T5"), true, "and T5 is built (Phase 22)");
+  assert.deepEqual(a.unbuiltTiers, [], "no tier remains unbuilt");
   assert.equal(a.backgroundTasks, false, "no heartbeat without the flag");
   assert.equal(a.externalWrites.built, true);
   assert.equal(a.externalWrites.rungEnabled, false);
   assert.equal(a.externalWrites.deliversNow, false);
   assert.equal(a.externalWrites.requiresEvidenceRow, true);
   assert.deepEqual(a.externalWrites.adapters, ["webhook.post"]);
+  // T5 is its own three facts: built, rung off, and released only by a
+  // per-effect human approval, never by class.
+  assert.equal(a.irreversible.built, true);
+  assert.equal(a.irreversible.rungEnabled, false);
+  assert.equal(a.irreversible.requiresPerEffectHumanApproval, true);
+  assert.equal(a.irreversible.classAuthorized, false);
+  assert.deepEqual(a.irreversible.adapters, ["post.publish"]);
   assert.equal(a.answersFromAutonomy, false, "a goal never drafts an answer");
   assert.equal(a.writesFromChatTurn, false, "and a chat turn never writes");
-  // `unsupported` now means "not built", so the two entries that became runtime
-  // switches are gone from it and the ones that are genuinely absent remain.
-  assert.equal(runtime.unsupported.irreversibleAutonomousActs, true);
+  // `unsupported` now means "not built". T5 IS built and per-effect human
+  // approved, so it is a runtime switch rather than an absence; the genuinely
+  // absent boundaries remain.
+  assert.equal(runtime.unsupported.irreversibleAutonomousActs, false);
   assert.equal(runtime.unsupported.inboundMessaging, true);
   assert.equal(runtime.unsupported.autonomousWritesFromChatTurn, true);
   assert.equal(typeof runtime.accounts.enabled, "boolean");
@@ -219,6 +229,7 @@ check("the law layer pins truthful identity and policy refuses runtime rewrites"
   assert.ok(lawById("pin.external_write_earned"));
   assert.ok(lawById("pin.destination_granted"));
   assert.ok(lawById("pin.receipt_metadata_only"));
+  assert.ok(lawById("pin.irreversible_human_approval"));
   const result = evaluateAdaptation({
     action: "modify_identity",
     target: "rename to Cognito",

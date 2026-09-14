@@ -4,10 +4,41 @@
 // workspace instructions editor (which feeds buildContextSystemPrompt verbatim),
 // local browser voice preferences, and runtime status from /api/health.
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Menu, Check, Square, Volume2 } from 'lucide-react';
+import { Settings as SettingsIcon, Menu, Check, Square, Volume2, ShieldAlert, Scale } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
 import { useVoice } from '@/lib/voiceContext';
+
+/** One governance switch row: label, hint, a toggle, and the honest reason it
+ *  is disabled (a pin, or no delegation) rather than a switch that lies. */
+function GovernanceToggle({ label, hint, on, canToggle, refusal, busy, onFlip }) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="min-w-0">
+        <p className="font-medium text-foreground/90 flex items-center gap-1.5">
+          {label}
+          {on ? <span className="text-[10px] text-green-500">on</span> : <span className="text-[10px] text-destructive">off</span>}
+        </p>
+        <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">{hint}</p>
+        {!canToggle && refusal && (
+          <p className="text-[10px] text-muted-foreground mt-0.5">{refusal.message}</p>
+        )}
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={`${label} ${on ? 'on' : 'off'}`}
+        disabled={!canToggle || busy}
+        onClick={() => onFlip(!on)}
+        className={`relative w-11 h-6 rounded-full transition-colors shrink-0 disabled:opacity-50 ${on ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+        title={canToggle ? `${on ? 'Turn ' + label + ' off' : 'Turn ' + label + ' on'}` : (refusal?.message || `${label} is not delegated to this page`)}
+      >
+        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-background shadow transition-transform ${on ? 'translate-x-5' : ''}`} />
+      </button>
+    </div>
+  );
+}
 
 export default function Settings() {
   const { activeWorkspace, setActiveWorkspace, openSidebar } = useCognos();
@@ -17,6 +48,9 @@ export default function Settings() {
   const [health, setHealth] = useState(null);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
+  const [council, setCouncil] = useState(null);
+  const [councilBusy, setCouncilBusy] = useState(null);
+  const [councilError, setCouncilError] = useState('');
 
   useEffect(() => {
     setName(activeWorkspace?.name || '');
@@ -24,6 +58,26 @@ export default function Settings() {
   }, [activeWorkspace]);
 
   useEffect(() => { api.health().then(setHealth).catch(() => {}); }, []);
+  useEffect(() => {
+    api.councilSettings().then(setCouncil).catch(() => setCouncil(null));
+  }, []);
+
+  const flipCouncil = async (which, enabled) => {
+    if (councilBusy) return;
+    setCouncilBusy(which); setCouncilError('');
+    try {
+      const out = await api.setCouncilSwitch(which, enabled);
+      setCouncil(out.settings);
+      if (out.changed === false) {
+        setCouncilError(`${which === 'governor' ? 'The Governor' : 'The Critic'} was already ${enabled ? 'on' : 'off'}.`);
+      }
+    } catch (e) {
+      // A refusal is an answer: re-read the truth so the switch cannot sit in a
+      // position the server did not accept.
+      setCouncilError(e?.message || `Could not change ${which}`);
+      api.councilSettings().then(setCouncil).catch(() => {});
+    } finally { setCouncilBusy(null); }
+  };
 
   const save = async () => {
     try {
@@ -162,6 +216,71 @@ export default function Settings() {
                     </p>
                   </div>
                 </>
+              )}
+            </div>
+          </section>
+
+          <section className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Governance</h3>
+            <div className="rounded-xl border border-border bg-card p-3 space-y-4 text-xs">
+              <div className="flex items-start gap-2">
+                <Scale className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
+                <p className="text-muted-foreground leading-relaxed">
+                  The Critic and the Governor are the two safety seats. Both rest <strong>on</strong>.
+                  An operator can pin either in the environment, which outranks this page; with{' '}
+                  <span className="font-mono text-foreground/80">COGNOS_COUNCIL_UI_CONTROL=true</span> they are handed to this page, and every flip is recorded.
+                </p>
+              </div>
+
+              {councilError && <p className="text-destructive">{councilError}</p>}
+
+              <GovernanceToggle
+                label="Critic"
+                hint="Scores drafts for accuracy, adequacy and unsupported certainty, and requests one bounded revision."
+                on={council?.criticEnabled === true}
+                canToggle={council?.canToggleCritic === true}
+                refusal={council?.criticRefusal}
+                busy={councilBusy === 'critic'}
+                onFlip={(next) => flipCouncil('critic', next)}
+              />
+
+              <GovernanceToggle
+                label="Governor"
+                hint="The deterministic final veto: empty responses, secret leakage, minimum-cause floors and citation audits."
+                on={council?.governorEnabled === true}
+                canToggle={council?.canToggleGovernor === true}
+                refusal={council?.governorRefusal}
+                busy={councilBusy === 'governor'}
+                onFlip={(next) => flipCouncil('governor', next)}
+              />
+
+              {council?.governorEnabled === false && (
+                <p className="flex items-start gap-2 text-[11px] leading-relaxed text-yellow-600 dark:text-yellow-400 bg-yellow-500/10 rounded-lg px-3 py-2">
+                  <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <span>
+                    The Governor is off. Nothing deterministic is vetoing answers anymore — empty responses,
+                    leaked credentials and unverifiable citations can reach the user. This is the safety net,
+                    and it is off until you turn it back on.
+                  </span>
+                </p>
+              )}
+
+              {(council?.governorPinned || council?.criticPinned) && (
+                <p className="text-muted-foreground leading-relaxed">
+                  An operator pinned {[
+                    council.governorPinned ? 'the Governor' : null,
+                    council.criticPinned ? 'the Critic' : null,
+                  ].filter(Boolean).join(' and ')} in the environment, so this page cannot change it. Remove the
+                  pin and restart to hand it back.
+                </p>
+              )}
+
+              {!(council?.uiControl) && (
+                <p className="text-muted-foreground leading-relaxed">
+                  These switches are not delegated to this page. Set{' '}
+                  <span className="font-mono text-foreground/80">COGNOS_COUNCIL_UI_CONTROL=true</span> and restart
+                  to turn them on and off from here.
+                </p>
               )}
             </div>
           </section>

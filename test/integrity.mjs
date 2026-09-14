@@ -34,8 +34,9 @@ try {
     // queue, and the designer's two routes (one turn, and the explicit create).
     // The designer adds NO second answer route: it drafts rows, and the only
     // POST that composes an answer is still /api/chat.
-    assert.equal(nonStatic.length, 129);
-    if (!process.env.VERCEL) assert.equal(routes.length, 130);
+    // Phase 26 added 2: the delegated council switches (read + flip).
+    assert.equal(nonStatic.length, 131);
+    if (!process.env.VERCEL) assert.equal(routes.length, 132);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",
@@ -73,6 +74,8 @@ try {
       "get:/api/autonomy/attention",
       "post:/api/autonomy/designer",
       "post:/api/autonomy/designer/create",
+      "get:/api/council/settings",
+      "post:/api/council/settings",
       "get:/api/graph/overview",
       "get:/api/graph/nodes",
       "post:/api/graph/nodes",

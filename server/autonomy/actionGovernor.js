@@ -265,12 +265,19 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
     }
   }
 
-  // --- T4 external writes (Phase 21) ----------------------------------------
+  // --- T4 external writes (Phase 21) / T5 irreversible (Phase 22) -------------
   // A write is judged harder than a read. The destination is not the model's to
   // choose: it picks from rows granted at authorization, and a grant that names
   // no destination grants nothing. Read allowlists never widen into write
   // destinations — looking somewhere and acting there are different authorities.
-  if (effect.effect_type === "external_write") {
+  //
+  // T5 is judged through the SAME shape rules as T4 (the destination, the body
+  // and the socket are identical; only the release authority differs), then
+  // held to the additional rule below: a human approval row must name THIS
+  // exact outbox id. It does NOT inherit T4's shadow-evidence gate or the one
+  // approved live destination — those are Rung 4's earning mechanics. Rung 6's
+  // entry criterion is explicit operator sign-off plus per-effect approval.
+  if (effect.effect_type === "external_write" || effect.effect_type === "irreversible") {
     const storedSha = effect.scope_sha256 || payload.scopeSha256 || null;
     if (storedSha && authorization?.scope_sha256 && storedSha !== authorization.scope_sha256) {
       fail("EFFECT_NOT_IN_SCOPE", "pin.goal_scope_immutable",
@@ -348,12 +355,13 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
         `external deliveries are quiet between ${qh.startHour}:00 and ${qh.endHour}:00`);
     }
 
-    // The earned-not-enabled gate. A live release at this tier requires a
-    // recorded shadow corpus that satisfied the gate, and the recorded metrics
-    // must still satisfy the gate as it is configured NOW — raising
-    // minShadowSamples after the fact invalidates an old justification instead
-    // of grandfathering it.
-    if (effectiveMode === "live") {
+    // The earned-not-enabled gate. A live release at T4 requires a recorded
+    // shadow corpus that satisfied the gate, and the recorded metrics must
+    // still satisfy the gate as it is configured NOW — raising minShadowSamples
+    // after the fact invalidates an old justification instead of grandfathering
+    // it. T5 does NOT walk this gate: Rung 6's release authority is the
+    // per-effect human approval below, never a corpus (pin.irreversible_human_approval).
+    if (effect.effect_type === "external_write" && effectiveMode === "live") {
       // Phase 22 (autonomy row) — THE ONE APPROVED DESTINATION. The scope grant
       // above answers "did a human authorize THIS goal to act here?". This
       // answers a narrower question about the deployment rather than the goal:
@@ -401,11 +409,10 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
   }
 
   // --- authorization -------------------------------------------------------
-  if (tier === "T5") {
-    // Irreversible: one-by-one human approval naming THIS outbox id. Never
-    // authorizable by class.
-    fail("T5_NEEDS_HUMAN", "pin.effect_staged", "no approval row names this effect id");
-  } else if (["T1", "T2", "T3", "T4"].includes(tier)) {
+  // T5 is authorized, judged, and THEN held for a per-effect human approval.
+  // The authorization check below is shared with T1–T4 (an unexpired scope
+  // covering this class and destination); the approval check is T5's alone.
+  if (["T1", "T2", "T3", "T4", "T5"].includes(tier)) {
     if (!authorization) {
       fail("GOAL_NOT_AUTHORIZED", "pin.goal_scope_immutable",
         "no unexpired authorization row for this goal");
@@ -413,6 +420,29 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
       fail("SCOPE_EXPIRED", "pin.goal_scope_immutable");
     } else {
       passed.push("an unexpired authorization covers this goal");
+    }
+  }
+
+  if (tier === "T5") {
+    // Irreversible: one-by-one human approval naming THIS outbox id. Never
+    // authorizable by class, never by the loop — the only writer of an
+    // approval row is the outbox decision route, which is a human click.
+    const approval = typeof db?.EffectApproval?.current === "function"
+      ? await db.EffectApproval.current(effect.id).catch(() => null)
+      : null;
+    if (!approval) {
+      fail("T5_NEEDS_HUMAN", "pin.irreversible_human_approval",
+        "no human approval row names this exact effect id");
+    } else {
+      // The approval is bound to the scope it was made under: an approval must
+      // not outlive the authorization it was recorded against.
+      if (approval.scope_sha256 && authorization?.scope_sha256
+          && approval.scope_sha256 !== authorization.scope_sha256) {
+        fail("T5_NEEDS_HUMAN", "pin.irreversible_human_approval",
+          "the approval names this effect but was recorded under a different scope");
+      } else {
+        passed.push("a human approval row names this exact effect id");
+      }
     }
   }
 

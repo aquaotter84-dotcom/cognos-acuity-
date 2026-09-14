@@ -16,6 +16,10 @@
 
 import { resolveModel, getModelRequestPolicy } from "./llm.js";
 import { normalizeContextWindowConfig } from "./contextWindow.js";
+// Phase 26 — the delegated Critic/Governor switches. Read here so every
+// council turn, the identity route and the answer prompt agree on the same
+// resolved value (env pin > delegated row > ON).
+import { describeCouncilSettings } from "./council/settings.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -40,6 +44,10 @@ export function getSystemConfig() {
     maxUserTokens: process.env.COGNOS_CONTEXT_USER_TOKENS,
     overheadTokens: process.env.COGNOS_CONTEXT_OVERHEAD_TOKENS
   });
+  // Phase 26 — resolve the two council seats once, so criticEnabled,
+  // governorEnabled, the pin facts and the delegation flag cannot drift apart
+  // within a single config read.
+  const councilSeats = describeCouncilSettings();
   return Object.freeze({
     orchestrator: {
       maxHistoryMessages: contextWindow.maxHistoryMessages,
@@ -57,8 +65,16 @@ export function getSystemConfig() {
       observerModel: fast,
       strategistModel: fast,
       criticModel: fast,
-      criticEnabled: process.env.COGNOS_CRITIC_ENABLED !== "false",
-      governorEnabled: process.env.COGNOS_GOVERNOR_ENABLED !== "false",
+      // Phase 26 — the Critic and Governor kill switches became DELEGATED
+      // toggles: an environment pin outranks the UI, a delegated row is
+      // consulted only when handed over, and the resting state is ON. The
+      // resolution lives in server/council/settings.js so every consumer reads
+      // the same value.
+      criticEnabled: councilSeats.criticEnabled,
+      governorEnabled: councilSeats.governorEnabled,
+      criticPinned: councilSeats.criticPinned,
+      governorPinned: councilSeats.governorPinned,
+      uiControl: councilSeats.uiControl,
       maxRevisions: 1,
       revisionScoreThreshold: 6,
       // Clause 3 (enforcement): one Governor-stage redraft when the final text
