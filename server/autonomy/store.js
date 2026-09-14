@@ -867,6 +867,39 @@ export function createAutonomyStore(run) {
      * Upsert the delegated value. `updated_ms` comes from the caller so the row
      * lines up with the workspace_audit row written for the same flip.
      */
+    /**
+     * Upsert ONLY the delegated outbox mode — Phase 22 (autonomy row).
+     *
+     * Separate from `set` on purpose. Flipping the mode must not touch
+     * `enabled`, and flipping `enabled` must not touch the mode: one row, two
+     * switches, two writers, and an ON CONFLICT clause that updates exactly the
+     * column each one owns. A combined upsert would make every mode flip a
+     * statement about enablement too, and `source` would stop meaning anything.
+     *
+     * A first-ever insert lands `enabled = FALSE`, which is the resting state —
+     * absence of a row is OFF, never a default-on.
+     *
+     * This is a plain write. Whether the mode MAY become live is decided by
+     * liveOutbox.js before this is called, and re-decided per effect by the
+     * Action Governor after it.
+     */
+    async setOutboxMode({ workspace_id, outbox_mode, updated_by = null, updated_ms = null }) {
+      const atMs = Number(updated_ms) || Date.now();
+      const rows = await run(
+        `INSERT INTO autonomy_settings (workspace_id, enabled, outbox_mode, source, updated_by, updated_ms)
+         VALUES ($1, FALSE, $2, 'ui', $3, $4)
+         ON CONFLICT (workspace_id) DO UPDATE
+           SET outbox_mode = EXCLUDED.outbox_mode,
+               updated_by = EXCLUDED.updated_by,
+               updated_ms = EXCLUDED.updated_ms,
+               updated_date = now()
+         RETURNING *`,
+        [workspace_id, outbox_mode ? String(outbox_mode).slice(0, 20) : null,
+         updated_by ? String(updated_by).slice(0, 120) : null, atMs]
+      );
+      return rows[0] || null;
+    },
+
     async set({ workspace_id, enabled, source = "ui", updated_by = null, updated_ms = null }) {
       const atMs = Number(updated_ms) || Date.now();
       const rows = await run(

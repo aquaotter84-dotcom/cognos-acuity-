@@ -30,7 +30,7 @@
 
 import { getSkill, TIERS } from "../skills/index.js";
 import { SECRET_PATTERNS } from "../meta/policy.js";
-import { tierAllowed, budgetLineExhausted, insideQuietHours } from "./config.js";
+import { tierAllowed, budgetLineExhausted, insideQuietHours, liveDestinationCovers } from "./config.js";
 import { authorizationCovers } from "./authorize.js";
 import { urlAllowedByScope, destinationsForScope, scopeEntryFor } from "./scopeUrl.js";
 import { checkWebhookUrl, checkWebhookHeaders, resolveSecretRef } from "./webhookPost.js";
@@ -43,6 +43,7 @@ export const RULES = Object.freeze({
   TIER_NOT_ALLOWED: "that effect tier is not authorized here",
   EFFECT_NOT_IN_SCOPE: "the goal's scope does not allow this effect type",
   DESTINATION_NOT_IN_SCOPE: "the destination is not in the goal's scope",
+  DESTINATION_NOT_APPROVED: "the destination is not the one live destination this deployment approved",
   GOAL_NOT_AUTHORIZED: "the goal has no unexpired authorization",
   T5_NEEDS_HUMAN: "an irreversible effect needs a human approval naming this exact effect",
   GOAL_BUDGET_EXHAUSTED: "a per-goal budget line is exhausted",
@@ -353,6 +354,24 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
     // minShadowSamples after the fact invalidates an old justification instead
     // of grandfathering it.
     if (effectiveMode === "live") {
+      // Phase 22 (autonomy row) — THE ONE APPROVED DESTINATION. The scope grant
+      // above answers "did a human authorize THIS goal to act here?". This
+      // answers a narrower question about the deployment rather than the goal:
+      // "which single endpoint may a live delivery reach?" Both must hold, so
+      // the intersection is strictly narrower than either gate alone — the safe
+      // direction for a second gate to be wrong in.
+      //
+      // Live only. Shadow samples are the corpus that earns the rung, and
+      // refusing them here would starve the gate; the readiness report says how
+      // much of an earned corpus is aimed at the approved destination instead,
+      // and a flip to live is refused if none of it is.
+      const approved = liveDestinationCovers(config.liveDestination, href);
+      if (!approved.allowed) {
+        fail("DESTINATION_NOT_APPROVED", "pin.live_destination_approved", approved.reason);
+      } else {
+        passed.push(`the destination is the deployment's one approved live endpoint (${approved.entry})`);
+      }
+
       const rung = RUNGS.external_writes;
       const evidence = typeof db?.RungEvidence?.currentJustified === "function"
         ? await db.RungEvidence.currentJustified(goal?.workspace_id, rung.rung).catch(() => null)

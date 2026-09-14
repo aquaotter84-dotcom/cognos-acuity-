@@ -1074,6 +1074,38 @@ CREATE TABLE IF NOT EXISTS autonomy_settings (
 );
 `;
 
+// ---------------------------------------------------------------------------
+// Phase 22 (autonomy row) — the delegated OUTBOX MODE.
+//
+// NOTE ON THE NAME. The repository has two Phase 22s and this is the second
+// one: migration 0009 is README's Phase 22 (bounded context + structured
+// memory) and shipped; AUTONOMY.md §10's Phase 22 is the autonomy row —
+// outbox → live from the shadow evidence record, plus T5. This block is the
+// FIRST SLICE of that autonomy row and nothing else: it makes a live T4
+// delivery earnable and flippable. T5 is still design only, and no column here
+// could hold one.
+//
+// One nullable column on the table Phase 25 already created. Null means
+// "nobody has flipped the mode from here", which resolves to the resting
+// state (shadow) unless an operator pinned the mode in the environment.
+// Absence is OFF, exactly as it is for `enabled`.
+//
+// The value is bounded by the writer in server/autonomy/liveOutbox.js: it may
+// only ever be one of shadow | dry_run | live, and widening it to live is
+// refused unless a recorded evidence row currently satisfies the gate AND the
+// deployment named exactly one approved destination. A row cannot widen a
+// rung, a ceiling, a skill or a budget — same bound Phase 25 states for
+// `enabled`, and for the same reason: this is the one exception to "no
+// database row decides policy", so it is kept narrow enough to review.
+//
+// Flips are recorded in workspace_audit as action 'autonomy.outbox_mode' with
+// both values, the gate digest that justified the widening, and the approved
+// destination's SHA-256 (never the URL) in `detail`.
+// ---------------------------------------------------------------------------
+export const PHASE22B_SCHEMA = `
+ALTER TABLE autonomy_settings ADD COLUMN IF NOT EXISTS outbox_mode TEXT;
+`;
+
 export const PHASE_SCHEMAS = [
   { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
   { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
@@ -1086,5 +1118,6 @@ export const PHASE_SCHEMAS = [
   { id: "0009", phase: 22, name: "phase22_context_and_structured_memory", sql: PHASE22_SCHEMA },
   { id: "0010", phase: 23, name: "phase23_trust_annotated_graph", sql: PHASE23_SCHEMA },
   { id: "0011", phase: 24, name: "phase24_accounts_and_workspaces", sql: PHASE24_SCHEMA },
-  { id: "0012", phase: 25, name: "phase25_autonomy_settings", sql: PHASE25_SCHEMA }
+  { id: "0012", phase: 25, name: "phase25_autonomy_settings", sql: PHASE25_SCHEMA },
+  { id: "0013", phase: 22, name: "phase22b_live_outbox_destination", sql: PHASE22B_SCHEMA }
 ];

@@ -342,6 +342,42 @@ export const OPERATIONAL_LAWS = Object.freeze([
     runtime_modifiable: false
   }),
 
+  // --- Phase 22 (autonomy row) — earning a live external write --------------
+  // Phase 21 built Rung 4 and made a live release depend on a recorded shadow
+  // corpus. This pin adds the second half of "earned, not enabled": the corpus
+  // has to be about the endpoint the deployment actually sends to, and going
+  // live has to be a recorded decision rather than a restart.
+  Object.freeze({
+    id: "pin.live_destination_approved",
+    layer: "operational",
+    name: "A live external write goes only where the deployment named",
+    statement: "A live T4 delivery requires the destination the deployment approved in its environment — exactly one endpoint — IN ADDITION TO the destination granted in the goal's own scope. Both gates must hold, so their intersection is narrower than either alone. The approved destination is configuration an operator sets; no request, goal, model output or adaptation may add to it, widen it, or infer it from a read allowlist. An unset or malformed approval fails closed: nothing is delivered anywhere. Shadow judging is unaffected, because the shadow corpus is what earns the rung and refusing its samples would starve the gate.",
+    forbids: [
+      "a live delivery to a destination the deployment did not name",
+      "widening the approved destination from a request",
+      "treating a goal's scope grant as sufficient for a live delivery",
+      "inferring the approved destination from a read allowlist",
+      "failing open when the approval is unset or malformed"
+    ],
+    source: "Phase 22 (autonomy row); server/autonomy/config.js + server/autonomy/liveOutbox.js",
+    runtime_modifiable: false
+  }),
+  Object.freeze({
+    id: "pin.live_mode_earned",
+    layer: "operational",
+    name: "Going live is a recorded decision, never a default",
+    statement: "The outbox mode rests at shadow, and absence of a stored mode is shadow. Widening it to live is refused unless a recorded evidence row for the rung currently satisfies the shadow gate as the gate is configured now, the rung's own kill switch is on, autonomy is running, exactly one destination is approved, and the earned corpus was aimed at that destination. Narrowing to shadow or dry_run is refused by nothing: a brake an operator has to earn is not a brake. An operator's environment value may hold the mode down and may never be widened from a request, though it may always be narrowed. Every flip is recorded as an append-only transition carrying the digest of the evidence that justified it.",
+    forbids: [
+      "a live outbox mode nobody earned",
+      "grandfathering an evidence row when the gate is raised",
+      "refusing or conditioning a narrowing",
+      "widening past an operator's environment pin",
+      "a flip that leaves no audit row"
+    ],
+    source: "Phase 22 (autonomy row); server/autonomy/liveOutbox.js + server/autonomy/settings.js",
+    runtime_modifiable: false
+  }),
+
   Object.freeze({
     id: "phase15.observe_only",
     layer: "phase_scope",
@@ -375,7 +411,7 @@ export const LAWS = Object.freeze([...CHARTER_LAWS, ...OPERATIONAL_LAWS]);
 
 /** Bumped when a law is added or reworded in code. Recorded on improvement rows
  *  so a reviewer can tell which version of the law layer judged a proposal. */
-export const LAW_LAYER_VERSION = "1.6.0";
+export const LAW_LAYER_VERSION = "1.7.0";
 
 const BY_ID = Object.freeze(LAWS.reduce((acc, law) => ({ ...acc, [law.id]: law }), {}));
 

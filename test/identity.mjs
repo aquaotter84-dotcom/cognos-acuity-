@@ -203,7 +203,16 @@ check("runtime feature switches are reflected in the compact prompt", () => {
 });
 
 check("the law layer pins truthful identity and policy refuses runtime rewrites", () => {
-  assert.equal(LAW_LAYER_VERSION, "1.6.0"); // Phase 21 added the external-write pins
+  // A floor, not an exact number: Phase 21 shipped the law layer at 1.6.0 and
+  // every phase after it adds pins. Asserting equality here would make each
+  // later phase edit an earlier phase's test to say something false about
+  // itself. Phase 22 (autonomy row) added pin.live_destination_approved and
+  // pin.live_mode_earned and bumped the layer to 1.7.0.
+  {
+    const [maj, min] = LAW_LAYER_VERSION.split(".").map(Number);
+    assert.ok(maj > 1 || (maj === 1 && min >= 6),
+      `the law layer is at least Phase 21's 1.6.0; it is ${LAW_LAYER_VERSION}`);
+  }
   assert.ok(lawById("pin.truthful_self_model"));
   assert.ok(lawById("pin.promotion_inferred"));
   assert.ok(lawById("pin.cite_loaded_notes"));

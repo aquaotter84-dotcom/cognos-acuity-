@@ -206,8 +206,8 @@ consequence:
 | T1 | internal write — reversible as a transition | `source.snapshot`, `note.promote.request`, `subagent.spawn` | built (`subagent.spawn` rung-gated) |
 | T2 | notify — templated, deterministic content only | `notice.emit` | built |
 | T3 | external read | `web.fetch`, `web.search` | built (`web.fetch` by the goal's URL allowlist, `web.search` additionally rung-gated) |
-| T4 | **external write** | `webhook.post` | **built in Phase 21, off** |
-| T5 | irreversible — payment, publish, delete | — | designed, not built (Phase 22) |
+| T4 | **external write** | `webhook.post` | **built in Phase 21, off.** Live delivery is now earnable and flippable without a restart (Phase 22, autonomy row) — gated on a recorded corpus aimed at one approved destination |
+| T5 | irreversible — payment, publish, delete | — | designed, not built (Phase 22, autonomy row — **not** the bounded-context Phase 22 above) |
 
 Rung 4 is what Phase 21 added, and it is the sharpest edge in the system: the
 first time COGNOS can act on something rather than look at it. One adapter, POST
@@ -231,6 +231,54 @@ live release additionally refuses with `EVIDENCE_GATE_UNMET` until
 `COGNOS_AUTONOMY_MIN_SHADOW_SAMPLES` same-tier samples with **zero** false
 releases, at least one release and at least one refusal in it. Raising the floor
 afterwards invalidates an old justification instead of grandfathering it.
+
+Two of those surfaces report a fourth fact alongside `deliversNow`, because
+collapsing them was a way of saying "delivers nothing" while a byte could still
+leave: **`deliversOnApproval`**. An operator's Approve on a staged row judges
+that effect in live mode whatever the loop's mode is, so `deliversNow: false`
+is a claim about the loop and not a claim about the deployment.
+
+### Earning the flip (Phase 22, autonomy row — first slice)
+
+Going live used to be an environment variable and a restart: a switch that said
+nothing at the moment you threw it, whose consequences arrived later as
+per-effect refusals. It is now a **recorded, guarded decision**.
+`POST /api/autonomy/settings` with `{ outboxMode }` widens or narrows the mode
+and stores it in `autonomy_settings.outbox_mode`, audited as
+`autonomy.outbox_mode` with both values and the digest of the evidence that
+justified the widening.
+
+Widening to `live` is refused with `409 live_not_earned` unless **all eight**
+conditions hold, and the refusal carries the whole readiness report rather than
+a bare no — `GET /api/autonomy/rungs` returns the same report as `live` before
+anyone tries:
+
+| Condition | What it asks |
+|---|---|
+| `delegated` | `COGNOS_AUTONOMY_OUTBOX_UI_CONTROL=true` |
+| `not_pinned_down` | no `COGNOS_AUTONOMY_OUTBOX_MODE` value holds the mode below live |
+| `autonomy_on` | the loop is running, so there is something to release |
+| `rung_flag` | `COGNOS_AUTONOMY_EXTERNAL_WRITES=true` |
+| `destination_approved` | exactly one live destination is named and well-formed |
+| `evidence_recorded` | a `justified` evidence row exists for the rung |
+| `evidence_current` | the corpus *still* satisfies the gate as configured now |
+| `corpus_aimed` | the earned corpus was aimed at that destination |
+
+The last one is the reason the destination is named **before** the corpus is
+earned: a gate satisfied by deliveries to another endpoint is evidence about
+that endpoint. **Narrowing is refused by nothing** beyond delegation and a pin —
+a brake an operator has to earn is not a brake — and a request for the mode
+already in effect writes no row and records no transition.
+
+The approved destination is also enforced per effect: a live T4 release to a
+destination the goal *was* granted but the deployment did *not* name refuses
+with `DESTINATION_NOT_APPROVED` (`pin.live_destination_approved`). Both gates
+must hold, so their intersection is narrower than either alone. Shadow judging
+is untouched, because the shadow corpus is what earns the rung.
+
+This slice adds no rung, no skill, no ceiling and no budget. **T5 is still
+design only**: `tierAllowed` refuses it outright, the outbox route refuses to
+approve one, and any T5 release in a corpus is a false release by definition.
 
 ## Turning it on from the UI, and designing a resident (Phase 25)
 
@@ -367,10 +415,12 @@ npm run dev
 | `COGNOS_AGENT_ENABLED` | no | Default `true`; disables non-off agent modes when false. Agent writes remain unavailable regardless. |
 | `COGNOS_AUTONOMY_ENABLED` | no | **Unset = the loop is frozen.** No goal wakes, no notice is written, no tick row is recorded. Set `true` to **pin** it on; the UI cannot override a pin. |
 | `COGNOS_AUTONOMY_UI_CONTROL` | no | **Delegation, not enablement.** Set `true` to hand the on/off switch to the Autonomy page. The system stays off until someone flips it. |
-| `COGNOS_AUTONOMY_OUTBOX_MODE` | no | `shadow` (default) records verdicts and performs nothing; `dry_run` also records the exact request it declined to send; `live` performs. |
+| `COGNOS_AUTONOMY_OUTBOX_MODE` | no | `shadow` (default) records verdicts and performs nothing; `dry_run` also records the exact request it declined to send; `live` performs. **A pin over the delegated row**: set, it holds the mode down and the API cannot widen past it, though it can always narrow. Unset, the mode rests at `shadow` and a delegated flip may widen it. |
+| `COGNOS_AUTONOMY_OUTBOX_UI_CONTROL` | no | **Delegation, not permission.** Set `true` to hand the *outbox mode* switch to `POST /api/autonomy/settings` and the Autonomy page. Separate from `COGNOS_AUTONOMY_UI_CONTROL`: that one delegates whether the loop **runs**, this one whether it may **act on the world**. Widening to `live` is still refused until it is earned. |
+| `COGNOS_AUTONOMY_LIVE_DESTINATION` | no | **The one approved destination.** A live T4 delivery must target this endpoint *in addition to* the destination granted in the goal's own scope. One https URL on 443, no credentials, no literal IP, no local host. Unset, empty or malformed **fails closed**: no live delivery goes anywhere and a flip to `live` is refused. Shadow judging is unaffected. |
 | `COGNOS_AUTONOMY_NOTICE_MODE` | no | `none` / `internal` / `webhook`. Unset + autonomy on → `internal`; unset + frozen → `none`. Explicit values always win. Webhook needs `COGNOS_AUTONOMY_NOTICE_WEBHOOK`. Notices are templates with declared fields. |
 | `COGNOS_AUTONOMY_RESIDENTS` | no | Rung 3: sub-agents, promotion, and `web.search`. Default off. |
-| `COGNOS_AUTONOMY_EXTERNAL_WRITES` | no | **Rung 4.** Default off. On its own it still delivers nothing: the outbox mode and a recorded evidence row also apply. |
+| `COGNOS_AUTONOMY_EXTERNAL_WRITES` | no | **Rung 4.** Default off. On its own it still delivers nothing: the outbox mode, a recorded evidence row, and one approved destination also apply. |
 | `COGNOS_AUTONOMY_MIN_SHADOW_SAMPLES` | no | Same-tier samples a corpus needs before a rung can be recorded as justified. Default 25; zero false releases is not configurable. |
 | `COGNOS_AUTONOMY_QUIET_HOURS` | no | `22-7` refuses external deliveries inside the window (a wrapping window is a window). Notices are exempt; unset or malformed is never active. |
 | `COGNOS_WEBHOOK_MAX_BODY_BYTES` | no | Webhook body cap in **bytes**, clamped to ≤ 32768; default 32768. |
@@ -501,6 +551,9 @@ test/                   harness only — not part of the app
   phase20.mjs           Phase 20: sub-agents, promotion, T3 reads, locators (22)
   phase21.mjs           Phase 21: webhook gates, SSRF, receipts, the evidence
                         gate — with a loopback sink receiving real bytes (35)
+  outbox-live.mjs       Phase 22 (autonomy row): the earned flip to live for T4
+                        only — mode precedence, the one approved destination,
+                        the eight readiness conditions, digested audit (18)
   phase23.mjs           Phase 23: atlas seals, merkle snapshots, curation,
                         turn consult/project, citation audit, veto (24)
   identity.mjs          the immutable self-model, its prompt, and its API
@@ -624,6 +677,7 @@ npm run integrity      # governed stream, cancellation, structured API errors
 npm run autonomy       # Phase 19: the loop, the barrier, the outbox (42 checks)
 npm run phase20        # Phase 20: sub-agents, promotion, T3 reads (22 checks)
 npm run phase21        # Phase 21: webhook gates, SSRF, receipts, evidence (35)
+npm run outbox-live    # Phase 22 (autonomy row): earning and flipping live T4 (18)
 npm run phase23        # Phase 23: atlas seals, curation, turn wiring, veto (24)
 npm run smoke          # 170 assertions across the Phase 14/15 success criteria
 npm run demo           # print the artifacts: ledger rows, telemetry, replay, veto

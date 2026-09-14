@@ -192,6 +192,7 @@ function checkAction(proposal) {
 
     case "enable_outbound_channel":
       violations.push(violation("pin.destination_granted", "an outbound channel is opened by an operator in the environment and granted destination by destination inside a goal's authorized scope. A runtime adaptation may not open one, widen one, or name a destination"));
+      violations.push(violation("pin.live_destination_approved", "a LIVE external write additionally needs the one destination the deployment named in its environment, and both gates must hold. No adaptation may name, add to or widen that approval"));
       if (!params.killSwitch) {
         violations.push(violation("phase15.complexity_justification", "an outbound channel needs a kill switch naming the flag that closes it"));
       }
@@ -202,6 +203,7 @@ function checkAction(proposal) {
       const target = String(params.rung ?? proposal.target ?? "");
       if (/^(4|5|6|external|irreversible|inbound)/i.test(target)) {
         violations.push(violation("pin.external_write_earned", `rung '${target}' touches the world: it needs a shadow corpus with zero false releases recorded as an evidence row before any live delivery`));
+        violations.push(violation("pin.live_mode_earned", `widening the outbox to live for '${target}' is an operator decision recorded as an audit transition, refused unless the evidence row still satisfies the gate as configured now and the corpus was aimed at the approved destination`));
       }
       break;
     }
