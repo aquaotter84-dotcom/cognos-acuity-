@@ -232,6 +232,11 @@ export const GLOSSARY = [
     body: 'Your consent, recorded against a hash of the scope and budget. Widening either is a new decision, never an edit — so "what did I approve?" stays answerable.',
   },
   {
+    term: 'Destination grant',
+    technical: 'scope.effectsAllowed[{ effect: "webhook.post", destinations: [...] }]',
+    body: 'The exact endpoints a goal may send a webhook to, named when you create the goal and locked into its hash. It can never be widened afterwards, and the evidence corpus fills only from attempts aimed somewhere granted — the grant is the key the corpus is earned with.',
+  },
+  {
     term: 'Skills',
     technical: 'the code-owned skill registry',
     body: 'The only things a resident can do. They live in code, not in a table: no brief, no draft and no database row can add one. A resident may use only the skills on its allowlist that this deployment can actually run.',

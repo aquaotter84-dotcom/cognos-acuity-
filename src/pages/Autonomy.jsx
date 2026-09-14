@@ -628,12 +628,66 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
 }
 
 // -------------------------------------------------------------------- goals
+/** The webhook destinations a scope grants, in plain words for the barrier. */
+function destinationsInScope(scope) {
+  const out = [];
+  for (const entry of Array.isArray(scope?.effectsAllowed) ? scope.effectsAllowed : []) {
+    if (entry && typeof entry === 'object' && !Array.isArray(entry) && Array.isArray(entry.destinations)) {
+      out.push(...entry.destinations.filter(d => typeof d === 'string' && d.trim()));
+    }
+  }
+  return out;
+}
+
+/** Small multi-value editor for destinations a grant will carry. */
+function DestinationEditor({ destinations, input, onInput, onAdd, onRemove, hint }) {
+  const add = () => {
+    const url = input.trim().replace(/[),.;]+$/g, '');
+    if (!url || destinations.includes(url)) { onInput(''); return; }
+    onAdd(url); onInput('');
+  };
+  return (
+    <div className="rounded-lg border border-border/70 px-2.5 py-2 space-y-1.5">
+      <p className="text-[10px] text-muted-foreground leading-relaxed">
+        <strong className="text-foreground">Webhook destinations (optional).</strong>{' '}
+        https endpoints this first goal may POST a webhook to — part of the scope you authorize, locked in by its hash.
+        Granting looks like nothing until the goal uses it: a write aimed anywhere else is refused, and only attempts
+        aimed at a granted destination fill the evidence corpus. {hint}
+      </p>
+      {destinations.map(url => (
+        <div key={url} className="flex items-center gap-2 text-[11px]">
+          <Send className="w-3 h-3 text-muted-foreground shrink-0" />
+          <span className="font-mono break-all flex-1">{url}</span>
+          <button type="button" onClick={() => onRemove(url)} className="p-0.5 rounded text-muted-foreground hover:text-destructive" title="Remove">
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      ))}
+      <div className="flex items-center gap-1.5">
+        <input
+          value={input}
+          onChange={e => onInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
+          placeholder="https://hooks.example.com/cognos"
+          className="flex-1 bg-background border border-border rounded-lg px-2.5 py-1.5 text-xs font-mono outline-none focus:border-primary/60"
+        />
+        <button type="button" onClick={add} disabled={!input.trim()}
+          className="shrink-0 rounded-lg border border-border px-2 py-1.5 text-[11px] hover:bg-muted/50 disabled:opacity-40">
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Goals({ status, frozen, residents, onError, onChanged }) {
   const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [filter, setFilter] = useState('');
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ title: '', objective: '', agent_id: '' });
+  const [destinations, setDestinations] = useState([]);
+  const [destInput, setDestInput] = useState('');
   const [expanded, setExpanded] = useState(null);
   const [detail, setDetail] = useState({});
   const [reason, setReason] = useState('');
@@ -693,12 +747,21 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
     if (busy || !form.title.trim() || !form.objective.trim()) return;
     setBusy(true); setError('');
     try {
-      await api.createGoal({
+      // The destination grant is the key the goal earns the shadow corpus
+      // with: { effect: "webhook.post", destinations: [...] } in the scope the
+      // operator authorizes. With no destinations named, send no scope at all
+      // and the route's notify-only default stands, exactly as before.
+      const body = {
         title: form.title.trim(),
         objective: form.objective.trim(),
         agent_id: form.agent_id || undefined,
-      });
+      };
+      if (destinations.length) {
+        body.scope = { effectsAllowed: ['notify', { effect: 'webhook.post', destinations: [...destinations] }] };
+      }
+      await api.createGoal(body);
       setForm({ title: '', objective: '', agent_id: '' });
+      setDestinations([]); setDestInput('');
       setCreating(false);
       await refresh();
     } catch (err) {
@@ -761,6 +824,16 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
               <option value="">No resident (unowned)</option>
               {residents.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
+            <DestinationEditor
+              destinations={destinations}
+              input={destInput}
+              onInput={setDestInput}
+              onAdd={url => setDestinations(prev => [...prev, url])}
+              onRemove={url => setDestinations(prev => prev.filter(u => u !== url))}
+              hint={status?.liveDestination?.configured
+                ? `This deployment's approved live destination is ${status.liveDestination.hostname} — a live delivery can only ever go there.`
+                : 'No approved live destination is set here, so evidence can be earned but the live flip cannot.'}
+            />
             <p className="text-[10px] text-muted-foreground">
               The goal is created <strong>waiting for you</strong> (<span className="font-mono">awaiting_authorization</span>).
               Nothing runs until you authorize it.
@@ -827,6 +900,13 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                             <div className="grid sm:grid-cols-2 gap-2 mt-2 text-[10px]">
                               <div className="rounded bg-background/60 border border-border p-2">
                                 <p className="text-muted-foreground mb-1">Scope</p>
+                                {destinationsInScope(d.goal.scope).length > 0 && (
+                                  <p className="mb-1 text-foreground/80 leading-relaxed">
+                                    May POST a webhook to:{' '}
+                                    <span className="font-mono break-all">{destinationsInScope(d.goal.scope).join('; ')}</span>
+                                    {' '}— granted here, never widen-able afterwards.
+                                  </p>
+                                )}
                                 <pre className="font-mono whitespace-pre-wrap break-all">{JSON.stringify(d.goal.scope, null, 1)}</pre>
                               </div>
                               <div className="rounded bg-background/60 border border-border p-2">

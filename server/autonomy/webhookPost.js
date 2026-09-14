@@ -113,6 +113,18 @@ const LOCAL_HOSTNAMES = Object.freeze(["localhost"]);
 const LOCAL_SUFFIXES = Object.freeze([".localhost", ".local", ".internal", ".invalid", ".lan", ".home"]);
 
 /**
+ * Is this hostname local or reserved by name (never mind DNS)? Exported so the
+ * GRANT path — validating a destination an operator is about to write into a
+ * scope — can apply the adapter's own boundary instead of growing a second
+ * copy of the rule that could drift away from it.
+ */
+export function isLocalOrReservedHost(hostname) {
+  const host = String(hostname || "").toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (!host) return false;
+  return LOCAL_HOSTNAMES.includes(host) || LOCAL_SUFFIXES.some(s => host.endsWith(s));
+}
+
+/**
  * The structural gate: https, standard port, no credentials, no literal IP, no
  * local hostname. Runs before DNS and again for every redirect target, because
  * a public URL that 302s to `http://169.254.169.254/` is the whole attack.
@@ -135,7 +147,7 @@ export function checkWebhookUrl(href) {
   const hostname = String(parsed.hostname || "").toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
   if (!hostname) return fail("the webhook URL has no hostname");
   if (net.isIP(hostname)) return fail("the webhook URL names a literal IP address");
-  if (LOCAL_HOSTNAMES.includes(hostname) || LOCAL_SUFFIXES.some(s => hostname.endsWith(s))) {
+  if (isLocalOrReservedHost(hostname)) {
     return fail(`the webhook URL names a local or reserved hostname (${hostname})`);
   }
   const port = parsed.port || "443";

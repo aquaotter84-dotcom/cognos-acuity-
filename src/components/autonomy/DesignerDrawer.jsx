@@ -58,6 +58,8 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
   const [status, setStatus] = useState(statusProp);
   const [withGoal, setWithGoal] = useState(true);
   const [grantUrls, setGrantUrls] = useState([]);
+  const [grantDestinations, setGrantDestinations] = useState([]);
+  const [destInput, setDestInput] = useState('');
   const [showDraft, setShowDraft] = useState(true);
   const [created, setCreated] = useState(null);
   const scrollRef = useRef(null);
@@ -85,6 +87,8 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
     setInput(''); setError(''); setNotice(''); setCreated(null);
     setWithGoal(true);
     setGrantUrls([]);
+    setGrantDestinations([]);
+    setDestInput('');
   }, [open]);
 
   useEffect(() => {
@@ -157,10 +161,15 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
     if (creating || !draft.complete) return;
     setCreating(true); setError(''); setNotice('');
     try {
+      // The read grants ticked above, plus the operator's OWN write grant: the
+      // webhook destinations the first goal may POST to. Both are validated
+      // server-side and refused with sentences if malformed — the draft comes
+      // back untouched, so a bad click costs nothing.
       const out = await api.createDesignedResident({
         draft,
         create_first_goal: withGoal && Boolean(draft.firstGoal),
         grant_urls: grantUrls,
+        ...(grantDestinations.length ? { grant_destinations: grantDestinations } : {}),
       });
       setCreated(out);
       setDropped(out.droppedSkills || []);
@@ -172,7 +181,7 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
     } finally {
       setCreating(false);
     }
-  }, [creating, draft, withGoal, grantUrls, onCreated]);
+  }, [creating, draft, withGoal, grantUrls, grantDestinations, onCreated]);
 
   /** Turn autonomy on from inside the drawer, when this deployment allows it. */
   const enableFromDrawer = useCallback(async () => {
@@ -342,6 +351,68 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
                           );
                         })}
                       </div>
+                    </div>
+                  )}
+
+                  {draft.skills.includes('webhook.post') && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                        Webhook destinations it may POST to — type to grant at create
+                      </p>
+                      <p className="text-[10px] text-muted-foreground mb-1.5 leading-snug">
+                        The first goal carries these in its authorized scope, locked in by its hash — they cannot be widened
+                        afterwards. Only attempts aimed at a granted destination fill the evidence corpus
+                        {status?.liveDestination?.configured
+                          ? `, and a live flip wants them aimed at this deployment's approved destination (${status.liveDestination.hostname})`
+                          : '; this deployment has no approved live destination set, so evidence can be earned but the live flip cannot'}.
+                      </p>
+                      <div className="space-y-1">
+                        {grantDestinations.map(url => (
+                          <div key={url} className="flex items-center gap-2 text-[11px]">
+                            <Send className="w-3 h-3 text-muted-foreground shrink-0" />
+                            <span className="font-mono break-all flex-1">{url}</span>
+                            <button
+                              onClick={() => setGrantDestinations(prev => prev.filter(u => u !== url))}
+                              className="p-0.5 rounded text-muted-foreground hover:text-destructive"
+                              title="Remove this destination"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            value={destInput}
+                            onChange={e => setDestInput(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key !== 'Enter') return;
+                              e.preventDefault();
+                              const url = destInput.trim().replace(/[),.;]+$/g, '');
+                              if (url && !grantDestinations.includes(url)) setGrantDestinations(prev => [...prev, url]);
+                              setDestInput('');
+                            }}
+                            placeholder="https://hooks.example.com/cognos"
+                            className="flex-1 bg-background border border-border rounded-lg px-2 py-1.5 text-[11px] font-mono outline-none focus:border-primary/60"
+                          />
+                          <button
+                            onClick={() => {
+                              const url = destInput.trim().replace(/[),.;]+$/g, '');
+                              if (url && !grantDestinations.includes(url)) setGrantDestinations(prev => [...prev, url]);
+                              setDestInput('');
+                            }}
+                            disabled={!destInput.trim()}
+                            className="shrink-0 rounded-lg border border-border px-2 py-1.5 text-[11px] hover:bg-muted/50 disabled:opacity-40"
+                          >
+                            Add
+                          </button>
+                        </div>
+                      </div>
+                      {grantDestinations.length > 0 && !withGoal && (
+                        <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1 leading-snug flex items-start gap-1">
+                          <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                          The destinations grant lands on the first goal — tick “and its first goal” below, or create will refuse.
+                        </p>
+                      )}
                     </div>
                   )}
 

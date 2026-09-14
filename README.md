@@ -410,6 +410,38 @@ for its own human approval. *Forgo authorization* removes the goal-consent
 click and nothing else: research-plan step consent, promotion confirms and
 outbox effect approvals are untouched.
 
+## Granting a webhook destination — the key the corpus is earned with (Phase 27)
+
+Rung 4's entry criteria require a shadow corpus aimed at a destination the
+goal's authorized scope actually grants (`corpus_aimed`). The lock shipped
+complete — destination judgments, the aimed-corpus gate, the scope-hash binding
+— but no operator surface could **make** the grant: the goal form sent no
+scope at all, and the designer's first goal granted `notify` plus optional
+paged reads. The corpus could never be clicked in, and the flip to live could
+never be earned from the UI.
+
+Phase 27 wires the grant into both places a goal is born:
+
+- **The goal form** (Autonomy → Goals) has an optional *Webhook destinations*
+  editor. The destinations land in the goal's scope as
+  `{ effect: "webhook.post", destinations: [...] }`, rendered in plain words
+  above the scope you authorize and locked in by its hash.
+- **The designer drawer** shows the same editor whenever the draft's clamped
+  allowlist includes `webhook.post`, and its create call accepts
+  `grant_destinations` next to the existing `grant_urls`. The write grant lands
+  only when the skill survived the clamp — looking somewhere and acting there
+  stay different authorities.
+
+A grant is **refused, never clamped**, when it is malformed: both create routes
+answer 400 with every bad entry named, and nothing is created. Scope is
+immutable after creation, so an unusable destination would silently weld in a
+goal that looks keyed and never is — a corpus empty behind a lock whose key the
+operator believes exists. Valid entries are normalized (fragment-free hrefs) so
+the stored grant is exactly what the destination matcher compares attempts
+against. `test/phase27.mjs` proves the wire end to end: a granted goal stages a
+T4 attempt that the readiness report counts as corpus aimed at the approved
+destination — and the same attempt with no grant is still refused by name.
+
 ## Model-gateway resilience
 
 A model call has one cancellation-aware deadline across all physical attempts.
