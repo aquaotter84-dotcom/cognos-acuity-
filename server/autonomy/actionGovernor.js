@@ -34,7 +34,7 @@ import { tierAllowed, budgetLineExhausted, insideQuietHours, liveDestinationCove
 import { authorizationCovers } from "./authorize.js";
 import { urlAllowedByScope, destinationsForScope, scopeEntryFor } from "./scopeUrl.js";
 import { checkWebhookUrl, checkWebhookHeaders, resolveSecretRef } from "./webhookPost.js";
-import { RUNGS } from "./evidenceGate.js";
+import { RUNGS, rungEvidenceStatus } from "./evidenceGate.js";
 
 /** Every rule, so a refusal names what fired instead of just "no". */
 export const RULES = Object.freeze({
@@ -380,10 +380,34 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
         passed.push(`the destination is the deployment's one approved live endpoint (${approved.entry})`);
       }
 
-      // External writes are not gated by an earned shadow corpus. The operator
-      // explicitly enabled the external-write rung, the deployment destination
-      // is allowlisted above, and this effect still requires its own goal scope.
-      passed.push("external delivery does not require earned evidence");
+      const bypassEarning = Boolean(process.env.COGNOS_AUTONOMY_BYPASS_EARNING === "true" || process.env.COGNOS_AUTONOMY_BYPASS_EVIDENCE === "true");
+      if (!bypassEarning) {
+        const evidence = typeof db?.RungEvidence?.currentJustified === "function"
+          ? await db.RungEvidence.currentJustified(goal?.workspace_id, RUNGS.external_writes.rung).catch(() => null)
+          : null;
+        if (!evidence) {
+          fail("EVIDENCE_GATE_UNMET", "pin.live_mode_earned",
+            "no recorded shadow corpus justifies a live release at this tier");
+        } else {
+          const gate = config?.shadow || { minShadowSamples: 25, maxAcceptableFalseReleases: 0 };
+          const minSamples = Number(gate.minShadowSamples ?? 25);
+          const maxFalse = Number(gate.maxAcceptableFalseReleases ?? 0);
+          let metrics = {};
+          if (typeof evidence.metrics === "string") {
+            try { metrics = JSON.parse(evidence.metrics); } catch { metrics = {}; }
+          } else if (evidence.metrics && typeof evidence.metrics === "object") {
+            metrics = evidence.metrics;
+          }
+          if (Number(metrics.samples ?? 0) < minSamples || Number(metrics.falseReleaseCount ?? 0) > maxFalse) {
+            fail("EVIDENCE_GATE_UNMET", "pin.live_mode_earned",
+              "the recorded shadow corpus no longer satisfies the gate as configured now");
+          } else {
+            passed.push("a recorded shadow corpus justifies live delivery");
+          }
+        }
+      } else {
+        passed.push("external delivery does not require earned evidence when bypass is enabled");
+      }
     }
   }
 
