@@ -96,6 +96,8 @@ export async function describeLiveReadiness({ db, workspaceId, config = null, no
     else elsewhere += n;
   }
 
+  const bypassEarning = Boolean(process.env.COGNOS_AUTONOMY_BYPASS_EARNING === "true" || process.env.COGNOS_AUTONOMY_BYPASS_EVIDENCE === "true");
+
   const env = envOutboxMode();
   const evidence = status?.evidence || null;
   const measurementReasons = status?.measurement?.reasons || [];
@@ -131,9 +133,21 @@ export async function describeLiveReadiness({ db, workspaceId, config = null, no
         ? `${LIVE_DESTINATION_ENV} is set but the adapter would refuse it: ${dest.reason}. Fix the value and restart — a malformed brake is not a brake.`
         : `Name exactly one endpoint with ${LIVE_DESTINATION_ENV}=https://host/path and restart. A live delivery with no approved destination has nowhere it is allowed to go.`)),
 
-    // External writes are explicitly enabled by the operator; they do not
-    // require an earned shadow corpus. The destination and per-goal approval
-    // remain the actual release controls.
+    cond("evidence_recorded", "a justified evidence row exists for the rung",
+      Boolean(evidence) || bypassEarning,
+      () => `No recorded evidence row exists for Rung 4. Measure the shadow corpus first on the Outbox tab or with POST /api/autonomy/rungs/${rung.rung}/evidence.`),
+
+    cond("evidence_current", "the corpus still satisfies the gate as configured now",
+      status?.justifiedNow === true || bypassEarning,
+      () => (measurementReasons.length
+        ? `The evidence row ${evidence?.id || ""} no longer satisfies the gate: ${measurementReasons.join("; ")}.`
+        : "The recorded evidence row no longer satisfies the gate.")),
+
+    cond("corpus_aimed", "the earned corpus was aimed at the approved destination",
+      aimed > 0 || bypassEarning,
+      () => (dest.configured
+        ? `The earned corpus has ${metrics.samples ?? 0} sample(s), but 0 were aimed at ${dest.hostname} (${elsewhere} were aimed elsewhere). A corpus about one endpoint is not evidence about another. Aim attempts at ${dest.hostname} in shadow mode first.`
+        : "No approved destination is configured, so no corpus sample can be aimed at it."))
   ];
 
   const unmet = conditions.filter(c => !c.met);
