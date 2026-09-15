@@ -842,6 +842,16 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     res.status(201).json(agent);
   }));
 
+  app.delete("/api/autonomy/agents/:id", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const agent = await db.AutonomyAgent.get(req.params.id);
+    if (!agent || agent.workspace_id !== ws.id) {
+      return res.status(404).json({ error: "Resident not found in this workspace" });
+    }
+    await db.AutonomyAgent.remove(agent.id);
+    res.json({ deleted: true, id: agent.id });
+  }));
+
   /**
    * A brief change is a NEW VERSION, never an edit. The previous row stays, so
    * the record always shows what the resident was actually told when it did

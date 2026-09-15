@@ -27,7 +27,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Activity, AlertTriangle, Bell, Bot, Check, ChevronDown, ChevronRight, ClipboardCheck,
   Clock, Copy, Gauge, HelpCircle, Inbox, Menu, Pause, Play, Plus, RefreshCw, ScrollText,
-  Send, ShieldAlert, ShieldCheck, Snowflake, Sparkles, Sprout, ThumbsDown, ThumbsUp, Undo2, X, Zap
+  Send, ShieldAlert, ShieldCheck, Snowflake, Sparkles, Sprout, MessageCircle, Trash2, ThumbsDown, ThumbsUp, Undo2, X, Zap
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { noteLocator } from '@/components/chat/GoalCard';
@@ -427,6 +427,14 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
     return () => { cancelled = true; };
   }, [editing?.id]);
 
+  const handleDelete = async (resident) => {
+    if (busy || !window.confirm(`Delete ${resident.name}? Its version history will be removed. Existing conversation and goal records are kept where possible.`)) return;
+    setBusy(true); setError('');
+    try { await api.deleteResident(resident.id); setEditing(null); await refresh(); }
+    catch (err) { setError(err.message || 'Could not delete the resident'); }
+    finally { setBusy(false); }
+  };
+
   const handleBrief = async (resident) => {
     if (busy || !editing?.brief?.trim()) return;
     setBusy(true); setError('');
@@ -575,6 +583,13 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
                     </p>
                   )}
                 </div>
+                {resident.conversation_id && <button
+                  onClick={() => { window.location.href = `/?c=${resident.conversation_id}`; }}
+                  className="shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-muted"
+                  title="Converse with this resident"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                </button>}
                 <button
                   onClick={() => setEditing(editing?.id === resident.id ? null : { id: resident.id, brief: resident.brief })}
                   className="shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
@@ -613,10 +628,16 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
                     rows={4}
                     className="w-full bg-background border border-border rounded-lg px-2.5 py-2 text-xs outline-none focus:border-primary/60 resize-none font-mono"
                   />
-                  <button onClick={() => handleBrief(resident)} disabled={busy}
-                    className="rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs disabled:opacity-40">
-                    Save as version {resident.brief_version + 1}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => handleBrief(resident)} disabled={busy}
+                      className="rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs disabled:opacity-40">
+                      Save as version {resident.brief_version + 1}
+                    </button>
+                    <button onClick={() => handleDelete(resident)} disabled={busy}
+                      className="rounded-lg border border-destructive/40 text-destructive px-3 py-1.5 text-xs disabled:opacity-40 hover:bg-destructive/10">
+                      <Trash2 className="w-3 h-3 inline mr-1" />Delete resident
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

@@ -165,6 +165,16 @@ export function createAutonomyStore(run) {
      * Operational fields only. `brief` is rejected here by design — using this
      * to change a brief would erase what the resident was told.
      */
+    async remove(id) {
+      const agent = await AutonomyAgent.get(id);
+      if (!agent) return null;
+      // Remove the version chain together: a resident is a user-managed agent,
+      // not an append-only audit record. Goals and conversations retain their
+      // own records where the database permits it.
+      await run(`DELETE FROM autonomy_agents WHERE workspace_id=$1 AND slug=$2`, [agent.workspace_id, agent.slug]);
+      return agent;
+    },
+
     async update(id, patch = {}) {
       const allowed = ["name", "purpose", "conversation_id", "skill_allowlist",
         "default_scope", "default_budgets", "heartbeat_interval_ms", "enabled"];
