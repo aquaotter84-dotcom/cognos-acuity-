@@ -114,6 +114,7 @@ export const api = {
   createResident: (data) => req("/api/autonomy/agents", { method: "POST", body: data }),
   /** Changing a brief creates a NEW version; the superseded row is kept. */
   updateResident: (id, data) => req(`/api/autonomy/agents/${id}`, { method: "PATCH", body: data }),
+  deleteResident: (id) => req(`/api/autonomy/agents/${id}`, { method: "DELETE" }),
 
   listGoals: (params = {}) => req(`/api/autonomy/goals${qs(params)}`),
   createGoal: (data) => req("/api/autonomy/goals", { method: "POST", body: data }),

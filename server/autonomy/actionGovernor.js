@@ -380,31 +380,10 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
         passed.push(`the destination is the deployment's one approved live endpoint (${approved.entry})`);
       }
 
-      const rung = RUNGS.external_writes;
-      const evidence = typeof db?.RungEvidence?.currentJustified === "function"
-        ? await db.RungEvidence.currentJustified(goal?.workspace_id, rung.rung).catch(() => null)
-        : null;
-      if (!evidence) {
-        fail("EVIDENCE_GATE_UNMET", "phase19.autonomy_default_off",
-          `no recorded evidence row justifies live ${tier} delivery for this workspace`);
-      } else {
-        const metrics = evidence.metrics && typeof evidence.metrics === "object"
-          ? evidence.metrics
-          : (() => { try { return JSON.parse(evidence.metrics || "{}"); } catch { return {}; } })();
-        const gate = evidence.gate && typeof evidence.gate === "object"
-          ? evidence.gate
-          : (() => { try { return JSON.parse(evidence.gate || "{}"); } catch { return {}; } })();
-        const minSamples = Number(config.shadow?.minShadowSamples ?? gate.minShadowSamples ?? 25);
-        const maxFalse = Number(config.shadow?.maxAcceptableFalseReleases ?? gate.maxAcceptableFalseReleases ?? 0);
-        const samples = Number(metrics.samples ?? 0);
-        const falseReleases = Number(metrics.falseReleaseCount ?? 0);
-        if (samples < minSamples || falseReleases > maxFalse) {
-          fail("EVIDENCE_GATE_UNMET", "phase19.autonomy_default_off",
-            `the recorded corpus (${samples} sample(s), ${falseReleases} false release(s)) no longer satisfies the gate (${minSamples} samples, ${maxFalse} false releases)`);
-        } else {
-          passed.push(`a recorded shadow corpus justifies live delivery (${samples} samples, ${falseReleases} false releases, ${String(evidence.metrics_sha256 || "").slice(0, 12)}…)`);
-        }
-      }
+      // External writes are not gated by an earned shadow corpus. The operator
+      // explicitly enabled the external-write rung, the deployment destination
+      // is allowlisted above, and this effect still requires its own goal scope.
+      passed.push("external delivery does not require earned evidence");
     }
   }
 

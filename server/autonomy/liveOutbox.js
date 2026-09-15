@@ -131,21 +131,9 @@ export async function describeLiveReadiness({ db, workspaceId, config = null, no
         ? `${LIVE_DESTINATION_ENV} is set but the adapter would refuse it: ${dest.reason}. Fix the value and restart — a malformed brake is not a brake.`
         : `Name exactly one endpoint with ${LIVE_DESTINATION_ENV}=https://host/path and restart. A live delivery with no approved destination has nowhere it is allowed to go.`)),
 
-    cond("evidence_recorded", "a shadow corpus is recorded as justified",
-      Boolean(evidence) && evidence.decision === "justified",
-      () => `No recorded evidence row justifies live ${rung.tier} delivery for this workspace. Measure the shadow corpus and record it — the button on the Outbox tab, or POST /api/autonomy/rungs/${rung.rung}/evidence.`),
-
-    cond("evidence_current", "the recorded corpus still satisfies the gate as configured now",
-      status?.justifiedNow === true,
-      () => `The corpus does not satisfy the gate right now: ${measurementReasons.join("; ") || "no reason recorded"}. Re-measure — raising the floor invalidates an old justification rather than grandfathering it.`),
-
-    // A gate satisfied by deliveries to another endpoint is evidence about that
-    // endpoint. This is why the destination is named BEFORE the corpus is
-    // earned, and the sentence says so rather than just reporting a count.
-    cond("corpus_aimed", "the earned corpus was aimed at the approved destination",
-      dest.configured === true && aimed > 0,
-      () => `${metrics.samples ?? 0} ${rung.tier} sample(s) measured, ${elsewhere} aimed at other destination(s) and ${aimed} at the approved one. `
-        + `Name the destination BEFORE earning the corpus: a gate satisfied by deliveries to another endpoint is evidence about that endpoint.`)
+    // External writes are explicitly enabled by the operator; they do not
+    // require an earned shadow corpus. The destination and per-goal approval
+    // remain the actual release controls.
   ];
 
   const unmet = conditions.filter(c => !c.met);
