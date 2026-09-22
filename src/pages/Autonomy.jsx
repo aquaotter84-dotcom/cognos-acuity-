@@ -1734,7 +1734,7 @@ function Outbox({ status, onChanged }) {
 // ----------------------------------------------------------------- overview
 function Overview({ status, residents, goals, onTick, ticking, onToggle, toggling, bannerError,
   attention, attentionLoading, onJump, onDesign, onSeedArchivist, seedingArchivist,
-  onAutoAuthorize, autoAuthBusy }) {
+  onAutoAuthorize, autoAuthBusy, onBypassEarning, bypassBusy }) {
   const ceilings = status?.ceilings || {};
   const counts = status?.counts || {};
   const skills = status?.skills || [];
@@ -1791,6 +1791,48 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
           {!status?.settings?.canSetAutoAuthorize && (
             <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">
               {status?.settings?.autoAuthorizeRefusal?.message || 'This deployment has not handed the auto-authorize switch to this page.'}
+            </p>
+          )}
+        </div>
+      </Section>
+
+      {/* Phase 28 — the earned-corpus bypass. The one off-ramp that used to live
+          only in an environment variable, now a delegated switch with the same
+          three facts (on / pinned / may-I-change-it) as the one above. */}
+      <Section title="Live releases" subtitle="Whether a live effect has to earn its way past a shadow corpus" icon={ShieldCheck}>
+        <div className="rounded-lg border border-border/70 px-3 py-2.5">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-xs font-medium flex items-center gap-2 flex-wrap">
+                Release without earning a corpus
+                {status?.settings?.bypassEarning
+                  ? <Pill tone="warn">vouching for the destination</Pill>
+                  : <Pill tone="ok">corpus required</Pill>}
+                {status?.settings?.bypassEarningPinned && <Pill tone="info">pinned by an operator</Pill>}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                {status?.settings?.bypassEarning
+                  ? 'A live effect no longer waits for a shadow corpus — you have vouched for the approved destination. The rung, the destination, the per-effect Governor and every T5 approval still apply.'
+                  : 'A live effect has to earn its way past the shadow corpus first: recorded samples aimed at the approved destination, with no false releases.'}
+              </p>
+            </div>
+            <button
+              role="switch"
+              aria-checked={status?.settings?.bypassEarning === true}
+              aria-label="Release without earning a corpus"
+              disabled={!status?.settings?.canSetBypassEarning || bypassBusy}
+              onClick={() => onBypassEarning(!status?.settings?.bypassEarning)}
+              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 disabled:opacity-50 ${status?.settings?.bypassEarning ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+              title={status?.settings?.canSetBypassEarning
+                ? (status?.settings?.bypassEarning ? 'Require the corpus again' : 'Release without earning a corpus')
+                : (status?.settings?.bypassEarningRefusal?.message || 'The earned-corpus bypass is not delegated to this page')}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-background shadow transition-transform ${status?.settings?.bypassEarning ? 'translate-x-5' : ''}`} />
+            </button>
+          </div>
+          {!status?.settings?.canSetBypassEarning && (
+            <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">
+              {status?.settings?.bypassEarningRefusal?.message || 'This deployment has not handed the earned-corpus bypass to this page.'}
             </p>
           )}
         </div>
@@ -1955,6 +1997,7 @@ export default function Autonomy() {
   const [ticking, setTicking] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [autoAuthBusy, setAutoAuthBusy] = useState(false);
+  const [bypassBusy, setBypassBusy] = useState(false);
   const [error, setError] = useState('');
   const [bannerError, setBannerError] = useState('');
   const [designerOpen, setDesignerOpen] = useState(false);
@@ -2039,6 +2082,26 @@ export default function Autonomy() {
       setBannerError(e?.message || 'Could not change auto-authorize.');
       await refreshAll();
     } finally { setAutoAuthBusy(false); }
+  };
+
+  /**
+   * Phase 28 — the earned-corpus bypass. Same contract as the switch above: the
+   * server decides (a pin or no delegation answers 409), and the toggle flips
+   * back to the truth on refusal instead of staying where the click put it.
+   */
+  const handleBypassEarning = async (next) => {
+    if (bypassBusy) return;
+    setBypassBusy(true); setBannerError('');
+    try {
+      const out = await api.setBypassEarning(next);
+      await refreshAll();
+      if (out.changed === false) {
+        setBannerError(`The earned-corpus bypass was already ${out.bypassEarning ? 'on' : 'off'}.`);
+      }
+    } catch (e) {
+      setBannerError(e?.message || 'Could not change the earned-corpus bypass.');
+      await refreshAll();
+    } finally { setBypassBusy(false); }
   };
 
   /**
@@ -2160,6 +2223,7 @@ export default function Autonomy() {
               onJump={setTab} onDesign={() => setDesignerOpen(true)}
               onSeedArchivist={seedArchivist} seedingArchivist={seedingArchivist}
               onAutoAuthorize={handleAutoAuthorize} autoAuthBusy={autoAuthBusy}
+              onBypassEarning={handleBypassEarning} bypassBusy={bypassBusy}
             />
           ) : tab === 'residents' ? (
             <Residents status={status} frozen={frozen} onDesign={() => setDesignerOpen(true)} onChanged={refreshAll} />

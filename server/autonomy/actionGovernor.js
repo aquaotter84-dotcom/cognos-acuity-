@@ -31,6 +31,10 @@
 import { getSkill, TIERS } from "../skills/index.js";
 import { SECRET_PATTERNS } from "../meta/policy.js";
 import { tierAllowed, budgetLineExhausted, insideQuietHours, liveDestinationCovers } from "./config.js";
+// Phase 28 — the earned-corpus bypass is a delegated operator switch now, not a
+// raw environment read: settings.js owns the pin/delegation/row precedence, so
+// there is exactly one place that decides whether the corpus is still required.
+import { effectiveBypassEarning } from "./settings.js";
 import { authorizationCovers } from "./authorize.js";
 import { urlAllowedByScope, destinationsForScope, scopeEntryFor } from "./scopeUrl.js";
 import { checkWebhookUrl, checkWebhookHeaders, resolveSecretRef } from "./webhookPost.js";
@@ -380,7 +384,7 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
         passed.push(`the destination is the deployment's one approved live endpoint (${approved.entry})`);
       }
 
-      const bypassEarning = Boolean(process.env.COGNOS_AUTONOMY_BYPASS_EARNING === "true" || process.env.COGNOS_AUTONOMY_BYPASS_EVIDENCE === "true");
+      const bypassEarning = effectiveBypassEarning();
       if (!bypassEarning) {
         const evidence = typeof db?.RungEvidence?.currentJustified === "function"
           ? await db.RungEvidence.currentJustified(goal?.workspace_id, RUNGS.external_writes.rung).catch(() => null)

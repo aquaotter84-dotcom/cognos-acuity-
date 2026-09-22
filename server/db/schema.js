@@ -1180,6 +1180,28 @@ export const PHASE26B_SCHEMA = `
 ALTER TABLE autonomy_settings ADD COLUMN IF NOT EXISTS auto_authorize_goals BOOLEAN;
 `;
 
+// ---------------------------------------------------------------------------
+// Phase 28 — the earned-corpus bypass, as a delegated operator switch.
+//
+// A live T4 release normally has to EARN its way past the shadow gate: a
+// recorded corpus of samples, zero false releases, aimed at the approved
+// destination. The bypass says an operator vouches for the destination and the
+// corpus is not required. It shipped env-only (COGNOS_AUTONOMY_BYPASS_EARNING /
+// _EVIDENCE), which meant the one off-ramp that unblocks a live release was
+// invisible on the very page that shows you the wall.
+//
+// One nullable column on autonomy_settings, the same shape as
+// auto_authorize_goals: null reads as off (the resting state), the row is inert
+// unless COGNOS_AUTONOMY_BYPASS_EARNING_UI_CONTROL delegates the switch, and an
+// explicit environment pin outranks it in both directions. It waives the
+// CORPUS and nothing else — the rung flag, the one approved destination,
+// autonomy being on, quiet hours and the per-effect Governor all still bind,
+// and T5 still releases only by a per-effect human approval.
+// ---------------------------------------------------------------------------
+export const PHASE28_SCHEMA = `
+ALTER TABLE autonomy_settings ADD COLUMN IF NOT EXISTS bypass_earning BOOLEAN;
+`;
+
 export const PHASE_SCHEMAS = [
   { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
   { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
@@ -1196,5 +1218,6 @@ export const PHASE_SCHEMAS = [
   { id: "0013", phase: 22, name: "phase22b_live_outbox_destination", sql: PHASE22B_SCHEMA },
   { id: "0014", phase: 22, name: "phase22c_irreversible_effects", sql: PHASE22C_SCHEMA },
   { id: "0015", phase: 26, name: "phase26_council_settings", sql: PHASE26_SCHEMA },
-  { id: "0016", phase: 26, name: "phase26_auto_authorize_goals", sql: PHASE26B_SCHEMA }
+  { id: "0016", phase: 26, name: "phase26_auto_authorize_goals", sql: PHASE26B_SCHEMA },
+  { id: "0017", phase: 28, name: "phase28_bypass_earning", sql: PHASE28_SCHEMA }
 ];

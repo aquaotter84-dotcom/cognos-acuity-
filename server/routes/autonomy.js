@@ -27,7 +27,7 @@
 import { autonomyConfig, describeLiveDestination } from "../autonomy/config.js";
 import {
   describeSettings, ensureSettingsLoaded, refreshSettings, setSettingsEnabled,
-  setAutoAuthorize, listSettingFlips, AUTONOMY_PIN_ENV, AUTONOMY_UI_CONTROL_ENV
+  setAutoAuthorize, setBypassEarning, listSettingFlips, AUTONOMY_PIN_ENV, AUTONOMY_UI_CONTROL_ENV
 } from "../autonomy/settings.js";
 import { designTurn, clampDraft, emptyDraft, DESIGNER_LIMITS, firstGoalScope, clampProposedUrls } from "../autonomy/designer.js";
 import { scopeHashes, authorizationCovers, isTightening } from "../autonomy/authorize.js";
@@ -328,10 +328,11 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
      */
     const switchCount = [req.body?.enabled !== undefined,
       req.body?.outboxMode !== undefined && req.body?.outboxMode !== null,
-      req.body?.autoAuthorize !== undefined].filter(Boolean).length;
+      req.body?.autoAuthorize !== undefined,
+      req.body?.bypassEarning !== undefined].filter(Boolean).length;
     if (switchCount > 1) {
       return res.status(400).json({
-        error: "Send exactly one switch per request: enabled, outboxMode, or autoAuthorize. Each has its own guard.",
+        error: "Send exactly one switch per request: enabled, outboxMode, autoAuthorize, or bypassEarning. Each has its own guard.",
         code: "one_switch_per_request"
       });
     }
@@ -411,6 +412,46 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
         note: outcome.settings.autoAuthorize
           ? "On. New goals are authorized automatically when created — the scope and budget hashes are still recorded, and every staged effect still waits for its own approval."
           : "Off. A new goal is created awaiting_authorization and does no work until you authorize it."
+      });
+      return;
+    }
+
+    /**
+     * Phase 28 — THE EARNED-CORPUS BYPASS FLIP. When on, a live T4 release no
+     * longer has to earn its way past the shadow corpus; an operator has
+     * vouched for the destination instead. It waives the CORPUS and nothing
+     * else — the rung flag, the one approved destination, autonomy being on,
+     * quiet hours and the per-effect Governor all still bind, and T5 still
+     * releases only by a per-effect human approval. Its guard is its own
+     * delegation; none of the other three delegations implies it.
+     */
+    if (req.body?.bypassEarning !== undefined) {
+      const requestedBypass = req.body.bypassEarning;
+      if (typeof requestedBypass !== "boolean") {
+        return res.status(400).json({ error: "bypassEarning must be true or false" });
+      }
+      const outcome = await setBypassEarning(db, {
+        enabled: requestedBypass,
+        updatedBy: safe(req.body?.updated_by, 60) || "ui"
+      });
+      if (!outcome.ok) {
+        return res.status(409).json({
+          error: outcome.refusal.message,
+          code: outcome.refusal.code,
+          settings: outcome.settings
+        });
+      }
+      logger.info("earned-corpus bypass flipped from the UI", {
+        to: requestedBypass, from: outcome.previous?.bypassEarning === true
+      });
+      res.json({
+        settings: outcome.settings,
+        bypassEarning: outcome.settings.bypassEarning,
+        changed: outcome.previous?.bypassEarning === true !== requestedBypass,
+        atMs: outcome.atMs,
+        note: outcome.settings.bypassEarning
+          ? "On. A live release no longer waits for a shadow corpus — you have vouched for the approved destination. The rung, the destination, the Governor and every T5 approval still apply."
+          : "Off. A live release has to earn its way past the shadow corpus again."
       });
       return;
     }

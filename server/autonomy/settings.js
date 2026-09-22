@@ -65,6 +65,27 @@ export const OUTBOX_UI_CONTROL_ENV = "COGNOS_AUTONOMY_OUTBOX_UI_CONTROL";
 export const AUTO_AUTHORIZE_PIN_ENV = "COGNOS_AUTONOMY_AUTO_AUTHORIZE";
 export const AUTO_AUTHORIZE_UI_CONTROL_ENV = "COGNOS_AUTONOMY_AUTO_AUTHORIZE_UI_CONTROL";
 
+/**
+ * Phase 28 — the EARNED-CORPUS BYPASS, the same shape as the pairs above and
+ * deliberately a fourth pair. `COGNOS_AUTONOMY_BYPASS_EARNING` is the operator's
+ * explicit value (only explicit affirmatives enable);
+ * `COGNOS_AUTONOMY_BYPASS_EARNING_UI_CONTROL` hands the switch to the API.
+ *
+ * `COGNOS_AUTONOMY_BYPASS_EVIDENCE` is kept as a legacy alias for the pin: it
+ * shipped as a second spelling of the same bypass, and an operator who set it
+ * must keep the value they set.
+ *
+ * This is not the same power as any of the other three. Enablement decides
+ * whether the loop RUNS; the outbox mode decides whether it may ACT ON THE
+ * WORLD; auto-authorize decides whether a goal waits for its own consent click.
+ * This one decides whether a live release must first EARN its way past the
+ * shadow corpus. Delegating one must not delegate another, so none implies the
+ * next.
+ */
+export const BYPASS_EARNING_PIN_ENV = "COGNOS_AUTONOMY_BYPASS_EARNING";
+export const BYPASS_EARNING_LEGACY_ENV = "COGNOS_AUTONOMY_BYPASS_EVIDENCE";
+export const BYPASS_EARNING_UI_CONTROL_ENV = "COGNOS_AUTONOMY_BYPASS_EARNING_UI_CONTROL";
+
 /** The only three modes that exist, ordered by how far they reach. */
 export const OUTBOX_MODES = Object.freeze(["shadow", "dry_run", "live"]);
 
@@ -184,11 +205,66 @@ export function autoAuthorizeRefusal() {
   return null;
 }
 
+/**
+ * Phase 28 — an operator pinned the earned-corpus bypass in the environment.
+ * Tri-state, like auto-authorize: `null` when unset, otherwise a boolean. The
+ * legacy spelling is consulted second so the current name wins if both are set.
+ */
+export function bypassEarningPinned() {
+  const primary = affirmPin(BYPASS_EARNING_PIN_ENV);
+  if (primary !== null) return primary;
+  return affirmPin(BYPASS_EARNING_LEGACY_ENV);
+}
+
+/** An operator handed the earned-corpus bypass to the UI. */
+export function bypassEarningDelegated() {
+  return envFlag(BYPASS_EARNING_UI_CONTROL_ENV, false);
+}
+
+/**
+ * The effective earned-corpus bypass, applying precedence. Off is the resting
+ * state: an unread row is not a permission, so a database blip cannot silently
+ * waive the corpus. A pin outranks the UI in both directions.
+ *
+ * What it waives is exactly one thing: the recorded shadow corpus a live T4
+ * release would otherwise have to earn. It does NOT waive the rung flag, the
+ * one approved destination, autonomy being on, quiet hours, or the per-effect
+ * Governor — those are judged per effect and are unaffected by this switch.
+ */
+export function effectiveBypassEarning() {
+  const pinned = bypassEarningPinned();
+  if (pinned !== null) return pinned;
+  if (!bypassEarningDelegated()) return false;
+  return cache.loaded === true && cache.bypassEarning === true;
+}
+
+/**
+ * Why the API may or may not flip the earned-corpus bypass, in words an operator
+ * can act on. The same two refusals as the other three switches: a pin the UI
+ * cannot override, and a deployment that never delegated the switch.
+ */
+export function bypassEarningRefusal() {
+  if (bypassEarningPinned() !== null) {
+    return {
+      code: "pinned_by_operator",
+      message: `An operator pinned the earned-corpus bypass with ${BYPASS_EARNING_PIN_ENV}, and the UI cannot override a pin. Remove that variable and restart to hand the switch back.`
+    };
+  }
+  if (!bypassEarningDelegated()) {
+    return {
+      code: "not_delegated",
+      message: `This deployment has not handed the earned-corpus bypass to the UI. Set ${BYPASS_EARNING_UI_CONTROL_ENV}=true and restart; until then a live release still has to earn its way past the shadow corpus.`
+    };
+  }
+  return null;
+}
+
 const initialCache = () => ({
   loaded: false,          // has a read ever succeeded in this process?
   enabled: false,         // the delegated value; false until loaded
   outboxMode: null,       // the delegated mode; null means "never flipped here"
   autoAuthorize: false,   // the delegated "forgo goal authorization" value
+  bypassEarning: false,   // the delegated "skip the earned corpus" value
   source: "default",      // what last wrote it: 'ui' | 'boot' | 'default'
   updatedBy: null,
   updatedAtMs: null,
@@ -354,10 +430,23 @@ export function describeSettings() {
     autoAuthorizeRefusal: autoAuthorizeRefusal(),
     autoAuthorizePinEnv: AUTO_AUTHORIZE_PIN_ENV,
     autoAuthorizeUiControlEnv: AUTO_AUTHORIZE_UI_CONTROL_ENV,
+    // Phase 28 — the earned-corpus bypass, reported as its own set of facts
+    // again. "Is the corpus still required?" and "may this API change that?"
+    // are different questions, and a surface that answers only the first cannot
+    // tell an operator why the control in front of them is disabled.
+    bypassEarning: effectiveBypassEarning(),
+    bypassEarningPinned: bypassEarningPinned() !== null,
+    bypassEarningDelegated: bypassEarningDelegated(),
+    canSetBypassEarning: bypassEarningRefusal() === null,
+    bypassEarningRefusal: bypassEarningRefusal(),
+    bypassEarningPinEnv: BYPASS_EARNING_PIN_ENV,
+    bypassEarningUiControlEnv: BYPASS_EARNING_UI_CONTROL_ENV,
     stored: Object.freeze({
       loaded: cache.loaded,
       enabled: cache.enabled,
       outboxMode: cache.outboxMode,
+      autoAuthorize: cache.autoAuthorize,
+      bypassEarning: cache.bypassEarning,
       source: cache.source,
       updatedBy: cache.updatedBy,
       updatedAtMs: cache.updatedAtMs,
@@ -382,6 +471,7 @@ export async function refreshSettings(db, workspaceId = null) {
       enabled: row?.enabled === true,
       outboxMode: normalizeStoredMode(row?.outbox_mode),
       autoAuthorize: row?.auto_authorize_goals === true,
+      bypassEarning: row?.bypass_earning === true,
       source: row ? String(row.source || "ui") : "default",
       updatedBy: row?.updated_by || null,
       updatedAtMs: row ? Number(row.updated_ms) || null : null,
@@ -466,7 +556,12 @@ export async function setSettingsEnabled(db, { enabled, workspaceId = null, upda
   });
 
   // Write-through: the value we just committed is the value we now serve.
+  // Spread first: this writer owns `enabled` and must not drop the other three
+  // delegated values the row also carries. Replacing the object here would make
+  // an enable/disable flip silently forget the mode, auto-authorize and the
+  // bypass until the next refresh read them back.
   cache = {
+    ...cache,
     loaded: true,
     enabled: row?.enabled === true,
     source: row ? String(row.source || "ui") : "ui",
@@ -545,6 +640,61 @@ export async function setAutoAuthorize(db, { enabled, workspaceId = null, update
         updatedBy,
         pinned: previous.autoAuthorizePinned === true,
         delegated: previous.autoAuthorizeDelegated === true
+      },
+      tsMs: atMs
+    });
+  } catch {
+    // A failed audit row does not undo a switch the operator just flipped.
+  }
+
+  return { ok: true, refusal: null, previous, settings: describeSettings(), atMs };
+}
+
+/**
+ * Flip the earned-corpus bypass — Phase 28. The fourth writer on the same row,
+ * with the same two refusals and the same write-through. Off is the resting
+ * state, so the only direction that needs care is ON: it removes the recorded
+ * shadow corpus a live T4 release would otherwise have to earn, and nothing
+ * else. The rung flag, the approved destination, the per-effect Governor and
+ * T5's per-effect human approval all still bind, which is why this is recorded
+ * as its own audit action rather than as a mode flip.
+ */
+export async function setBypassEarning(db, { enabled, workspaceId = null, updatedBy = "ui" } = {}) {
+  const refusal = bypassEarningRefusal();
+  if (refusal) {
+    return { ok: false, refusal, settings: describeSettings() };
+  }
+  const next = enabled === true;
+  const wsId = workspaceId || (await db.Workspace.ensureDefault()).id;
+  const previous = describeSettings();
+  const atMs = Date.now();
+
+  const row = await db.AutonomySettings.setBypassEarning({
+    workspace_id: wsId, bypass_earning: next, updated_by: updatedBy, updated_ms: atMs
+  });
+
+  cache = {
+    ...cache,
+    loaded: true,
+    bypassEarning: row ? row.bypass_earning === true : next,
+    updatedBy: row?.updated_by || updatedBy,
+    updatedAtMs: row ? Number(row.updated_ms) || atMs : atMs,
+    stale: false,
+    error: null
+  };
+
+  try {
+    await db.WorkspaceAudit.append({
+      workspaceId: wsId,
+      action: "autonomy.bypass_earning",
+      resourceId: null,
+      detail: {
+        from: previous.bypassEarning === true,
+        to: next,
+        via: "ui",
+        updatedBy,
+        pinned: previous.bypassEarningPinned === true,
+        delegated: previous.bypassEarningDelegated === true
       },
       tsMs: atMs
     });

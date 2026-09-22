@@ -933,6 +933,31 @@ export function createAutonomyStore(run) {
       return rows[0] || null;
     },
 
+    /**
+     * Upsert ONLY the earned-corpus bypass — Phase 28. A fourth writer on the
+     * same row as `set`, `setOutboxMode` and `setAutoAuthorizeGoals`, and like
+     * them it touches exactly the column it owns: flipping the bypass must not
+     * touch `enabled`, `outbox_mode` or `auto_authorize_goals`. Null is the
+     * resting state and reads as off, so absence is never a permission to skip
+     * the corpus.
+     */
+    async setBypassEarning({ workspace_id, bypass_earning, updated_by = null, updated_ms = null }) {
+      const atMs = Number(updated_ms) || Date.now();
+      const rows = await run(
+        `INSERT INTO autonomy_settings (workspace_id, enabled, bypass_earning, source, updated_by, updated_ms)
+         VALUES ($1, FALSE, $2, 'ui', $3, $4)
+         ON CONFLICT (workspace_id) DO UPDATE
+           SET bypass_earning = EXCLUDED.bypass_earning,
+               updated_by = EXCLUDED.updated_by,
+               updated_ms = EXCLUDED.updated_ms,
+               updated_date = now()
+         RETURNING *`,
+        [workspace_id, bypass_earning === true,
+         updated_by ? String(updated_by).slice(0, 120) : null, atMs]
+      );
+      return rows[0] || null;
+    },
+
     async set({ workspace_id, enabled, source = "ui", updated_by = null, updated_ms = null }) {
       const atMs = Number(updated_ms) || Date.now();
       const rows = await run(
