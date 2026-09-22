@@ -196,6 +196,16 @@ export const api = {
   setAutoAuthorize: (autoAuthorize, body = {}) =>
     req("/api/autonomy/settings", { method: "POST", body: { autoAuthorize, ...body } }),
 
+  // --- Phase 28: the earned-corpus bypass ------------------------------
+  /**
+   * Flip the earned-corpus bypass. 409 with the reason in words when pinned or
+   * not delegated. When on, a live T4 release no longer waits for a recorded
+   * shadow corpus aimed at the approved destination; the rung flag, the
+   * destination, the per-effect Governor and every T5 approval still apply.
+   */
+  setBypassEarning: (bypassEarning, body = {}) =>
+    req("/api/autonomy/settings", { method: "POST", body: { bypassEarning, ...body } }),
+
   // --- Phase 26: the delegated council switches (Critic, Governor) -------
   /** What is on, what is pinned, whether the UI may flip, and recent flips. */
   councilSettings: (params = {}) => req(`/api/council/settings${qs(params)}`),

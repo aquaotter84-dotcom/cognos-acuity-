@@ -48,8 +48,8 @@ import { createHash } from "node:crypto";
 import { RUNGS, rungEvidenceStatus } from "./evidenceGate.js";
 import {
   OUTBOX_MODES, OUTBOX_MODE_ENV, OUTBOX_UI_CONTROL_ENV,
-  applyOutboxModeCache, describeSettings, effectiveOutboxMode, envOutboxMode,
-  isWideningOutboxMode, outboxModeRefusal
+  applyOutboxModeCache, describeSettings, effectiveBypassEarning, effectiveOutboxMode,
+  envOutboxMode, isWideningOutboxMode, outboxModeRefusal
 } from "./settings.js";
 import { LIVE_DESTINATION_ENV, autonomyConfig, liveDestinationCovers, describeLiveDestination } from "./config.js";
 
@@ -96,7 +96,7 @@ export async function describeLiveReadiness({ db, workspaceId, config = null, no
     else elsewhere += n;
   }
 
-  const bypassEarning = Boolean(process.env.COGNOS_AUTONOMY_BYPASS_EARNING === "true" || process.env.COGNOS_AUTONOMY_BYPASS_EVIDENCE === "true");
+  const bypassEarning = effectiveBypassEarning();
 
   const env = envOutboxMode();
   const evidence = status?.evidence || null;
