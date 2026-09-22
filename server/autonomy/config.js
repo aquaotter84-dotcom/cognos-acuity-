@@ -12,16 +12,20 @@
 //
 // The ONE exception to "no database row decides policy" is `enabled`, and it is
 // bounded: Phase 25 lets an operator delegate the on/off switch to the UI
-// (COGNOS_AUTONOMY_UI_CONTROL) and that delegation stores a boolean. It cannot
-// store a rung, a ceiling, a skill or a budget — settings.js resolves the
-// precedence and this file only reads the answer.
+// (COGNOS_AUTONOMY_UI_CONTROL) and that delegation stores a boolean. Phase 29
+// extends the same shape to the five RUNG switches (COGNOS_AUTONOMY_RUNGS_UI_
+// CONTROL), which store five booleans and nothing else. It still cannot store a
+// ceiling, a skill or a budget, and it cannot store EVIDENCE: the shadow corpus
+// and T5's per-effect approval are not writable from any request, so a
+// delegated rung opens the door and never signs the verdict. settings.js
+// resolves every precedence and this file only reads the answer.
 
 // Phase 25 — the enablement decision lives in settings.js so the pin, the
 // delegation and the stored switch are resolved in exactly one place. envFlag
 // is imported from there as well: two copies of "what counts as true" is how a
 // kill switch and a feature flag end up disagreeing about the same variable.
 import { envFlag, describeSettings, effectiveOutboxMode, outboxModeSource,
-  OUTBOX_MODE_ENV } from "./settings.js";
+  effectiveRung, OUTBOX_MODE_ENV } from "./settings.js";
 // Reused rather than reimplemented: "what may a webhook URL look like" already
 // has one authority, and a second copy of it here is how an approved
 // destination ends up shaped differently from what the adapter would accept.
@@ -262,16 +266,23 @@ export function autonomyConfig() {
     toggleRefusal: settings.refusal,
     settings,
 
-    // Rung switches. Each rung needs its own explicit flag AND its evidence.
+    // Rung switches. Each rung needs its own explicit sign-off AND its evidence.
+    //
+    // Phase 29 — these are RESOLVED values now, not raw environment reads. The
+    // sign-off is still the operator's (phase19.autonomy_default_off: building a
+    // rung is not enabling one); it just no longer requires a restart. An
+    // explicit environment value still outranks the page in both directions, and
+    // with no delegation the answer is the environment's alone — which is
+    // exactly what envFlag(name, false) returned here before.
     rung: {
-      residents: envFlag("COGNOS_AUTONOMY_RESIDENTS", false),
+      residents: effectiveRung("residents"),
       // Rung 3, second half: T3 web.search. Distinct from residents because a
       // query goes to a third-party provider (a data flow to the outside),
       // while web.fetch stays governed by the per-goal URL allowlist.
-      search: envFlag("COGNOS_AUTONOMY_SEARCH", false),
-      externalWrites: envFlag("COGNOS_AUTONOMY_EXTERNAL_WRITES", false),
-      irreversible: envFlag("COGNOS_AUTONOMY_IRREVERSIBLE", false),
-      inbound: envFlag("COGNOS_INBOUND_ENABLED", false)
+      search: effectiveRung("search"),
+      externalWrites: effectiveRung("externalWrites"),
+      irreversible: effectiveRung("irreversible"),
+      inbound: effectiveRung("inbound")
     },
 
     // Notice delivery. An object, not a boolean: "can this goal emit a notice

@@ -16,6 +16,10 @@
 //      multi-replica mechanism, and it is one UPDATE, not a read-then-write.
 
 import { newId, num, int } from "../db/util.js";
+// Phase 29 — the rung key -> column map. The store builds its one-column upsert
+// from this frozen map, so the SQL has five possible shapes and no request text
+// ever reaches the statement.
+import { RUNG_COLUMNS } from "./settings.js";
 
 const json = (value, fallback) => JSON.stringify(value ?? fallback);
 const parse = (value, fallback) => {
@@ -953,6 +957,40 @@ export function createAutonomyStore(run) {
                updated_date = now()
          RETURNING *`,
         [workspace_id, bypass_earning === true,
+         updated_by ? String(updated_by).slice(0, 120) : null, atMs]
+      );
+      return rows[0] || null;
+    },
+
+    /**
+     * Upsert ONE rung switch — Phase 29. The fifth writer on the same row, and
+     * like the four before it it updates exactly the column it owns: flipping a
+     * rung must not touch `enabled`, `outbox_mode`, `auto_authorize_goals`,
+     * `bypass_earning`, or any of the other four rungs.
+     *
+     * The column name is looked up in RUNG_COLUMNS (a frozen map of five known
+     * keys) rather than interpolated from the request, so the SQL text has a
+     * fixed set of possible shapes and an unknown rung cannot reach the
+     * database. The route validates the key first; this is the second gate, and
+     * it throws rather than silently writing nothing.
+     *
+     * A first-ever insert lands `enabled = FALSE` — the resting state. Absence
+     * of a row is OFF, never a default-on.
+     */
+    async setRung({ workspace_id, rung, rung_enabled, updated_by = null, updated_ms = null }) {
+      const column = RUNG_COLUMNS[String(rung)];
+      if (!column) throw new Error(`setRung: unknown rung "${String(rung).slice(0, 40)}"`);
+      const atMs = Number(updated_ms) || Date.now();
+      const rows = await run(
+        `INSERT INTO autonomy_settings (workspace_id, enabled, ${column}, source, updated_by, updated_ms)
+         VALUES ($1, FALSE, $2, 'ui', $3, $4)
+         ON CONFLICT (workspace_id) DO UPDATE
+           SET ${column} = EXCLUDED.${column},
+               updated_by = EXCLUDED.updated_by,
+               updated_ms = EXCLUDED.updated_ms,
+               updated_date = now()
+         RETURNING *`,
+        [workspace_id, rung_enabled === true,
          updated_by ? String(updated_by).slice(0, 120) : null, atMs]
       );
       return rows[0] || null;

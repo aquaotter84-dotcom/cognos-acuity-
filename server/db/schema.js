@@ -1202,6 +1202,41 @@ export const PHASE28_SCHEMA = `
 ALTER TABLE autonomy_settings ADD COLUMN IF NOT EXISTS bypass_earning BOOLEAN;
 `;
 
+// ---------------------------------------------------------------------------
+// Phase 29 — the RUNG switches, as delegated operator switches.
+//
+// Phase 19's rungs are the deployment's answer to "what may this COGNOS reach
+// for at all?": residents (T2), search (T3's web.search), external writes (T4),
+// irreversible (T5) and inbound. They shipped env-only, which meant the switch
+// that decides whether a tier EXISTS was invisible on the page that reports the
+// tier, and moving it cost a Railway variable and a restart.
+//
+// Five nullable columns, one per rung, each with its own single-column writer.
+// Null reads as off (the resting state), the row is inert unless
+// COGNOS_AUTONOMY_RUNGS_UI_CONTROL delegates the group, and an explicit
+// environment value outranks it in both directions.
+//
+// WHY ONE COLUMN PER RUNG rather than one JSON object: the ON CONFLICT clause
+// updates exactly the column its writer owns, so two operators flipping two
+// rungs at once cannot lose one another's write. A single JSONB column would
+// make every flip a read-modify-write of all five values, which is how a switch
+// panel silently reverts the switch next to it.
+//
+// WHAT THIS DOES NOT MOVE. A rung is one of TWO gates. The other — the recorded
+// shadow corpus that earns a live release, and T5's per-effect human approval —
+// is not writable from any request, and this migration adds nothing that could
+// hold one. Handing the operator's sign-off to the page does not hand the
+// Governor's verdicts to it; tierAllowed still asks the same question, and the
+// Governor still refuses each effect that has not earned its way.
+// ---------------------------------------------------------------------------
+export const PHASE29_SCHEMA = `
+ALTER TABLE autonomy_settings ADD COLUMN IF NOT EXISTS rung_residents BOOLEAN;
+ALTER TABLE autonomy_settings ADD COLUMN IF NOT EXISTS rung_search BOOLEAN;
+ALTER TABLE autonomy_settings ADD COLUMN IF NOT EXISTS rung_external_writes BOOLEAN;
+ALTER TABLE autonomy_settings ADD COLUMN IF NOT EXISTS rung_irreversible BOOLEAN;
+ALTER TABLE autonomy_settings ADD COLUMN IF NOT EXISTS rung_inbound BOOLEAN;
+`;
+
 export const PHASE_SCHEMAS = [
   { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
   { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
@@ -1219,5 +1254,6 @@ export const PHASE_SCHEMAS = [
   { id: "0014", phase: 22, name: "phase22c_irreversible_effects", sql: PHASE22C_SCHEMA },
   { id: "0015", phase: 26, name: "phase26_council_settings", sql: PHASE26_SCHEMA },
   { id: "0016", phase: 26, name: "phase26_auto_authorize_goals", sql: PHASE26B_SCHEMA },
-  { id: "0017", phase: 28, name: "phase28_bypass_earning", sql: PHASE28_SCHEMA }
+  { id: "0017", phase: 28, name: "phase28_bypass_earning", sql: PHASE28_SCHEMA },
+  { id: "0018", phase: 29, name: "phase29_rung_switches", sql: PHASE29_SCHEMA }
 ];
