@@ -26,7 +26,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Activity, AlertTriangle, Bell, Bot, Check, ChevronDown, ChevronRight, ClipboardCheck,
-  Clock, Copy, Gauge, HelpCircle, Inbox, Menu, Pause, Play, Plus, RefreshCw, ScrollText,
+  Clock, Copy, Gauge, HelpCircle, Inbox, Lock, Menu, Pause, Play, Plus, RefreshCw, ScrollText,
   Send, ShieldAlert, ShieldCheck, Snowflake, Sparkles, Sprout, MessageCircle, Trash2, ThumbsDown, ThumbsUp, Undo2, X, Zap
 } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -1324,6 +1324,22 @@ function ReceiptLine({ receipt }) {
 }
 
 // ------------------------------------------------------------------- outbox
+/** Phase 29 — the five rungs, in the order the tiers climb, with the sentence
+ *  that says what each one actually lets the loop do. Copy lives here so the
+ *  Overview switches and any other surface that lists them cannot drift. */
+const RUNG_ROWS = [
+  { key: 'residents', label: 'Residents (T2)',
+    hint: 'Let goals live here as durable residents and report through notices.' },
+  { key: 'search', label: 'Web search (T3)',
+    hint: 'Let a query leave for a third-party search provider. Fetching stays governed by each goal\u2019s own URL allowlist.' },
+  { key: 'externalWrites', label: 'External writes (T4)',
+    hint: 'Let the loop send to the one approved destination \u2014 and only for effects the Governor judges one at a time, against an earned corpus.' },
+  { key: 'irreversible', label: 'Irreversible effects (T5)',
+    hint: 'Let an effect that cannot be taken back be staged. It still releases only by your approval of that exact action.' },
+  { key: 'inbound', label: 'Inbound',
+    hint: 'Let the deployment receive work from outside rather than only reach for it.' },
+];
+
 function Outbox({ status, onChanged }) {
   const [data, setData] = useState(null);
   const [rungs, setRungs] = useState(null);
@@ -1332,6 +1348,7 @@ function Outbox({ status, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [measuring, setMeasuring] = useState(false);
   const [flipping, setFlipping] = useState(false);
+  const [rungFlipping, setRungFlipping] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -1356,6 +1373,25 @@ function Outbox({ status, onChanged }) {
       setError(e.message || `Could not ${decision} this effect`);
       await refresh();
     } finally { setBusy(false); }
+  };
+
+  /**
+   * Phase 29 — the rung switch, right here where the wall is. The panel above
+   * reports "rung off" and the page used to answer with a variable name; this is
+   * the same delegated switch the Overview section offers, on the surface that
+   * shows what it unblocks. One handler, one source of truth (the server).
+   */
+  const flipRung = async (next) => {
+    if (rungFlipping) return;
+    setRungFlipping(true); setError(''); setNotice('');
+    try {
+      const out = await api.setRung('externalWrites', next);
+      await refresh();
+      if (out.changed === false) setNotice(`The external-writes rung was already ${out.rungs?.externalWrites ? 'on' : 'off'}.`);
+    } catch (e) {
+      setError(e?.message || 'Could not change the external-writes rung.');
+      await refresh();
+    } finally { setRungFlipping(false); }
   };
 
   const measure = async () => {
@@ -1425,6 +1461,28 @@ function Outbox({ status, onChanged }) {
           <Pill tone={writes.rungEnabled ? 'warn' : 'muted'}>
             rung {writes.rungEnabled ? 'on' : 'off'}
           </Pill>
+          {/* Phase 29 — the switch that decides whether this rung EXISTS, on the
+              panel that shows what it gates. Disabled with the server's own
+              sentence when the rung is pinned or the group was not delegated. */}
+          {(() => {
+            const refusal = status?.settings?.rungRefusals?.externalWrites || null;
+            const canSet = !refusal && status?.settings?.canSetRungs === true;
+            return (
+              <button
+                role="switch"
+                aria-checked={writes.rungEnabled === true}
+                aria-label="External-writes rung"
+                disabled={!canSet || rungFlipping}
+                onClick={() => flipRung(!writes.rungEnabled)}
+                title={canSet
+                  ? (writes.rungEnabled ? 'Turn the external-writes rung off' : 'Turn the external-writes rung on')
+                  : (refusal?.message || 'The rung switches are not delegated to this page')}
+                className={`relative w-9 h-5 rounded-full transition-colors shrink-0 disabled:opacity-50 ${writes.rungEnabled ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-background shadow transition-transform ${writes.rungEnabled ? 'translate-x-4' : ''}`} />
+              </button>
+            );
+          })()}
           <Pill tone={writes.deliversNow ? 'bad' : 'info'}>outbox {status?.outboxMode || 'shadow'}</Pill>
           {/* Two facts, because they are two facts. `deliversNow` answers "does
               the LOOP perform a release verdict?" — and an operator's Approve on
@@ -1734,7 +1792,7 @@ function Outbox({ status, onChanged }) {
 // ----------------------------------------------------------------- overview
 function Overview({ status, residents, goals, onTick, ticking, onToggle, toggling, bannerError,
   attention, attentionLoading, onJump, onDesign, onSeedArchivist, seedingArchivist,
-  onAutoAuthorize, autoAuthBusy, onBypassEarning, bypassBusy }) {
+  onAutoAuthorize, autoAuthBusy, onBypassEarning, bypassBusy, onRung, rungBusy }) {
   const ceilings = status?.ceilings || {};
   const counts = status?.counts || {};
   const skills = status?.skills || [];
@@ -1836,6 +1894,58 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
             </p>
           )}
         </div>
+      </Section>
+
+      {/* Phase 29 — the rung switches. The five sign-offs that decide which
+          tiers EXIST here used to be five Railway variables and a restart, so
+          the page could report "T4 is off" and offer nothing to do about it.
+          Each row says three things: is it on, did an operator pin it, and may
+          this page change it. A rung opens a door; it never signs a verdict. */}
+      <Section title="Rungs" subtitle="What this deployment may reach for — the sign-off that a tier exists here" icon={Lock}>
+        <div className="space-y-2">
+          {RUNG_ROWS.map(({ key, label, hint }) => {
+            const on = status?.settings?.rungs?.[key] === true;
+            const pinned = status?.settings?.rungPinned?.[key] === true;
+            const refusal = status?.settings?.rungRefusals?.[key] || null;
+            const canSet = !refusal && status?.settings?.canSetRungs === true;
+            const busy = rungBusy === key;
+            return (
+              <div key={key} className="rounded-lg border border-border/70 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium flex items-center gap-2 flex-wrap">
+                      {label}
+                      {on ? <Pill tone="warn">on</Pill> : <Pill tone="muted">off</Pill>}
+                      {pinned && <Pill tone="info">pinned by an operator</Pill>}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{hint}</p>
+                  </div>
+                  <button
+                    role="switch"
+                    aria-checked={on}
+                    aria-label={label}
+                    disabled={!canSet || busy}
+                    onClick={() => onRung(key, !on)}
+                    className={`relative w-11 h-6 rounded-full transition-colors shrink-0 disabled:opacity-50 ${on ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+                    title={canSet
+                      ? (on ? `Turn the ${key} rung off` : `Turn the ${key} rung on`)
+                      : (refusal?.message || 'The rung switches are not delegated to this page')}
+                  >
+                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-background shadow transition-transform ${on ? 'translate-x-5' : ''}`} />
+                  </button>
+                </div>
+                {refusal && (
+                  <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">{refusal.message}</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed max-w-2xl">
+          A rung is one of two gates. The other — the shadow corpus that earns a live
+          release, and a human approval for every irreversible effect — is not writable from
+          this page, so opening a rung never releases anything by itself.
+        </p>
       </Section>
 
       {/* What is waiting on you, above the numbers. The numbers are context; this is the question. */}
@@ -1998,6 +2108,7 @@ export default function Autonomy() {
   const [toggling, setToggling] = useState(false);
   const [autoAuthBusy, setAutoAuthBusy] = useState(false);
   const [bypassBusy, setBypassBusy] = useState(false);
+  const [rungBusy, setRungBusy] = useState(null);
   const [error, setError] = useState('');
   const [bannerError, setBannerError] = useState('');
   const [designerOpen, setDesignerOpen] = useState(false);
@@ -2102,6 +2213,27 @@ export default function Autonomy() {
       setBannerError(e?.message || 'Could not change the earned-corpus bypass.');
       await refreshAll();
     } finally { setBypassBusy(false); }
+  };
+
+  /**
+   * Phase 29 — flip one rung. Same contract as the switches above: the server
+   * decides (a pin or no delegation answers 409), and the toggle falls back to
+   * the truth on refusal instead of staying where the click put it. `rungBusy`
+   * holds the rung being flipped so only that row's toggle is disabled.
+   */
+  const handleRung = async (name, next) => {
+    if (rungBusy) return;
+    setRungBusy(name); setBannerError('');
+    try {
+      const out = await api.setRung(name, next);
+      await refreshAll();
+      if (out.changed === false) {
+        setBannerError(`The ${name} rung was already ${out.rungs?.[name] ? 'on' : 'off'}.`);
+      }
+    } catch (e) {
+      setBannerError(e?.message || `Could not change the ${name} rung.`);
+      await refreshAll();
+    } finally { setRungBusy(null); }
   };
 
   /**
@@ -2224,6 +2356,7 @@ export default function Autonomy() {
               onSeedArchivist={seedArchivist} seedingArchivist={seedingArchivist}
               onAutoAuthorize={handleAutoAuthorize} autoAuthBusy={autoAuthBusy}
               onBypassEarning={handleBypassEarning} bypassBusy={bypassBusy}
+              onRung={handleRung} rungBusy={rungBusy}
             />
           ) : tab === 'residents' ? (
             <Residents status={status} frozen={frozen} onDesign={() => setDesignerOpen(true)} onChanged={refreshAll} />

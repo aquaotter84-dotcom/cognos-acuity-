@@ -206,6 +206,17 @@ export const api = {
   setBypassEarning: (bypassEarning, body = {}) =>
     req("/api/autonomy/settings", { method: "POST", body: { bypassEarning, ...body } }),
 
+  // --- Phase 29: the rung switches --------------------------------------
+  /**
+   * Flip ONE rung — the operator's sign-off that a tier exists here. 409 with
+   * the reason in words when that rung is pinned in the environment or the
+   * group was never delegated to this page. A rung is necessary and not
+   * sufficient: the shadow corpus, the approved destination, the per-effect
+   * Governor and every T5 approval still apply.
+   */
+  setRung: (name, enabled, body = {}) =>
+    req("/api/autonomy/settings", { method: "POST", body: { rung: { name, enabled }, ...body } }),
+
   // --- Phase 26: the delegated council switches (Critic, Governor) -------
   /** What is on, what is pinned, whether the UI may flip, and recent flips. */
   councilSettings: (params = {}) => req(`/api/council/settings${qs(params)}`),

@@ -27,7 +27,8 @@
 import { autonomyConfig, describeLiveDestination } from "../autonomy/config.js";
 import {
   describeSettings, ensureSettingsLoaded, refreshSettings, setSettingsEnabled,
-  setAutoAuthorize, setBypassEarning, listSettingFlips, AUTONOMY_PIN_ENV, AUTONOMY_UI_CONTROL_ENV
+  setAutoAuthorize, setBypassEarning, setRung, isRungKey, RUNG_KEYS,
+  listSettingFlips, AUTONOMY_PIN_ENV, AUTONOMY_UI_CONTROL_ENV
 } from "../autonomy/settings.js";
 import { designTurn, clampDraft, emptyDraft, DESIGNER_LIMITS, firstGoalScope, clampProposedUrls } from "../autonomy/designer.js";
 import { scopeHashes, authorizationCovers, isTightening } from "../autonomy/authorize.js";
@@ -325,14 +326,20 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
      *
      * Phase 26 adds a third switch to the same surface — auto-authorize — with
      * its own guard, so the same one-request-one-switch rule now counts three.
+     *
+     * Phase 29 adds a fifth — one rung — sent as `rung: { name, enabled }`.
+     * It is one switch even though it names one of five rungs, because the
+     * request still changes exactly one value on one row.
      */
+    const rungBody = req.body?.rung;
     const switchCount = [req.body?.enabled !== undefined,
       req.body?.outboxMode !== undefined && req.body?.outboxMode !== null,
       req.body?.autoAuthorize !== undefined,
-      req.body?.bypassEarning !== undefined].filter(Boolean).length;
+      req.body?.bypassEarning !== undefined,
+      rungBody !== undefined && rungBody !== null].filter(Boolean).length;
     if (switchCount > 1) {
       return res.status(400).json({
-        error: "Send exactly one switch per request: enabled, outboxMode, autoAuthorize, or bypassEarning. Each has its own guard.",
+        error: "Send exactly one switch per request: enabled, outboxMode, autoAuthorize, bypassEarning, or rung. Each has its own guard.",
         code: "one_switch_per_request"
       });
     }
@@ -452,6 +459,62 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
         note: outcome.settings.bypassEarning
           ? "On. A live release no longer waits for a shadow corpus — you have vouched for the approved destination. The rung, the destination, the Governor and every T5 approval still apply."
           : "Off. A live release has to earn its way past the shadow corpus again."
+      });
+      return;
+    }
+
+    /**
+     * Phase 29 — THE RUNG FLIP. `rung: { name, enabled }` changes one of the
+     * five sign-offs that decide which tiers EXIST here (residents, search,
+     * externalWrites, irreversible, inbound). It is the same power the operator
+     * used to exercise with a Railway variable and a restart.
+     *
+     * What it does not do: open a live release on its own. The rung is
+     * necessary and not sufficient — the shadow corpus, the one approved
+     * destination, the Governor's per-effect verdicts and every T5 approval all
+     * still bind, and none of them is writable from here.
+     *
+     * Its guard is its own delegation (COGNOS_AUTONOMY_RUNGS_UI_CONTROL), which
+     * none of the other four delegations implies. A rung the operator pinned in
+     * the environment is refused with the variable's name rather than ignored.
+     */
+    if (rungBody !== undefined && rungBody !== null) {
+      const name = typeof rungBody === "string" ? rungBody : rungBody.name;
+      const enabled = typeof rungBody === "string" ? req.body?.rungEnabled : rungBody.enabled;
+      if (!isRungKey(name)) {
+        return res.status(400).json({
+          error: `"${String(name).slice(0, 40)}" is not a rung. Known rungs: ${RUNG_KEYS.join(", ")}.`,
+          code: "unknown_rung",
+          rungs: RUNG_KEYS
+        });
+      }
+      if (typeof enabled !== "boolean") {
+        return res.status(400).json({ error: "rung.enabled must be true or false", code: "bad_rung_value" });
+      }
+      const outcome = await setRung(db, {
+        rung: name,
+        enabled,
+        updatedBy: safe(req.body?.updated_by, 60) || "ui"
+      });
+      if (!outcome.ok) {
+        return res.status(409).json({
+          error: outcome.refusal.message,
+          code: outcome.refusal.code,
+          settings: outcome.settings
+        });
+      }
+      logger.info("rung flipped from the UI", {
+        rung: name, to: enabled, from: outcome.previous?.rungs?.[name] === true
+      });
+      res.json({
+        settings: outcome.settings,
+        rung: name,
+        rungs: outcome.settings.rungs,
+        changed: (outcome.previous?.rungs?.[name] === true) !== enabled,
+        atMs: outcome.atMs,
+        note: enabled
+          ? `The ${name} rung is on. The tier exists here — and it is necessary and not sufficient: the shadow corpus, the approved destination, the Governor and every T5 approval still bind.`
+          : `The ${name} rung is off. Nothing at that tier runs, whatever the corpus says.`
       });
       return;
     }
