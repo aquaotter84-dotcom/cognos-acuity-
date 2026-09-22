@@ -259,12 +259,138 @@ export function bypassEarningRefusal() {
   return null;
 }
 
+/**
+ * Phase 29 — THE RUNG SWITCHES, as one delegated group.
+ *
+ * A rung is the operator's sign-off that a tier EXISTS in this deployment
+ * (phase19.autonomy_default_off: building a rung is not enabling one). Phase 19
+ * read the five of them straight from the environment, so the sign-off that
+ * decides whether T4 exists was invisible on the page that reports T4, and
+ * moving it meant a Railway variable and a restart.
+ *
+ * ONE delegation for the group, not five. It is one power — "what may this
+ * COGNOS reach for" — with five values, and five more environment variables
+ * would be the same soup this change is removing. An operator who wants to hand
+ * the page the ability to open a door is already making the larger decision.
+ *
+ * The five existing variables stay, as PINS, and they are tri-state now:
+ * unset or empty is not a decision, an explicit affirmative pins ON, and any
+ * other explicit value pins OFF. A pin outranks the stored row in both
+ * directions, so an operator who set COGNOS_AUTONOMY_IRREVERSIBLE=false on the
+ * host cannot have it turned on from a browser, and the refusal names the
+ * variable. This is strictly stronger than the old read: with no delegation the
+ * effective value is pin-or-false, which is what envFlag(name, false) already
+ * returned for every set and unset value.
+ *
+ * What this does NOT delegate: the shadow corpus, the approved destination,
+ * T5's per-effect human approval, or any Governor verdict. A rung is necessary
+ * and not sufficient — the Governor still asks the other half per effect, and
+ * nothing a request can write holds an answer to it.
+ */
+export const RUNG_UI_CONTROL_ENV = "COGNOS_AUTONOMY_RUNGS_UI_CONTROL";
+
+/** The five rungs, in the order the tiers climb. Stable; the API validates against it. */
+export const RUNG_KEYS = Object.freeze([
+  "residents", "search", "externalWrites", "irreversible", "inbound"
+]);
+
+/** rung -> the environment variable that pins it. The inbound rung keeps its
+ *  original name (COGNOS_INBOUND_ENABLED); renaming a live variable to tidy a
+ *  prefix would silently unset a deployment's existing sign-off. */
+export const RUNG_PIN_ENVS = Object.freeze({
+  residents: "COGNOS_AUTONOMY_RESIDENTS",
+  search: "COGNOS_AUTONOMY_SEARCH",
+  externalWrites: "COGNOS_AUTONOMY_EXTERNAL_WRITES",
+  irreversible: "COGNOS_AUTONOMY_IRREVERSIBLE",
+  inbound: "COGNOS_INBOUND_ENABLED"
+});
+
+/** rung -> the column that stores it. The store builds its SQL from this map,
+ *  never from request text, and the map is the only place the two sides meet. */
+export const RUNG_COLUMNS = Object.freeze({
+  residents: "rung_residents",
+  search: "rung_search",
+  externalWrites: "rung_external_writes",
+  irreversible: "rung_irreversible",
+  inbound: "rung_inbound"
+});
+
+/** Is this a rung we know? Anything else is not a switch, and is refused. */
+export function isRungKey(key) {
+  return RUNG_KEYS.includes(String(key || ""));
+}
+
+/** The tri-state pin for one rung: null when unset, otherwise a boolean. */
+export function rungPinned(key) {
+  const env = RUNG_PIN_ENVS[key];
+  return env ? affirmPin(env) : null;
+}
+
+/** An operator handed the rung group to the API. */
+export function rungsDelegated() {
+  return envFlag(RUNG_UI_CONTROL_ENV, false);
+}
+
+/**
+ * The effective value of one rung, applying precedence. Off is the resting
+ * state: an unread row is not a permission, so a database blip cannot open a
+ * tier. A pin outranks the row in both directions.
+ *
+ * An unknown key is OFF rather than an error here — this is the read path the
+ * Governor calls on every effect, and a typo must not widen a deployment.
+ * The WRITE path is where an unknown key is refused, loudly.
+ */
+export function effectiveRung(key) {
+  if (!isRungKey(key)) return false;
+  const pinned = rungPinned(key);
+  if (pinned !== null) return pinned;
+  if (!rungsDelegated()) return false;
+  return cache.loaded === true && cache.rungs?.[key] === true;
+}
+
+/** Every rung, resolved. The shape config.rung has always had. */
+export function effectiveRungs() {
+  const out = {};
+  for (const key of RUNG_KEYS) out[key] = effectiveRung(key);
+  return out;
+}
+
+/**
+ * Why the API may or may not flip one rung, in words an operator can act on.
+ * Three refusals, and they are different problems: an unknown rung is not a
+ * switch at all, a pin is an operator decision the page cannot override, and
+ * no delegation means this deployment never handed the group over.
+ */
+export function rungRefusal(key) {
+  if (!isRungKey(key)) {
+    return {
+      code: "unknown_rung",
+      message: `"${String(key).slice(0, 40)}" is not a rung. Known rungs: ${RUNG_KEYS.join(", ")}.`
+    };
+  }
+  const env = RUNG_PIN_ENVS[key];
+  if (rungPinned(key) !== null) {
+    return {
+      code: "pinned_by_operator",
+      message: `An operator pinned the ${key} rung with ${env}, and the page cannot override a pin. Remove that variable and restart to hand the switch back.`
+    };
+  }
+  if (!rungsDelegated()) {
+    return {
+      code: "not_delegated",
+      message: `This deployment has not handed the rung switches to the page. Set ${RUNG_UI_CONTROL_ENV}=true and restart; until then the rungs are controlled only by their own variables (${RUNG_KEYS.map(k => RUNG_PIN_ENVS[k]).join(", ")}).`
+    };
+  }
+  return null;
+}
+
 const initialCache = () => ({
   loaded: false,          // has a read ever succeeded in this process?
   enabled: false,         // the delegated value; false until loaded
   outboxMode: null,       // the delegated mode; null means "never flipped here"
   autoAuthorize: false,   // the delegated "forgo goal authorization" value
   bypassEarning: false,   // the delegated "skip the earned corpus" value
+  rungs: {},              // rung -> the delegated sign-off; absent reads as off
   source: "default",      // what last wrote it: 'ui' | 'boot' | 'default'
   updatedBy: null,
   updatedAtMs: null,
@@ -441,12 +567,24 @@ export function describeSettings() {
     bypassEarningRefusal: bypassEarningRefusal(),
     bypassEarningPinEnv: BYPASS_EARNING_PIN_ENV,
     bypassEarningUiControlEnv: BYPASS_EARNING_UI_CONTROL_ENV,
+    // Phase 29 — the rung switches, reported as their own set of facts again.
+    // Five values, one delegation, and per-rung pins, because "is the external
+    // -writes rung on" and "may this page change it" are different questions
+    // and a surface that answers only the first cannot explain a dead toggle.
+    rungs: Object.freeze(effectiveRungs()),
+    rungPinned: Object.freeze(Object.fromEntries(RUNG_KEYS.map(k => [k, rungPinned(k) !== null]))),
+    rungDelegated: rungsDelegated(),
+    canSetRungs: rungsDelegated(),
+    rungRefusals: Object.freeze(Object.fromEntries(RUNG_KEYS.map(k => [k, rungRefusal(k)]))),
+    rungPinEnvs: RUNG_PIN_ENVS,
+    rungUiControlEnv: RUNG_UI_CONTROL_ENV,
     stored: Object.freeze({
       loaded: cache.loaded,
       enabled: cache.enabled,
       outboxMode: cache.outboxMode,
       autoAuthorize: cache.autoAuthorize,
       bypassEarning: cache.bypassEarning,
+      rungs: Object.freeze({ ...(cache.rungs || {}) }),
       source: cache.source,
       updatedBy: cache.updatedBy,
       updatedAtMs: cache.updatedAtMs,
@@ -472,6 +610,7 @@ export async function refreshSettings(db, workspaceId = null) {
       outboxMode: normalizeStoredMode(row?.outbox_mode),
       autoAuthorize: row?.auto_authorize_goals === true,
       bypassEarning: row?.bypass_earning === true,
+      rungs: readStoredRungs(row),
       source: row ? String(row.source || "ui") : "default",
       updatedBy: row?.updated_by || null,
       updatedAtMs: row ? Number(row.updated_ms) || null : null,
@@ -494,6 +633,21 @@ function normalizeStoredMode(value) {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
   return OUTBOX_MODES.includes(text) ? text : null;
+}
+
+/**
+ * Read the five rung columns into a plain object. A stored value is only
+ * believed when it is exactly true or exactly false; anything else (null, a
+ * column an older build never wrote, a hand-edited row) reads as absent, which
+ * resolves to off. An unrecognised value is not a permission.
+ */
+function readStoredRungs(row) {
+  const out = {};
+  for (const key of RUNG_KEYS) {
+    const value = row?.[RUNG_COLUMNS[key]];
+    out[key] = value === true ? true : value === false ? false : null;
+  }
+  return out;
 }
 
 /**
@@ -695,6 +849,75 @@ export async function setBypassEarning(db, { enabled, workspaceId = null, update
         updatedBy,
         pinned: previous.bypassEarningPinned === true,
         delegated: previous.bypassEarningDelegated === true
+      },
+      tsMs: atMs
+    });
+  } catch {
+    // A failed audit row does not undo a switch the operator just flipped.
+  }
+
+  return { ok: true, refusal: null, previous, settings: describeSettings(), atMs };
+}
+
+/**
+ * Flip ONE rung — Phase 29. The fifth writer on the same row, and like the four
+ * before it it touches exactly the column it owns: flipping the external-writes
+ * rung must not touch `enabled`, the mode, auto-authorize, the bypass, or the
+ * other four rungs. That is why the columns are five booleans rather than one
+ * object.
+ *
+ * ON is the direction that needs care. It is the operator's sign-off that a
+ * tier EXISTS here, and it is necessary and not sufficient: the Governor still
+ * refuses every effect that has not earned its way past the shadow corpus, the
+ * one approved destination still has to cover the delivery, and T5 still
+ * releases only by a per-effect human approval. So a rung flip is recorded as
+ * its own audit action rather than folded into enablement.
+ *
+ * An unknown rung key is refused before anything is written — the read path
+ * treats a typo as off, and the write path must not treat it as a switch.
+ */
+export async function setRung(db, { rung, enabled, workspaceId = null, updatedBy = "ui" } = {}) {
+  const refusal = rungRefusal(rung);
+  if (refusal) {
+    return { ok: false, refusal, settings: describeSettings() };
+  }
+  const key = String(rung);
+  const next = enabled === true;
+  const wsId = workspaceId || (await db.Workspace.ensureDefault()).id;
+  const previous = describeSettings();
+  const atMs = Date.now();
+
+  const row = await db.AutonomySettings.setRung({
+    workspace_id: wsId, rung: key, rung_enabled: next, updated_by: updatedBy, updated_ms: atMs
+  });
+
+  // Write-through: the value we just committed is the value we now serve, and
+  // spread first so a rung flip never drops the other four delegated values the
+  // row also carries.
+  const storedValue = row?.[RUNG_COLUMNS[key]];
+  cache = {
+    ...cache,
+    loaded: true,
+    rungs: { ...(cache.rungs || {}), [key]: storedValue === true ? true : storedValue === false ? false : next },
+    updatedBy: row?.updated_by || updatedBy,
+    updatedAtMs: row ? Number(row.updated_ms) || atMs : atMs,
+    stale: false,
+    error: null
+  };
+
+  try {
+    await db.WorkspaceAudit.append({
+      workspaceId: wsId,
+      action: "autonomy.rung",
+      resourceId: key,
+      detail: {
+        rung: key,
+        from: previous.rungs?.[key] === true,
+        to: next,
+        via: "ui",
+        updatedBy,
+        pinned: previous.rungPinned?.[key] === true,
+        delegated: previous.rungDelegated === true
       },
       tsMs: atMs
     });
