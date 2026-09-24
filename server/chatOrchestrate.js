@@ -1,8 +1,8 @@
 // chatOrchestrate — the COGNOS council pipeline.
 //
-// Ported from base44/functions/chatOrchestrate/entry.ts. The pipeline, the stage
-// order, the revision loop, the adaptive-reasoning rule and every prompt are
-// preserved. What changed:
+// Ported from base44/functions/chatOrchestrate/entry.ts. The pipeline, the data
+// dependencies between stages, the revision loop, the adaptive-reasoning rule
+// and every prompt are preserved. What changed:
 //   * No Base44 SDK client, no auth.me(), no service-role branch, no agent secret.
 //     There are no accounts, so there is no user to authenticate.
 //   * ctx.base44.entities.* became ctx.db.* (Postgres).
@@ -10,6 +10,11 @@
 //     the response shape and the SSE stream.
 //   * SANCTIONED UPGRADE: an optional `emit` callback publishes council stage
 //     events live so the UI can watch the council think.
+//   * SANCTIONED UPGRADE (turn latency): seats whose prompts do not consume the
+//     previous stage's output no longer wait for it — the Observer overlaps
+//     agent preparation and context assembly, and the Strategist overlaps the
+//     web-search fetch and briefing. Prompts, models and governance rules are
+//     byte-identical; only the schedule changed (DIVERGENCES.md §8).
 
 import { createLogger } from "./shared/logging.js";
 import { getSystemConfig } from "./config.js";
@@ -34,7 +39,7 @@ import { prepareAgentTurn } from "./agent/runner.js";
 import { buildEvidencePack } from "./sources/index.js";
 import { buildGoalEvidence, formatGoalEvidence } from "./autonomy/goalEvidence.js";
 import { normalizeMemoryFields } from "./memory/structure.js";
-import { assembleContextWindow } from "./contextWindow.js";
+import { assembleContextWindow, normalizeContextWindowConfig, trimToTokens } from "./contextWindow.js";
 import { formatGraphContext } from "./knowledge/graph.js";
 
 const rootLogger = createLogger("chatOrchestrate");
@@ -630,6 +635,24 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
     sourceIds: sourceAttachments.map(attachment => attachment.source_id),
     status: "off", autonomousWrites: false
   };
+
+  // PERF (turn latency): the Observer classifies the raw user message — nothing
+  // that agent preparation or context assembly produces enters its prompt — so
+  // its model call is started here and overlapped with both. On a turn with a
+  // read-only agent this hides the Observer entirely under the guarded URL
+  // fetches; on an ordinary turn it hides it under the database round trips.
+  // The prompt, the model and the emitted `observer` event are unchanged; only
+  // the schedule moved. The promise is joined after context assembly, before
+  // the first consumer of the classification (the web-search tool). The no-op
+  // catch keeps a rejected overlap from surfacing twice when an earlier stage
+  // is the real failure; the await below is the genuine consumer.
+  const observerPromise = orchestrator.dispatch("observer", createMessage({
+    type: "council.observe",
+    from: "orchestrator",
+    content: { ...baseTurnContent }
+  }), ctx);
+  observerPromise.catch(() => {});
+
   if (agentMode !== "off" || sourceAttachments.length) {
     agentResult = await orchestrator.dispatch("agentPrepare", createMessage({
       type: "agent.prepare",
@@ -663,12 +686,14 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
   }
 
   // --- Phase 2: cognitive layer — perception & planning ---
-  const observerMsg = createMessage({
-    type: "council.observe",
-    from: "orchestrator",
-    content: contextResult
-  });
-  const observerResult = await orchestrator.dispatch("observer", observerMsg, ctx);
+  // Join the overlapped Observer (started before agent preparation). Everything
+  // downstream sees exactly the classification the sequential pipeline would
+  // have produced, on exactly the assembled context; only its wall-clock cost
+  // moved off the critical path.
+  const observerResult = {
+    ...contextResult,
+    classification: (await observerPromise).classification
+  };
   emit("observer", { classification: observerResult.classification });
 
   // --- Web search tool — pulls current facts when the Observer flags it (or the user toggle is on) ---
@@ -677,7 +702,30 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
     from: "orchestrator",
     content: observerResult
   });
-  const webSearchResult = await orchestrator.dispatch("webSearch", webSearchMsg, ctx);
+  // PERF (turn latency): the Strategist plans from the Observer's
+  // classification, the workspace ids and the immutable source list — it never
+  // reads the web-search briefing — so it is dispatched here and overlapped
+  // with the search fetch and briefing instead of waiting behind them. Its
+  // prompt and its TaskContext goal use the windowed user message exactly as
+  // before: the user slice is deterministic (it does not depend on the search
+  // results), so it is computed here and the full assembly below reproduces
+  // the identical value. The windowed context fields are applied to the
+  // Strategist's result below, before the Specialist runs.
+  const windowedUserMessage = trimToTokens(
+    userMessage,
+    normalizeContextWindowConfig(config.orchestrator.contextWindow).maxUserTokens,
+    { preserveEnds: true }
+  );
+  const strategistMsg = createMessage({
+    type: "council.plan",
+    from: "orchestrator",
+    content: { ...observerResult, userMessage: windowedUserMessage }
+  });
+  const webSearchPromise = orchestrator.dispatch("webSearch", webSearchMsg, ctx);
+  webSearchPromise.catch(() => {});
+  const strategistPromise = orchestrator.dispatch("strategist", strategistMsg, ctx);
+  strategistPromise.catch(() => {});
+  const webSearchResult = await webSearchPromise;
 
   // Join the memory-relevance call that has been running alongside the Observer
   // and the web search. Everything downstream sees a plain `memories` array, so
@@ -750,12 +798,24 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
   emit("contextWindow", windowedContext.metrics);
   recorder.setPerformance?.({ contextWindow: windowedContext.metrics });
 
-  const strategistMsg = createMessage({
-    type: "council.plan",
-    from: "orchestrator",
-    content: webSearchResult
-  });
-  const strategistResult = await orchestrator.dispatch("strategist", strategistMsg, ctx);
+  // Join the overlapped Strategist (started beside the web search). It ran
+  // before the window existed, so the admitted values are applied to its
+  // result here — exactly the assignments contextResult and webSearchResult
+  // received above. The Specialist reads the windowed fields; the emitted
+  // `strategist` event and the plan itself are unchanged.
+  const strategistResult = await strategistPromise;
+  strategistResult.userMessage = windowedContext.userMessage;
+  strategistResult.history = windowedContext.history;
+  strategistResult.conversationSummary = windowedContext.conversationSummary;
+  strategistResult.memories = windowedContext.memories;
+  strategistResult.workspace = windowedContext.workspace;
+  strategistResult.sourceContext = windowedContext.sourceContext;
+  strategistResult.graphContext = windowedContext.graphContext;
+  strategistResult.contextWindow = windowedContext.metrics;
+  strategistResult.searchResults = windowedContext.supplementalContext;
+  strategistResult.graphNodes = admittedGraphNodes;
+  strategistResult.sourceEvidence = admittedSourceEvidence;
+  delete strategistResult.memoriesPromise;
   emit("strategist", { plan: strategistResult.plan, subTasks: strategistResult.taskContext?.sub_tasks || null });
 
   // --- Phase 3: specialist layer — execute sub-tasks or direct response ---

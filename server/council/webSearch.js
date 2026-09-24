@@ -95,6 +95,9 @@ export const webSearchAgent = defineAgent({
       if (!raw || !raw.trim()) return { ...content };
       const briefing = await callLLM(ctx, {
         model: ctx.config.models.memory,
+        // Phase 15.1-style label: this call overlaps the Strategist, so the
+        // bus's current stage would misattribute it.
+        purpose: "webSearch",
         messages: [
           {
             role: "system",

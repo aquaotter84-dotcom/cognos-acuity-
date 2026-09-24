@@ -37,6 +37,9 @@ export const strategistAgent = defineAgent({
     try {
       const result = await callLLM(ctx, {
         model: ctx.config.council.strategistModel,
+        // Phase 15.1-style label: this call overlaps the web-search briefing,
+        // so the bus's current stage would misattribute it.
+        purpose: "strategist",
         responseJsonSchema: DECOMP_SCHEMA,
         messages: [
           {

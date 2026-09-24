@@ -140,8 +140,12 @@ it, because that would bypass the DNS-pinned SSRF boundary.
 
 ### ⚠️ Function duration — read this
 
-The council is **sequential by design**: ~6 model calls per turn. With a
-reasoning model that is commonly **30–90 s**. Vercel's limits:
+The council is **sequential only where reasoning depends on the previous seat**:
+the pre-answer critical path is specialist → (synthesizer) → coherence → critic
+→ governor, with the Observer, the web-search fetch, the Strategist and the
+memory-relevance ranking overlapped behind earlier work (see README § *Turn
+latency: what runs concurrently*). Even so, a reasoning model is commonly
+**30–90 s** end to end. Vercel's limits:
 
 | Plan | Default | Max (`maxDuration`) |
 |---|---|---|
@@ -155,6 +159,8 @@ reasoning model that is commonly **30–90 s**. Vercel's limits:
 2. **Stay on Hobby** and lower cost per turn: set `COGNOS_FAST_MODEL` to a fast
    model, and optionally `COGNOS_CRITIC_ENABLED=false` (removes the critic and
    its revision loop — 1–2 fewer calls). This trades council depth for latency.
+   Before and after changing knobs, `npm run latency-bench -- --scenario=moderate`
+   shows where the turn's time actually goes against injected per-role latency.
 3. **Self-host** the API (`npm start`, which runs `server/serve.js`) on a box
    with no timeout, and point Vercel's SPA at it.
 

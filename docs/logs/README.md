@@ -2,7 +2,8 @@
 
 Evidence for the Phase 14 / Phase 15 work, captured in this sandbox on
 2026-09-07 (Node v20, PGlite standing in for Postgres over the real wire
-protocol, a scriptable mock model standing in for BluesMinds).
+protocol, a scriptable mock model standing in for BluesMinds). The scheduling
+evidence was captured 2026-09-24 in the same way.
 
 | File | Command | What it shows |
 |---|---|---|
@@ -10,6 +11,7 @@ protocol, a scriptable mock model standing in for BluesMinds).
 | `boot.log` | `npm run demo` | the app's own structured logger during a real turn — every stage, including the three Phase 14/15 non-council stages (`coherenceMonitor`, `knowledgeProjection`, `telemetryRecord`) |
 | `smoke.log` | `npm run smoke` | **167 assertions, 0 failures** across the ten success-criteria scenarios |
 | `demo.log` | `npm run demo` | the artifacts themselves: one exchange's SSE frames, its ledger rows, its telemetry record stage by stage, a replay at a past instant, a contradiction measured as a transition, a veto that wrote nothing to memory, a simulated upstream failure, and eleven Policy Engine judgments |
+| `latency-bench.log` | `node test/latency-bench.mjs` | the §8.1 scheduling pass, A/B: the per-call schedule and turn times of the sequential pipeline vs the scheduled one (the Strategist disappears under the web search; the Observer starts before context assembly's reads) |
 
 Reproduce any of them:
 
@@ -17,6 +19,7 @@ Reproduce any of them:
 npm run build
 npm run smoke
 npm run demo
+node test/latency-bench.mjs --scenario=search-decomp
 ```
 
 The harness (`test/`) boots the real Express app, the real database layer and

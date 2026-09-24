@@ -28,6 +28,10 @@ export const observerAgent = defineAgent({
     try {
       const classification = await callLLM(ctx, {
         model: ctx.config.council.observerModel,
+        // Phase 15.1-style label: this call overlaps context assembly, so the
+        // bus's current stage would misattribute it. The label keeps every
+        // attempt attributed to the Observer in the telemetry record.
+        purpose: "observer",
         responseJsonSchema: OBSERVER_SCHEMA,
         messages: [
           {
