@@ -13,6 +13,7 @@
     "phase22": "node test/phase22.mjs",
     "performance": "node test/performance.mjs",
     "latency": "node scripts/latency-report.mjs",
+    "latency-bench": "node test/latency-bench.mjs",
     "sources-agent": "node test/sources-agent.mjs",
     "identity": "node test/identity.mjs",
     "integrity": "node test/integrity.mjs",

@@ -187,7 +187,11 @@ These came after the initial rebuild, when the target platform was confirmed.
 
 ### Known constraint, not a defect
 
-The council is **sequential by design** — ~6 model calls per turn. On Vercel
+The council is **sequential only where a seat reasons over the previous seat's
+output** — the pre-answer critical path (specialist → synthesizer → coherence →
+critic → governor) is serial, while the Observer, the memory-relevance ranking,
+the web-search fetch and the Strategist run overlapped behind earlier work (§8).
+Even so, a turn is ~6 model calls. On Vercel
 **Hobby** that is capped at 60 s regardless of the `maxDuration: 300` in
 `vercel.json`, and a slow turn will be killed mid-stream. This is a platform
 limit meeting an architectural property of the council, not a bug in the port.
@@ -239,6 +243,43 @@ search runs at all. Running them concurrently would mean the Specialist answers
 without knowing what kind of question it was asked. That would make the council
 faster by making it think less, which is not a speed-up — it is a different
 council. Left serial.
+
+### 8.1 Second scheduling pass (2026-09-24): the Observer and the Strategist
+
+Same discipline, same rule — no prompt, model, or governance change, only the
+schedule of calls whose inputs do not depend on the stage they now overlap.
+Two more overlaps, both measured by `node test/latency-bench.mjs` (median of 2
+turns against per-role latency injection: observer 900 ms, strategist 1200 ms,
+search fetch 500 ms + briefing 1500 ms, specialist/synthesizer 2500 ms,
+coherence 1200 ms, critic 1100 ms) and pinned by `npm run performance` as
+source-order regressions:
+
+4. **The Observer overlaps agent preparation and context assembly.** Its prompt
+   is the raw user message alone — nothing those stages produce enters it — so
+   its model call is started before `agentPrepare` is dispatched and joined
+   immediately after context assembly, before the web-search gate (the first
+   real consumer of the classification). Against the in-process test database
+   this hides only milliseconds; against a networked database it hides the
+   context round trips, and on a read-only agent turn it hides the guarded URL
+   fetches entirely.
+5. **The Strategist overlaps the web-search fetch and briefing.** The plan is
+   built from the classification, the workspace ids and the immutable source
+   list — never the briefing — so on a decomposed, search-flagged turn the plan
+   leaves the critical path. Its prompt and its TaskContext goal still receive
+   the windowed user message: the user slice is deterministic and does not
+   depend on the search results, so the value computed before the dispatch is
+   byte-identical to the one the full assembly produces.
+
+| search + decomposition turn | sequential | scheduled | delta |
+|---|---|---|---|
+| time to first governed token | 11470 ms | 10240 ms | **-10.7%** |
+| time to done | 12590 ms | 11360 ms | **-9.8%** |
+
+The Observer→Specialist edge above is untouched by this pass: the Specialist
+still waits for the classification, the Critic still waits for the coherence
+report (its prompt carries the brief), and the Governor still rules on the
+complete final draft before any answer text is released. The bench prints the
+per-call schedule so the overlap can be seen, not just claimed.
 
 **Honest limit on Vercel.** Deferring the critic shortens the *user-visible*
 window, not total function wall-time: the post-response batch still runs inside

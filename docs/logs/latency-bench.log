@@ -1,0 +1,140 @@
+# Latency bench — the 2026-09-24 scheduling pass (DIVERGENCES.md §8.1)
+#
+# Captured in this sandbox on 2026-09-24 (Node v22, PGlite over the Postgres
+# wire protocol, per-role latency injection standing in for BluesMinds:
+# observer 900ms, strategist 1200ms, search fetch 500ms + briefing 1500ms,
+# specialist/synthesizer 2500ms, coherence 1200ms, critic 1100ms,
+# memory relevance 800ms, memory extraction 1000ms, summary 900ms).
+# The sequential run was captured with the scheduling change stashed; the
+# scheduled run with it applied. Same database, same seeded memories,
+# median of 2 measured turns per scenario.
+#
+# Reproduce with:  node test/latency-bench.mjs --scenario=search-decomp
+
+==============================================================================
+SEQUENTIAL (before)
+==============================================================================
+
+=== latency bench: search-decomp — 2 measured turn(s), median ===
+time to first governed token: 11.47s
+time to done (full turn):      12.59s
+
+model-call schedule (offsets from turn start, 1 char = 100ms):
+  memrel        10→  810ms  ████████
+  observer      12→  913ms  █████████
+  webSearch   1417→ 2917ms                ███████████████
+  strategist  2920→ 4121ms                               ████████████
+  main        4127→ 6628ms                                           █████████████████████████
+  main        4127→ 6628ms                                           █████████████████████████
+  main        6634→ 9134ms                                                                    █████████████████████████
+  coherence   9138→10339ms                                                                                             ████████████
+  critic     10343→11444ms                                                                                                         ███████████
+  summary    11450→12350ms                                                                                                                     █████████
+  memext     11451→12452ms                                                                                                                     ██████████
+
+stage timings (from telemetry):
+  contextAssembly        6ms
+  observer             902ms
+  webSearch           2004ms
+  strategist          1205ms
+  specialist          2508ms
+  synthesizer         2502ms
+  coherenceMonitor    1205ms
+  critic              1108ms
+  governor               0ms
+  auditLog               2ms
+  memoryExtraction    1004ms
+  knowledgeProjection    25ms
+  telemetryRecord        1ms
+
+=== latency bench: moderate — 2 measured turn(s), median ===
+time to first governed token: 5.74s
+time to done (full turn):      6.86s
+
+model-call schedule (offsets from turn start, 1 char = 100ms):
+  memrel        16→  816ms  ████████
+  observer      19→  920ms  █████████
+  main         923→ 3423ms           █████████████████████████
+  coherence   3427→ 4628ms                                    ████████████
+  critic      4634→ 5734ms                                                ███████████
+  summary     5738→ 6638ms                                                           █████████
+  memext      5739→ 6739ms                                                           ██████████
+
+stage timings (from telemetry):
+  contextAssembly       14ms
+  observer             903ms
+  webSearch              0ms
+  strategist             0ms
+  specialist          2503ms
+  synthesizer            0ms
+  coherenceMonitor    1205ms
+  critic              1106ms
+  governor               0ms
+  auditLog               2ms
+  memoryExtraction    1004ms
+  knowledgeProjection    21ms
+  telemetryRecord        2ms
+
+==============================================================================
+SCHEDULED (after)
+==============================================================================
+
+=== latency bench: search-decomp — 2 measured turn(s), median ===
+time to first governed token: 10.24s
+time to done (full turn):      11.35s
+
+model-call schedule (offsets from turn start, 1 char = 100ms):
+  observer       5→  905ms  █████████
+  memrel        10→  811ms  ████████
+  strategist   907→ 2108ms           ████████████
+  webSearch   1408→ 2908ms                ███████████████
+  main        2912→ 5412ms                               █████████████████████████
+  main        2913→ 5413ms                               █████████████████████████
+  main        5419→ 7919ms                                                        █████████████████████████
+  coherence   7924→ 9125ms                                                                                 ████████████
+  critic      9129→10229ms                                                                                             ███████████
+  summary    10236→11137ms                                                                                                        █████████
+  memext     10238→11237ms                                                                                                        ██████████
+
+stage timings (from telemetry):
+  contextAssembly        6ms
+  observer             901ms
+  strategist          1205ms
+  webSearch           2003ms
+  specialist          2508ms
+  synthesizer         2502ms
+  coherenceMonitor    1206ms
+  critic              1108ms
+  governor               0ms
+  auditLog               1ms
+  memoryExtraction    1003ms
+  knowledgeProjection    22ms
+  telemetryRecord        1ms
+
+=== latency bench: moderate — 2 measured turn(s), median ===
+time to first governed token: 5.73s
+time to done (full turn):      6.83s
+
+model-call schedule (offsets from turn start, 1 char = 100ms):
+  observer       5→  905ms  █████████
+  memrel        12→  812ms  ████████
+  main         908→ 3408ms           █████████████████████████
+  coherence   3414→ 4615ms                                    ████████████
+  critic      4620→ 5721ms                                                ███████████
+  summary     5728→ 6628ms                                                           █████████
+  memext      5728→ 6729ms                                                           ██████████
+
+stage timings (from telemetry):
+  contextAssembly       10ms
+  observer             902ms
+  webSearch              0ms
+  strategist             0ms
+  specialist          2503ms
+  synthesizer            0ms
+  coherenceMonitor    1206ms
+  critic              1109ms
+  governor               0ms
+  auditLog               2ms
+  memoryExtraction    1004ms
+  knowledgeProjection    40ms
+  telemetryRecord        2ms

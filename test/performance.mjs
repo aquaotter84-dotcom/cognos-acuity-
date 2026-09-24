@@ -163,6 +163,59 @@ try {
   const joinSelection = source.indexOf("selection = await selectionPromise");
   check(startSelection >= 0 && startSelection < startContext && startContext < joinSelection, "observe-only strategy selection no longer overlaps context assembly");
 
+  // --- Turn-latency scheduling invariants ------------------------------------
+  // The Observer's prompt is the raw user message alone, and the Strategist's
+  // reads only the classification, the ids and the immutable source list. The
+  // pipeline exploits both facts: the Observer's model call is started before
+  // agent preparation and context assembly and joined after them, and the
+  // Strategist is dispatched beside the web search and joined before the
+  // Specialist runs. The same source-position discipline as the strategy-
+  // selection check above pins these overlaps, so a future refactor cannot
+  // silently re-serialize the turn and hand the latency back.
+  const startObserver = source.indexOf('orchestrator.dispatch("observer"');
+  const joinObserver = source.indexOf("await observerPromise");
+  check(
+    startObserver >= 0 && startObserver < startContext && startContext < joinObserver,
+    "the Observer no longer overlaps agent preparation and context assembly"
+  );
+  const startSearch = source.indexOf('orchestrator.dispatch("webSearch"');
+  const startStrategist = source.indexOf('orchestrator.dispatch("strategist"');
+  const joinStrategist = source.indexOf("await strategistPromise");
+  check(
+    startSearch >= 0 && startStrategist > startSearch && startStrategist < joinStrategist,
+    "the Strategist no longer overlaps the web-search fetch and briefing"
+  );
+
+  // Runtime proof of the first overlap. Seed enough enabled memories that the
+  // relevance ranking fires (it only runs when the pool exceeds the per-turn
+  // budget), then confirm the Observer's request leaves BEFORE the
+  // memory-relevance request: that call is issued only after context
+  // assembly's database reads complete, while the Observer is issued before
+  // context assembly is dispatched at all. The order is impossible in the
+  // sequential pipeline and deterministic here.
+  const workspace = await h.raw("/api/workspace");
+  const seedBase = `seed_mem_${Date.now()}`;
+  const seedRows = Array.from({ length: 15 }, (_, i) => [
+    `${seedBase}_${i}`,
+    workspace.json.id,
+    `Scheduling seed memory ${i}: the user seeds memory pools for overlap proofs.`,
+    5
+  ]);
+  await h.sql(
+    `INSERT INTO memories (id, workspace_id, content, importance) VALUES ${seedRows.map((_, i) => `($${i * 4 + 1}, $${i * 4 + 2}, $${i * 4 + 3}, $${i * 4 + 4})`).join(", ")}`,
+    seedRows.flat()
+  );
+  h.model.state.requests.length = 0;
+  const overlapTurn = await h.chat("Prove the observer overlaps context assembly.");
+  check(Boolean(overlapTurn.done?.runId), "the overlap-proof turn did not complete");
+  const overlapRoles = h.model.state.requests.map(request => request.role);
+  const observerRequestAt = overlapRoles.indexOf("observer");
+  const memrelRequestAt = overlapRoles.indexOf("memoryRelevance");
+  check(
+    observerRequestAt >= 0 && memrelRequestAt > observerRequestAt,
+    `the Observer's model call did not precede the memory-relevance call: ${overlapRoles.join(" -> ")}`
+  );
+
   console.log(`PERFORMANCE RESULT: ${passed} passed, 0 failed`);
 } finally {
   if (originalTier === undefined) delete process.env.COGNOS_LLM_SERVICE_TIER;

@@ -644,6 +644,8 @@ test/                   harness only — not part of the app
   pglite.mjs            real Postgres wire protocol over PGlite
   mockModel.mjs         scriptable model: contradictions, vetoes, 400s, hangs
   harness.mjs           boots the real app + db + mock model
+  latency-bench.mjs     wall-clock of a full turn against per-role latency
+                        injection (operator-invoked, not part of npm test)
   voice.mjs             speech normalization and lossless chunking regressions
   performance.mjs       latency measurement and transport-integrity regressions
   sources-agent.mjs     extraction, SSRF, injection, citations + bounded-agent tests
@@ -674,7 +676,12 @@ Chat.jsx handleSend
     → POST /api/chat              (server/index.js)
       → runCouncilTurn            (server/chatOrchestrate.js)
         → agentPrepare (only for sources/non-off mode; no answer channel)
-        → contextAssembly → observer → webSearch → strategist
+        ⊕ observer        (prompt = the raw user message alone, so its model
+          call runs concurrently with agent preparation and context assembly)
+        → contextAssembly → join observer, join memory relevance
+        → webSearch ⊕ strategist   (the plan reads the classification, the ids
+          and the source list — never the briefing — so it runs concurrently
+          with the search fetch and briefing) → join both
           → specialist → synthesizer → coherenceMonitor
           → critic ⟳ (coherence re-checked after any revision) → governor
           → governance-approved answer release
@@ -774,6 +781,9 @@ npm run performance    # latency instrumentation and no-prompt-change regression
 npm run sources-agent  # extraction, SSRF, prompt injection, citation, agent tests
 npm run identity       # immutable self-model, prompt, policy, API, and send-path checks
 npm run latency -- --limit=200 --days=7  # read-only p50/p95 production report
+npm run latency-bench -- --scenario=search-decomp
+                       # dev tool: turn wall-clock against injected per-role
+                       # latency; prints the per-call schedule
 npm run integrity      # governed stream, cancellation, structured API errors
 npm run autonomy       # Phase 19: the loop, the barrier, the outbox (42 checks)
 npm run phase20        # Phase 20: sub-agents, promotion, T3 reads (22 checks)
