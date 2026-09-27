@@ -353,7 +353,10 @@
           if (!benign(e)) startError = e;
         }
 
-        setStep('db', 'active');
+        // Mark the database step active WITHOUT auto-completing 'server':
+        // nothing gets a checkmark until the HTTP server actually answers.
+        // (setStep auto-completes earlier steps, which would show a premature ✓.)
+        stepEls['db'].classList.add('active');
         var bootT = Date.now();
         var deadline = bootT + 10 * 60 * 1000; // first launch unpacks the engine; can take minutes
         var lastNote = 0;
