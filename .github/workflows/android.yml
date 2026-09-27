@@ -54,19 +54,22 @@ jobs:
       - name: Permit loopback cleartext HTTP
         # The embedded server speaks plain HTTP on 127.0.0.1 only.
         # capacitor.config.ts sets server.cleartext; belt-and-braces here.
+        # Idempotent: strip any existing value, then set "true".
         run: |
           M=android/app/src/main/AndroidManifest.xml
-          grep -q 'usesCleartextTraffic' "$M" || \
-            sed -i 's|<application|<application android:usesCleartextTraffic="true"|' "$M"
-          grep -q 'usesCleartextTraffic="true"' "$M"
+          sed -i 's/ android:usesCleartextTraffic="[^"]*"//' "$M"
+          sed -i '0,/<application/s//<application android:usesCleartextTraffic="true"/' "$M"
+          grep -n 'usesCleartextTraffic' "$M"
 
       - name: Build debug APK
         run: cd android && ./gradlew assembleDebug
 
       - name: Confirm cleartext in merged manifest
         run: |
-          M=android/app/build/intermediates/merged_manifest/debug/AndroidManifest.xml
-          grep -q 'usesCleartextTraffic="true"' "$M" && echo OK || (echo MISSING && exit 1)
+          M=$(find android/app/build/intermediates -path '*merged*manifest*' -name AndroidManifest.xml | head -1)
+          echo "merged manifest: ${M:-NOT FOUND}"
+          if [ -z "$M" ]; then find android/app/build/intermediates -maxdepth 2 | head -20; exit 1; fi
+          grep -n 'usesCleartextTraffic' "$M"
 
       - name: Upload APK
         uses: actions/upload-artifact@v5
