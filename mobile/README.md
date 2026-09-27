@@ -32,9 +32,12 @@ The **model gateway** (`BLUESMINDS_API_KEY` / `OPENAI_API_KEY` in
 `server/llm.js`) and web search still call out. The database is local; the
 brains still phone home.
 
-To provide the key without rebuilding, drop a file named
-`bluesminds_api_key.txt` containing just the key into `<files>/cognos/`
-(e.g. via `adb push`) — `mobile/entry.mjs` picks it up at boot.
+To provide the key, just launch the app: on first run (or any run where
+no key is saved yet) it asks for your BluesMinds / OpenAI-compatible API key
+and stores it privately in `<files>/cognos/bluesminds_api_key.txt`
+(app-internal storage — no other app can read it). `mobile/entry.mjs` picks
+it up at boot. To change it later, reinstall the app and enter the new key
+when prompted.
 
 ## Building
 

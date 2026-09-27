@@ -5,56 +5,128 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>COGNOS</title>
 <style>
-  html, body { margin:0; height:100%; background:#0b0e14; color:#e8eaf0;
+  html, body { margin:0; min-height:100%; background:#0b0e14; color:#e8eaf0;
     font-family: system-ui, sans-serif; display:flex; align-items:center;
-    justify-content:center; flex-direction:column; gap:16px; }
+    justify-content:center; flex-direction:column; gap:16px; padding:24px;
+    box-sizing:border-box; }
   .spin { width:42px; height:42px; border-radius:50%;
     border:3px solid #2a3040; border-top-color:#7aa2ff;
     animation: s 0.9s linear infinite; }
   @keyframes s { to { transform: rotate(360deg); } }
   #msg { font-size:14px; opacity:.75; max-width:72vw; text-align:center; }
+  #keyform { display:none; flex-direction:column; gap:12px; width:min(92vw, 380px); }
+  #keyform h2 { font-size:18px; margin:0 0 4px; font-weight:600; }
+  #keyform p { font-size:13px; opacity:.7; margin:0 0 4px; line-height:1.5; }
+  #keyform input { background:#141926; border:1px solid #2a3040; color:#e8eaf0;
+    border-radius:10px; padding:12px 14px; font-size:15px; width:100%;
+    box-sizing:border-box; }
+  #keyform input:focus { outline:none; border-color:#7aa2ff; }
+  #keyform button { border:none; border-radius:10px; padding:13px; font-size:15px;
+    font-weight:600; cursor:pointer; }
+  #save { background:#7aa2ff; color:#0b0e14; }
+  #skip { background:transparent; color:#8a93a8; font-weight:400; font-size:13px; }
 </style>
 </head>
 <body>
-<div class="spin"></div>
+<div class="spin" id="spin"></div>
 <div id="msg">Starting COGNOS…</div>
+<form id="keyform">
+  <h2>Connect your AI model</h2>
+  <p>COGNOS keeps its database on this phone, but AI answers still come from
+     your model provider. Paste your BluesMinds (or OpenAI-compatible) API key —
+     it's stored privately inside the app, never leaves your device except to
+     call the model.</p>
+  <input id="keyinput" type="password" placeholder="API key" autocomplete="off"
+         autocapitalize="off" spellcheck="false" />
+  <button id="save" type="submit">Save &amp; start COGNOS</button>
+  <button id="skip" type="button">Continue without AI for now</button>
+</form>
 <script>
 (async () => {
-  const msg = (t) => { document.getElementById('msg').textContent = t; };
+  const msgEl = document.getElementById('msg');
+  const spinEl = document.getElementById('spin');
+  const formEl = document.getElementById('keyform');
+  const msg = (t) => { msgEl.textContent = t; };
   const PORT = 39391;
   const base = 'http://127.0.0.1:' + PORT;
-  try {
-    const Plugins = (window.Capacitor && window.Capacitor.Plugins) || {};
-    const NodeJS = Plugins.CapacitorNodeJS || Plugins.NodeJS;
-    const Filesystem = Plugins.Filesystem;
-    if (!NodeJS || !NodeJS.start) throw new Error('NodeJS plugin unavailable');
+  const KEY_PATH = 'cognos/bluesminds_api_key.txt';
 
-    // Internal-storage data dir: <app files>/cognos
-    let filesDir = '/data/data/app.cognos.acuity/files';
+  const Plugins = (window.Capacitor && window.Capacitor.Plugins) || {};
+  const Filesystem = Plugins.Filesystem;
+
+  async function keySaved() {
     try {
-      const r = await Filesystem.getUri({ directory: 'DATA', path: '' });
-      filesDir = String(r.uri).replace(/^file:\/\//, '').replace(/\/$/, '');
-    } catch (e) { /* keep the fallback above */ }
-    const dataDir = filesDir + '/cognos';
-
-    msg('Starting local server…');
-    await NodeJS.start({
-      script: 'entry.mjs',
-      env: { COGNOS_DATA_DIR: dataDir, PORT: String(PORT) },
-    });
-
-    msg('Opening your database…');
-    const deadline = Date.now() + 180000;
-    while (Date.now() < deadline) {
-      try {
-        await fetch(base + '/', { mode: 'no-cors', cache: 'no-store' });
-        break; // TCP connect succeeded — the server is up
-      } catch (e) { await new Promise(r => setTimeout(r, 500)); }
-    }
-    window.location.href = base + '/';
-  } catch (e) {
-    msg('Startup failed: ' + ((e && e.message) || e));
+      await Filesystem.readFile({ directory: 'DATA', path: KEY_PATH });
+      return true;
+    } catch (e) { return false; }
   }
+
+  async function saveKey(key) {
+    try { await Filesystem.mkdir({ directory: 'DATA', path: 'cognos' }); }
+    catch (e) { /* already exists */ }
+    await Filesystem.writeFile({ directory: 'DATA', path: KEY_PATH, data: key });
+  }
+
+  function askForKey() {
+    return new Promise((resolve) => {
+      spinEl.style.display = 'none';
+      msgEl.style.display = 'none';
+      formEl.style.display = 'flex';
+      const input = document.getElementById('keyinput');
+      setTimeout(() => input.focus(), 300);
+      formEl.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const key = input.value.trim();
+        if (!key) return;
+        try { await saveKey(key); } catch (err) { /* continue anyway */ }
+        resolve();
+      });
+      document.getElementById('skip').addEventListener('click', () => resolve());
+    }).finally(() => {
+      formEl.style.display = 'none';
+      spinEl.style.display = '';
+      msgEl.style.display = '';
+    });
+  }
+
+  async function boot() {
+    try {
+      const NodeJS = Plugins.CapacitorNodeJS || Plugins.NodeJS;
+      if (!NodeJS || !NodeJS.start) throw new Error('NodeJS plugin unavailable');
+
+      if (Filesystem && !(await keySaved())) {
+        await askForKey();
+      }
+
+      // Internal-storage data dir: <app files>/cognos
+      let filesDir = '/data/data/app.cognos.acuity/files';
+      try {
+        const r = await Filesystem.getUri({ directory: 'DATA', path: '' });
+        filesDir = String(r.uri).replace(/^file:\/\//, '').replace(/\/$/, '');
+      } catch (e) { /* keep the fallback above */ }
+      const dataDir = filesDir + '/cognos';
+
+      msg('Starting local server…');
+      await NodeJS.start({
+        script: 'entry.mjs',
+        env: { COGNOS_DATA_DIR: dataDir, PORT: String(PORT) },
+      });
+
+      msg('Opening your database…');
+      const deadline = Date.now() + 180000;
+      while (Date.now() < deadline) {
+        try {
+          await fetch(base + '/', { mode: 'no-cors', cache: 'no-store' });
+          break; // TCP connect succeeded — the server is up
+        } catch (e) { await new Promise(r => setTimeout(r, 500)); }
+      }
+      window.location.href = base + '/';
+    } catch (e) {
+      msg('Startup failed: ' + ((e && e.message) || e));
+    }
+  }
+
+  boot();
 })();
 </script>
 </body>
