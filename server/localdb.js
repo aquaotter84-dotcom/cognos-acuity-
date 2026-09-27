@@ -24,6 +24,29 @@ export async function bootLocalDatabase(logger) {
   const { PGLiteSocketServer } = await import("@electric-sql/pglite-socket");
   const dataDir = path.join(process.env.COGNOS_DATA_DIR, "pglite");
   fs.mkdirSync(dataDir, { recursive: true });
+  // Pre-flight: first launch copies ~213 MB of engine assets and PGlite
+  // writes back a ~39 MB cluster during initdb. Fail fast with an actionable
+  // message instead of a cryptic ErrnoError (ENOSPC) from inside PGlite.
+  // bavail (not bfree) is the space actually writable by this unprivileged
+  // process. A reading of exactly 0 is treated as "unknown" (some sandboxed
+  // filesystems report zero) — PGlite is allowed to try, and its properly
+  // serialized error will tell the truth if the disk really is full.
+  if (typeof fs.statfsSync === "function") {
+    try {
+      const st = fs.statfsSync(dataDir);
+      const freeMiB = Math.floor((Number(st.bavail) * Number(st.bsize)) / 1048576);
+      if (freeMiB > 0 && freeMiB < 400) {
+        throw new Error(
+          "localdb: only " + freeMiB + " MiB free in " + dataDir +
+          "; first launch needs ~350 MiB (engine copy + database init). " +
+          "Free up phone storage and retry."
+        );
+      }
+    } catch (e) {
+      if (e && e.message && e.message.indexOf("localdb: only") === 0) throw e;
+      // statfs unavailable or failed — continue and let PGlite try.
+    }
+  }
   const pglite = new PGlite({ dataDir });
   await pglite.waitReady;
   const pgServer = new PGLiteSocketServer({ db: pglite, port: 0, host: "127.0.0.1", maxConnections: 16 });

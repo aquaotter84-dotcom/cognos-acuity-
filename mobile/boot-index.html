@@ -87,6 +87,18 @@
   #errorcard pre { white-space: pre-wrap; word-break: break-word; background: #0e1420;
     border: 1px solid var(--border); border-radius: 8px; padding: 10px; max-height: 220px; overflow: auto; }
 
+  /* ---- In-place engine log (no timeout wait) ---- */
+  #viewlog {
+    display: block; margin: 10px auto 0; background: transparent; border: none;
+    color: var(--accent); font-size: 12.5px; cursor: pointer; padding: 6px 8px;
+  }
+  #logtext {
+    width: 100%; margin: 10px 0 0; text-align: left; font-size: 11px; color: var(--muted);
+    white-space: pre-wrap; word-break: break-word; background: var(--card);
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+    max-height: 220px; overflow: auto;
+  }
+
   .hidden { display: none !important; }
 </style>
 </head>
@@ -114,6 +126,8 @@
     <p class="tagline">Your mind, on your phone.<br/>Private by design.</p>
     <ol id="steps"></ol>
     <div id="subnote"></div>
+    <button id="viewlog" class="hidden" type="button">Taking longer than expected — view engine log</button>
+    <pre id="logtext" class="hidden"></pre>
   </div>
 
   <!-- API key view -->
@@ -253,14 +267,40 @@
   }
 
   // ---- Boot ------------------------------------------------------------------
-  function tailOf(name) {
+  function tailOf(name, maxLines) {
+    if (!Filesystem) return Promise.resolve(null);
     return Filesystem.readFile({ directory: 'DATA', path: 'cognos/' + name })
       .then(function (r) {
         var lines = String(r.data || '').split('\n');
-        var tail = lines.slice(-25).join('\n');
+        var tail = lines.slice(-(maxLines || 25)).join('\n');
         return tail || '(empty)';
       })
       .catch(function () { return null; });
+  }
+
+  // Current launch plus up to two rotated backups, newest first.
+  function collectLogs() {
+    return Promise.all([tailOf('boot.log', 60), tailOf('boot.prev.log', 60), tailOf('boot.prev2.log', 60)])
+      .then(function (tails) {
+        var labels = ['current launch', 'previous launch', 'launch before that'];
+        var parts = [];
+        tails.forEach(function (t, i) {
+          if (t) parts.push('--- ' + labels[i] + ' ---\n' + t);
+        });
+        return parts.length ? parts.join('\n\n') : null;
+      });
+  }
+
+  // Markers the engine writes to boot.log only when startup has failed.
+  var FATAL_MARKERS = ['entry: serve.js failed', 'UNCAUGHT', 'UNHANDLED_REJECTION', 'localdb: only'];
+  function logHasFatal() {
+    return tailOf('boot.log', 60).then(function (text) {
+      if (!text) return null;
+      for (var i = 0; i < FATAL_MARKERS.length; i++) {
+        if (text.indexOf(FATAL_MARKERS[i]) !== -1) return text;
+      }
+      return null;
+    });
   }
 
   function boot() {
@@ -317,6 +357,20 @@
         var bootT = Date.now();
         var deadline = bootT + 10 * 60 * 1000; // first launch unpacks the engine; can take minutes
         var lastNote = 0;
+        var lastFatalScan = 0;
+        var logLinkShown = false;
+        var viewLogBtn = document.getElementById('viewlog');
+        var logPre = document.getElementById('logtext');
+        viewLogBtn.addEventListener('click', function () {
+          viewLogBtn.disabled = true;
+          viewLogBtn.textContent = 'Loading engine log…';
+          collectLogs().then(function (t) {
+            logPre.textContent = t || '(no engine log found yet)';
+            logPre.classList.remove('hidden');
+            viewLogBtn.disabled = false;
+            viewLogBtn.textContent = 'Refresh engine log';
+          });
+        });
 
         function poll() {
           if (startError) throw startError;
@@ -329,6 +383,25 @@
                 lastNote = elapsed;
                 note('Still starting… ' + elapsed + 's elapsed.\nFirst launch unpacks the engine — please keep the app open.');
               }
+              if (elapsed >= 75 && !logLinkShown) {
+                logLinkShown = true;
+                viewLogBtn.classList.remove('hidden');
+              }
+              // Fail fast: the engine logs fatal startup errors to boot.log.
+              // If one is already there, show the error card now instead of
+              // waiting out the 10-minute deadline.
+              if (elapsed - lastFatalScan >= 5) {
+                lastFatalScan = elapsed;
+                return logHasFatal().then(function (fatalText) {
+                  if (fatalText) {
+                    var e = new Error('fail-fast');
+                    e.failFast = true;
+                    e.logText = fatalText;
+                    throw e;
+                  }
+                  return new Promise(function (r) { setTimeout(r, 1000); }).then(poll);
+                });
+              }
               return new Promise(function (r) { setTimeout(r, 1000); }).then(poll);
             }
           );
@@ -337,18 +410,24 @@
         return poll().then(function (up) {
           if (startError) throw startError;
           if (!up) {
-            // Pull the on-device engine log so the failure is diagnosable.
-            // Include the previous launch's log too: if the app was killed
-            // during startup, the rotated log holds the evidence.
-            return Promise.all([tailOf('boot.log'), tailOf('boot.prev.log')]).then(function (tails) {
-              var logText = tails[0] == null ? '(no engine boot log found)' : tails[0];
-              if (tails[1]) logText += '\n\n--- previous launch ---\n' + tails[1];
-              fail('The local server did not respond after 10 minutes.', logText);
+            // The engine never came up: pull the on-device engine log so the
+            // failure is diagnosable. Rotated backups are included: if the app
+            // was killed during startup, an earlier log holds the evidence.
+            return collectLogs().then(function (logText) {
+              fail('The local server did not respond after 10 minutes.',
+                   logText == null ? '(no engine boot log found)' : logText);
             });
           }
           setStep('ready', 'active');
           note('Almost there…');
           setTimeout(function () { window.location.href = base + '/'; }, 450);
+        }).catch(function (e) {
+          if (e && e.failFast) {
+            return collectLogs().then(function (logText) {
+              fail('The local server failed during startup.', logText || e.logText || null);
+            });
+          }
+          fail('Startup failed: ' + ((e && e.message) || e), null);
         });
       });
     }).catch(function (e) {

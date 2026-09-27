@@ -39,6 +39,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Run tests
+        # A test failure stops the job before the APK is built.
+        run: npm test
+
       - name: Build web app
         run: npm run build
 
