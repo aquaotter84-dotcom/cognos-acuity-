@@ -25,6 +25,14 @@ function bootLog(line) {
 if (bootLogPath) {
   try {
     fs.mkdirSync(path.dirname(bootLogPath), { recursive: true });
+    // Rotate: keep the previous launch's log. If the app was killed during
+    // startup ("keeps stopping"), the evidence survives this relaunch and
+    // the boot page can show it instead of it being wiped here.
+    try {
+      if (fs.existsSync(bootLogPath)) {
+        fs.renameSync(bootLogPath, path.join(path.dirname(bootLogPath), "boot.prev.log"));
+      }
+    } catch { /* rotation is best-effort */ }
     fs.writeFileSync(
       bootLogPath,
       new Date().toISOString() + " entry: boot, node " + process.version +

@@ -25,7 +25,11 @@ import { formatStructuredMemory } from "./memory/structure.js";
 // constant changes nothing about resolution: resolveModel() and the defaults
 // below are byte-for-byte what they were.
 export const BANNED_MODELS = new Set(["gpt_5_4", "gpt-5-4"]);
-const DEFAULT_MODEL = "gpt-4o-mini";
+// Default model: verified live against the BluesMinds account on 2026-09-27.
+// gpt-4o-mini (the old default) returns "model not found" on this account;
+// several listed models are end-of-life (410) or time out. openai/gpt-oss-20b
+// answered test completions in ~1.5s. Override with COGNOS_MODEL.
+const DEFAULT_MODEL = "openai/gpt-oss-20b";
 const DEFAULT_BASE_URL = "https://api.bluesminds.com/v1";
 
 export function resolveModel(requested) {
@@ -450,7 +454,10 @@ export async function callLLM(ctx, { messages, responseJsonSchema = null, model 
                 timing.returnedServiceTier = chunk?.service_tier || timing.returnedServiceTier;
                 const cached = chunk?.usage?.prompt_tokens_details?.cached_tokens;
                 if (cached != null) timing.promptCachedTokens = Number(cached);
-                const delta = chunk?.choices?.[0]?.delta?.content;
+                const deltaMsg = chunk?.choices?.[0]?.delta;
+                // Some providers (e.g. gpt-oss) stream reasoning text instead
+                // of content on reasoning-heavy turns; accept either.
+                const delta = deltaMsg?.content ?? deltaMsg?.reasoning_content ?? deltaMsg?.reasoning;
                 if (delta) { streamedText += delta; onToken?.(delta); }
               } catch { /* malformed isolated chunks carry no answer data */ }
             }
@@ -476,7 +483,10 @@ export async function callLLM(ctx, { messages, responseJsonSchema = null, model 
         }
         throwIfAborted(externalSignal);
 
-        const content = data?.choices?.[0]?.message?.content ?? "";
+        // Reasoning-first providers (e.g. gpt-oss) may put the answer in
+        // reasoning_content/reasoning with content null; accept either.
+        const message = data?.choices?.[0]?.message;
+        const content = message?.content ?? message?.reasoning_content ?? message?.reasoning ?? "";
         const usage = data?.usage || null;
         if (!responseJsonSchema) {
           reportAttempt({

@@ -153,14 +153,22 @@
       if (startError) throw startError;
       if (!up) {
         // Pull the on-device engine log so the failure is diagnosable.
-        let logTail = '(no engine boot log found)';
-        try {
-          const r = await Filesystem.readFile({ directory: 'DATA', path: 'cognos/boot.log' });
-          const lines = String(r.data || '').split('\n');
-          logTail = lines.slice(-25).join('\n') || '(boot log empty)';
-        } catch (e) { /* leave the fallback text */ }
+        // Include the previous launch's log too: if the app was killed
+        // during startup, the rotated log holds the evidence.
+        async function tailOf(name) {
+          try {
+            const r = await Filesystem.readFile({ directory: 'DATA', path: 'cognos/' + name });
+            const lines = String(r.data || '').split('\n');
+            const tail = lines.slice(-25).join('\n');
+            return tail || '(empty)';
+          } catch (e) { return null; }
+        }
+        const logTail = await tailOf('boot.log');
+        const prevTail = await tailOf('boot.prev.log');
+        let logText = logTail == null ? '(no engine boot log found)' : logTail;
+        if (prevTail) logText += '\n\n--- previous launch ---\n' + prevTail;
         spinEl.style.display = 'none';
-        msg('Could not reach the local server after 10 minutes.\n\nEngine log:\n' + logTail);
+        msg('Could not reach the local server after 10 minutes.\n\nEngine log:\n' + logText);
         return;
       }
       window.location.href = base + '/';
