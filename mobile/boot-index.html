@@ -13,7 +13,8 @@
     border:3px solid #2a3040; border-top-color:#7aa2ff;
     animation: s 0.9s linear infinite; }
   @keyframes s { to { transform: rotate(360deg); } }
-  #msg { font-size:14px; opacity:.75; max-width:72vw; text-align:center; }
+  #msg { font-size:14px; opacity:.75; max-width:72vw; text-align:center;
+    white-space:pre-line; }
   #keyform { display:none; flex-direction:column; gap:12px; width:min(92vw, 380px); }
   #keyform h2 { font-size:18px; margin:0 0 4px; font-weight:600; }
   #keyform p { font-size:13px; opacity:.7; margin:0 0 4px; line-height:1.5; }
@@ -106,19 +107,61 @@
       } catch (e) { /* keep the fallback above */ }
       const dataDir = filesDir + '/cognos';
 
+      // NOTE: NodeJS.start() only resolves when the Node process EXITS — the
+      // plugin settles the call after node::Start() returns. COGNOS is a
+      // long-running server, so that promise never settles. Start the engine
+      // fire-and-forget and use the HTTP health check below as the real
+      // "server is ready" signal instead of awaiting start().
       msg('Starting local server…');
-      await NodeJS.start({
-        script: 'entry.mjs',
-        env: { COGNOS_DATA_DIR: dataDir, PORT: String(PORT) },
-      });
+      let startError = null;
+      const benign = (e) =>
+        String((e && e.message) || e || '').includes('already been started');
+      try {
+        const p = NodeJS.start({
+          script: 'entry.mjs',
+          env: { COGNOS_DATA_DIR: dataDir, PORT: String(PORT) },
+        });
+        if (p && typeof p.catch === 'function') {
+          // Surface genuine startup failures (e.g. project copy failed);
+          // "already been started" just means the server survived an app
+          // restart — the health check below will confirm it's up.
+          p.catch((e) => { if (!benign(e)) startError = e; });
+        }
+      } catch (e) {
+        if (!benign(e)) startError = e;
+      }
 
       msg('Opening your database…');
-      const deadline = Date.now() + 180000;
+      const bootT = Date.now();
+      const deadline = bootT + 10 * 60 * 1000; // first launch unpacks the engine; can take minutes
+      let lastNote = 0;
+      let up = false;
       while (Date.now() < deadline) {
+        if (startError) throw startError;
         try {
           await fetch(base + '/', { mode: 'no-cors', cache: 'no-store' });
+          up = true;
           break; // TCP connect succeeded — the server is up
-        } catch (e) { await new Promise(r => setTimeout(r, 500)); }
+        } catch (e) { /* not listening yet */ }
+        const elapsed = Math.floor((Date.now() - bootT) / 1000);
+        if (elapsed - lastNote >= 20) {
+          lastNote = elapsed;
+          msg('Still starting… ' + elapsed + 's elapsed.\nFirst launch unpacks the engine — please keep the app open.');
+        }
+        await new Promise(r => setTimeout(r, 1000));
+      }
+      if (startError) throw startError;
+      if (!up) {
+        // Pull the on-device engine log so the failure is diagnosable.
+        let logTail = '(no engine boot log found)';
+        try {
+          const r = await Filesystem.readFile({ directory: 'DATA', path: 'cognos/boot.log' });
+          const lines = String(r.data || '').split('\n');
+          logTail = lines.slice(-25).join('\n') || '(boot log empty)';
+        } catch (e) { /* leave the fallback text */ }
+        spinEl.style.display = 'none';
+        msg('Could not reach the local server after 10 minutes.\n\nEngine log:\n' + logTail);
+        return;
       }
       window.location.href = base + '/';
     } catch (e) {
