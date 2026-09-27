@@ -4,7 +4,7 @@
 // workspace instructions editor (which feeds buildContextSystemPrompt verbatim),
 // local browser voice preferences, and runtime status from /api/health.
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Menu, Check, Square, Volume2, ShieldAlert, Scale } from 'lucide-react';
+import { Settings as SettingsIcon, Menu, Check, Square, Volume2, ShieldAlert, Scale, KeyRound, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
 import { useVoice } from '@/lib/voiceContext';
@@ -37,6 +37,101 @@ function GovernanceToggle({ label, hint, on, canToggle, refusal, busy, onFlip })
         <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-background shadow transition-transform ${on ? 'translate-x-5' : ''}`} />
       </button>
     </div>
+  );
+}
+
+/** Change or remove the on-device model API key — no reinstall needed. */
+function ModelKeySection({ onChanged }) {
+  const [status, setStatus] = useState(null);
+  const [keyInput, setKeyInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState(null); // { ok, text }
+
+  const refresh = () => api.modelKeyStatus().then(setStatus).catch(() => setStatus(null));
+  useEffect(() => { refresh(); }, []);
+
+  const save = async () => {
+    setBusy(true); setMessage(null);
+    try {
+      await api.setModelKey(keyInput);
+      setKeyInput('');
+      await refresh();
+      onChanged?.();
+      setMessage({ ok: true, text: 'Key saved — it takes effect immediately, no restart needed.' });
+    } catch (e) { setMessage({ ok: false, text: e.message || 'Could not save the key.' }); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async () => {
+    if (!window.confirm('Remove the saved API key? COGNOS won\u2019t be able to answer until you add a new one.')) return;
+    setBusy(true); setMessage(null);
+    try {
+      await api.clearModelKey();
+      await refresh();
+      onChanged?.();
+      setMessage({ ok: true, text: 'Key removed.' });
+    } catch (e) { setMessage({ ok: false, text: e.message || 'Could not remove the key.' }); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <section className="space-y-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI model key</h3>
+      <div className="rounded-xl border border-border bg-card p-3 space-y-3 text-xs">
+        {status === null ? (
+          <p className="text-muted-foreground">Loading…</p>
+        ) : status.managed === 'environment' ? (
+          <p className="text-muted-foreground leading-relaxed">
+            The model key for this install is managed by the server environment, so it can't be
+            changed here. {status.configured ? 'A key is configured.' : 'No key is configured yet.'}
+          </p>
+        ) : (
+          <>
+            <div className="flex items-start gap-2">
+              <KeyRound className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
+              <p className="text-muted-foreground leading-relaxed">
+                {status.configured
+                  ? 'A key is saved on this device. Paste a new one below to replace it — or remove it entirely.'
+                  : 'No key is saved yet, so COGNOS can\u2019t answer. Paste your BluesMinds (or OpenAI-compatible) API key below.'}
+              </p>
+            </div>
+            <input
+              type="password"
+              value={keyInput}
+              onChange={e => setKeyInput(e.target.value)}
+              placeholder="Paste new API key"
+              autoComplete="off" autoCapitalize="off" spellCheck="false"
+              className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/50"
+            />
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={save}
+                disabled={busy || !keyInput.trim()}
+                className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
+              >
+                {busy ? 'Saving…' : 'Save new key'}
+              </button>
+              {status.configured && (
+                <button
+                  onClick={remove}
+                  disabled={busy}
+                  className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Remove key
+                </button>
+              )}
+            </div>
+            {message && (
+              <p className={message.ok ? 'text-green-500' : 'text-destructive'}>{message.text}</p>
+            )}
+            <p className="text-muted-foreground/60 leading-relaxed">
+              The key is stored privately inside the app — no other app can read it — and is only
+              ever sent to your model provider when answering.
+            </p>
+          </>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -118,9 +213,10 @@ export default function Settings() {
             </button>
           </section>
 
+          <ModelKeySection onChanged={() => api.health().then(setHealth).catch(() => {})} />
+
           <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Voice</h3>
-            <div className="rounded-xl border border-border bg-card p-3 space-y-4 text-xs">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Voice</h3>            <div className="rounded-xl border border-border bg-card p-3 space-y-4 text-xs">
               {!voice.supported ? (
                 <p className="text-muted-foreground leading-relaxed">
                   Speech output is not available in this browser. COGNOS will continue to work normally in text mode.

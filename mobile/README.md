@@ -36,8 +36,10 @@ To provide the key, just launch the app: on first run (or any run where
 no key is saved yet) it asks for your BluesMinds / OpenAI-compatible API key
 and stores it privately in `<files>/cognos/bluesminds_api_key.txt`
 (app-internal storage — no other app can read it). `mobile/entry.mjs` picks
-it up at boot. To change it later, reinstall the app and enter the new key
-when prompted.
+it up at boot. To change it later, open **Settings → AI model key** in the
+app — no reinstall needed. (`POST /api/settings/model-key` rewrites the file
+and updates `process.env`, and `server/llm.js` reads it per call, so the new
+key takes effect immediately.)
 
 ## Building
 

@@ -102,6 +102,7 @@ import { registerCouncilRoutes } from "./routes/council.js";
 import { autonomyConfig } from "./autonomy/config.js";
 import { registerProjectRoutes } from "./routes/projects.js";
 import { registerGraphRoutes } from "./routes/graph.js";
+import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerAccountRoutes } from "./routes/accounts.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { googleConfigured } from "./accounts/google.js";
@@ -345,6 +346,7 @@ registerSourceRoutes(app, { wrap, db, logger });
 registerAutonomyRoutes(app, { wrap, db, logger });
 registerCouncilRoutes(app, { wrap, db, logger });
 registerGraphRoutes(app, { wrap, db, logger });
+registerSettingsRoutes(app, { wrap, logger });
 
 // --- Static frontend (self-hosted only) -------------------------------------
 // On Vercel the built SPA is served by the CDN via vercel.json rewrites, so this

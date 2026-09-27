@@ -63,6 +63,11 @@ export const api = {
   health: () => req("/api/health"),
   identity: () => req("/api/identity"),
 
+  // --- On-device model key (Settings) --------------------------------------
+  modelKeyStatus: () => req("/api/settings/model-key"),
+  setModelKey: (key) => req("/api/settings/model-key", { method: "POST", body: { key } }),
+  clearModelKey: () => req("/api/settings/model-key", { method: "DELETE" }),
+
   getWorkspace: () => req("/api/workspace"),
   updateWorkspace: (data) => req("/api/workspace", { method: "PATCH", body: data }),
 
