@@ -5,3 +5,6 @@ dist
 
 # Android APK build output (assembled in CI)
 mobile-dist
+
+# Capacitor Android project (generated in CI)
+android
