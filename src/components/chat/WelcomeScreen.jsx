@@ -1,15 +1,30 @@
-// Ported from the original src/components/chat/WelcomeScreen.jsx.
-// DIVERGENCE: the original logo was hosted on media.base44.com. That URL is a
-// Base44 asset, so it is replaced with an inline SVG mark — no platform domain.
-// Copy and suggestion cards are unchanged.
+// Plain-language welcome: say what COGNOS does for the user, and let the
+// suggestion cards demo what makes it different — deep research with a plan
+// you approve, memory that sticks, and reasoning you can watch.
 
-import { Sparkles, BookOpen, Cpu, Code } from 'lucide-react';
+import { FlaskConical, Brain, Network, MessagesSquare } from 'lucide-react';
 
 const suggestions = [
-  { icon: Cpu, title: 'Meet COGNOS', text: 'Explain what COGNOS is, how every part works, what you can do, and your limits' },
-  { icon: Sparkles, title: 'Brainstorm ideas', text: 'Help me brainstorm ideas for a new project' },
-  { icon: BookOpen, title: 'Explain a concept', text: 'Explain how neural networks work in simple terms' },
-  { icon: Code, title: 'Write code', text: 'Write a Python function to sort a list of dictionaries' },
+  {
+    icon: FlaskConical,
+    title: 'Research something deeply',
+    text: 'Research the best way to winterize a house — propose your plan before you open a single page',
+  },
+  {
+    icon: Brain,
+    title: 'Remember this about me',
+    text: 'Remember that I like short, plain answers — what should you learn about me next?',
+  },
+  {
+    icon: Network,
+    title: 'What have you learned?',
+    text: 'Summarize what you have learned about me from our conversations so far',
+  },
+  {
+    icon: MessagesSquare,
+    title: 'Think it through with me',
+    text: 'Help me think through a big decision, step by step',
+  },
 ];
 
 function Mark() {
@@ -39,7 +54,7 @@ export default function WelcomeScreen({ onSuggestion }) {
       <Mark />
       <h1 className="text-2xl font-bold tracking-tight mb-2">Welcome to COGNOS</h1>
       <p className="text-sm text-muted-foreground mb-8 text-center max-w-md">
-        A governed AI reasoning council with one identity, visible evidence, bounded tools, and a sovereign final-answer gate.
+        An AI that thinks out loud, remembers what matters, and keeps everything on this phone.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
         {suggestions.map(({ icon: Icon, title, text }) => (

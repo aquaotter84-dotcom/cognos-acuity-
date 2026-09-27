@@ -2,181 +2,361 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>COGNOS</title>
 <style>
-  html, body { margin:0; min-height:100%; background:#0b0e14; color:#e8eaf0;
-    font-family: system-ui, sans-serif; display:flex; align-items:center;
-    justify-content:center; flex-direction:column; gap:16px; padding:24px;
-    box-sizing:border-box; }
-  .spin { width:42px; height:42px; border-radius:50%;
-    border:3px solid #2a3040; border-top-color:#7aa2ff;
-    animation: s 0.9s linear infinite; }
-  @keyframes s { to { transform: rotate(360deg); } }
-  #msg { font-size:14px; opacity:.75; max-width:72vw; text-align:center;
-    white-space:pre-line; }
-  #keyform { display:none; flex-direction:column; gap:12px; width:min(92vw, 380px); }
-  #keyform h2 { font-size:18px; margin:0 0 4px; font-weight:600; }
-  #keyform p { font-size:13px; opacity:.7; margin:0 0 4px; line-height:1.5; }
-  #keyform input { background:#141926; border:1px solid #2a3040; color:#e8eaf0;
-    border-radius:10px; padding:12px 14px; font-size:15px; width:100%;
-    box-sizing:border-box; }
-  #keyform input:focus { outline:none; border-color:#7aa2ff; }
-  #keyform button { border:none; border-radius:10px; padding:13px; font-size:15px;
-    font-weight:600; cursor:pointer; }
-  #save { background:#7aa2ff; color:#0b0e14; }
-  #skip { background:transparent; color:#8a93a8; font-weight:400; font-size:13px; }
+  :root {
+    --bg: #0b0e14;
+    --card: #121826;
+    --border: #2a3040;
+    --text: #e8eaf0;
+    --muted: #8a93a8;
+    --accent: #7aa2ff;
+    --accent-dim: rgba(122, 162, 255, 0.12);
+    --green: #5fd08a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; min-height: 100%; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    padding: calc(env(safe-area-inset-top, 0px) + 24px) 24px
+             calc(env(safe-area-inset-bottom, 0px) + 24px);
+  }
+  .wrap { width: min(92vw, 400px); display: flex; flex-direction: column; align-items: center; }
+
+  /* ---- Brand ---- */
+  .mark { width: 96px; height: 96px; margin-bottom: 18px; }
+  .mark .pulse { transform-origin: 100px 100px; animation: pulse 2.6s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: .35; } 50% { opacity: .9; } }
+  .wordmark { font-size: 26px; font-weight: 700; letter-spacing: 0.32em; text-indent: 0.32em; margin: 0 0 6px; }
+  .tagline { font-size: 13px; color: var(--muted); margin: 0 0 30px; text-align: center; line-height: 1.5; }
+
+  /* ---- Staged progress ---- */
+  #steps { list-style: none; margin: 0 0 8px; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 14px; }
+  .step { display: flex; align-items: center; gap: 12px; font-size: 14px; color: var(--muted); transition: color .3s; }
+  .step .dot {
+    width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    border: 2px solid var(--border); background: transparent;
+    font-size: 13px; font-weight: 700; color: transparent;
+    transition: border-color .3s, background .3s;
+  }
+  .step.active { color: var(--text); }
+  .step.active .dot { border-color: var(--border); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .step.done { color: var(--muted); }
+  .step.done .dot { border-color: var(--green); background: var(--green); color: #0b0e14; animation: none; }
+  .step.done .dot::after { content: "✓"; }
+  #subnote {
+    font-size: 12px; color: var(--muted); opacity: .8; text-align: center;
+    min-height: 2.6em; line-height: 1.5; max-width: 34ch; white-space: pre-line;
+  }
+
+  /* ---- API key card ---- */
+  #keyform { display: none; width: 100%; flex-direction: column; gap: 12px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 22px 20px; }
+  #keyform .mark { width: 56px; height: 56px; margin: 0 auto 4px; }
+  #keyform .mark .pulse { animation: none; opacity: .7; }
+  #keyform h2 { font-size: 19px; margin: 0; font-weight: 700; text-align: center; }
+  #keyform .lede { font-size: 13.5px; color: var(--text); opacity: .92; margin: 0; line-height: 1.6; }
+  #keyform .fine { font-size: 12px; color: var(--muted); margin: 0; line-height: 1.6; }
+  #keyform input {
+    background: #0e1420; border: 1px solid var(--border); color: var(--text);
+    border-radius: 10px; padding: 13px 14px; font-size: 15px; width: 100%;
+  }
+  #keyform input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  #keyform button { border: none; border-radius: 10px; padding: 14px; font-size: 15px; font-weight: 700; cursor: pointer; width: 100%; }
+  #save { background: var(--accent); color: #0b0e14; }
+  #save:active { filter: brightness(1.1); }
+  #save:disabled { opacity: .5; }
+  #skip { background: transparent; color: var(--muted); font-weight: 400; font-size: 13px; padding: 8px; }
+
+  /* ---- Error card ---- */
+  #errorcard { display: none; width: 100%; flex-direction: column; gap: 12px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 22px 20px; text-align: center; }
+  #errorcard h2 { font-size: 17px; margin: 0; }
+  #errorcard p { font-size: 13px; color: var(--muted); line-height: 1.6; margin: 0; }
+  #retry { background: var(--accent); color: #0b0e14; border: none; border-radius: 10px;
+    padding: 13px; font-size: 15px; font-weight: 700; cursor: pointer; width: 100%; }
+  #errorcard details { text-align: left; font-size: 11px; color: var(--muted); }
+  #errorcard summary { cursor: pointer; padding: 6px 0; }
+  #errorcard pre { white-space: pre-wrap; word-break: break-word; background: #0e1420;
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px; max-height: 220px; overflow: auto; }
+
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
-<div class="spin" id="spin"></div>
-<div id="msg">Starting COGNOS…</div>
-<form id="keyform">
-  <h2>Connect your AI model</h2>
-  <p>COGNOS keeps its database on this phone, but AI answers still come from
-     your model provider. Paste your BluesMinds (or OpenAI-compatible) API key —
-     it's stored privately inside the app, never leaves your device except to
-     call the model.</p>
-  <input id="keyinput" type="password" placeholder="API key" autocomplete="off"
-         autocapitalize="off" spellcheck="false" />
-  <button id="save" type="submit">Save &amp; start COGNOS</button>
-  <button id="skip" type="button">Continue without AI for now</button>
-</form>
+<div class="wrap">
+
+  <!-- Boot / splash view -->
+  <div id="bootview" class="wrap" style="width:100%">
+    <svg class="mark" viewBox="0 0 200 200" aria-hidden="true">
+      <defs>
+        <radialGradient id="cg" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#7aa2ff" stop-opacity="0.9" />
+          <stop offset="100%" stop-color="#9b7bff" stop-opacity="0.15" />
+        </radialGradient>
+      </defs>
+      <circle cx="100" cy="100" r="72" fill="url(#cg)" />
+      <circle class="pulse" cx="100" cy="100" r="72" fill="none" stroke="#7aa2ff" stroke-opacity="0.5" stroke-width="1" />
+      <circle cx="100" cy="100" r="46" fill="none" stroke="#9b7bff" stroke-opacity="0.6" stroke-width="1" />
+      <circle cx="100" cy="100" r="20" fill="none" stroke="#7aa2ff" stroke-opacity="0.8" stroke-width="1.5" />
+      <circle cx="146" cy="100" r="3.5" fill="#a9c2ff"/><circle cx="123" cy="139.8" r="3.5" fill="#a9c2ff"/>
+      <circle cx="77" cy="139.8" r="3.5" fill="#a9c2ff"/><circle cx="54" cy="100" r="3.5" fill="#a9c2ff"/>
+      <circle cx="77" cy="60.2" r="3.5" fill="#a9c2ff"/><circle cx="123" cy="60.2" r="3.5" fill="#a9c2ff"/>
+    </svg>
+    <h1 class="wordmark">COGNOS</h1>
+    <p class="tagline">Your mind, on your phone.<br/>Private by design.</p>
+    <ol id="steps"></ol>
+    <div id="subnote"></div>
+  </div>
+
+  <!-- API key view -->
+  <form id="keyform">
+    <svg class="mark" viewBox="0 0 200 200" aria-hidden="true">
+      <defs>
+        <radialGradient id="cg2" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#7aa2ff" stop-opacity="0.9" />
+          <stop offset="100%" stop-color="#9b7bff" stop-opacity="0.15" />
+        </radialGradient>
+      </defs>
+      <circle cx="100" cy="100" r="72" fill="url(#cg2)" />
+      <circle class="pulse" cx="100" cy="100" r="72" fill="none" stroke="#7aa2ff" stroke-opacity="0.5" stroke-width="1" />
+      <circle cx="100" cy="100" r="46" fill="none" stroke="#9b7bff" stroke-opacity="0.6" stroke-width="1" />
+      <circle cx="100" cy="100" r="20" fill="none" stroke="#7aa2ff" stroke-opacity="0.8" stroke-width="1.5" />
+    </svg>
+    <h2>Give COGNOS a brain</h2>
+    <p class="lede">Everything COGNOS remembers — your chats, notes, projects — lives in a
+      database <strong>on this phone</strong> and never leaves it. But to think and answer,
+      it calls an AI model over the internet, and that needs an API key.</p>
+    <input id="keyinput" type="password" placeholder="Paste your API key"
+           autocomplete="off" autocapitalize="off" spellcheck="false" />
+    <p class="fine">Use a key from BluesMinds, or any service that speaks the OpenAI API.
+      It's stored privately inside this app — no other app can read it.</p>
+    <button id="save" type="submit">Save key &amp; start</button>
+    <button id="skip" type="button">Skip for now</button>
+    <p class="fine" style="text-align:center">No key yet? Skip — you'll be asked again next time you open the app.</p>
+  </form>
+
+  <!-- Error view -->
+  <div id="errorcard">
+    <h2>COGNOS couldn't start</h2>
+    <p id="errormsg">Something went wrong while starting the on-device server.
+      Try again — if this keeps happening, the engine log below may say why.</p>
+    <button id="retry" type="button">Try again</button>
+    <details>
+      <summary>Engine log</summary>
+      <pre id="errorlog">(no log yet)</pre>
+    </details>
+  </div>
+
+</div>
 <script>
-(async () => {
-  const msgEl = document.getElementById('msg');
-  const spinEl = document.getElementById('spin');
-  const formEl = document.getElementById('keyform');
-  const msg = (t) => { msgEl.textContent = t; };
-  const PORT = 39391;
-  const base = 'http://127.0.0.1:' + PORT;
-  const KEY_PATH = 'cognos/bluesminds_api_key.txt';
+(function () {
+  'use strict';
+  var bootView = document.getElementById('bootview');
+  var stepsEl = document.getElementById('steps');
+  var subEl = document.getElementById('subnote');
+  var formEl = document.getElementById('keyform');
+  var errorCard = document.getElementById('errorcard');
 
-  const Plugins = (window.Capacitor && window.Capacitor.Plugins) || {};
-  const Filesystem = Plugins.Filesystem;
+  var PORT = 39391;
+  var base = 'http://127.0.0.1:' + PORT;
+  var KEY_PATH = 'cognos/bluesminds_api_key.txt';
 
-  async function keySaved() {
-    try {
-      await Filesystem.readFile({ directory: 'DATA', path: KEY_PATH });
-      return true;
-    } catch (e) { return false; }
+  var Plugins = (window.Capacitor && window.Capacitor.Plugins) || {};
+  var Filesystem = Plugins.Filesystem;
+
+  // ---- Staged progress ----------------------------------------------------
+  var STEP_DEFS = [
+    { id: 'server', label: 'Starting the local server' },
+    { id: 'db',     label: 'Opening your database' },
+    { id: 'ready',  label: 'Getting your workspace ready' },
+  ];
+  var stepEls = {};
+  STEP_DEFS.forEach(function (s) {
+    var li = document.createElement('li');
+    li.className = 'step';
+    li.innerHTML = '<span class="dot"></span><span></span>';
+    li.lastChild.textContent = s.label;
+    stepsEl.appendChild(li);
+    stepEls[s.id] = li;
+  });
+  function setStep(id, state) {
+    // state: 'active' | 'done' — earlier steps auto-complete when a later one activates
+    var seen = false;
+    STEP_DEFS.forEach(function (s) {
+      var el = stepEls[s.id];
+      el.classList.remove('active', 'done');
+      if (s.id === id) { el.classList.add(state === 'done' ? 'done' : 'active'); seen = true; }
+      else if (!seen) { el.classList.add('done'); }
+    });
   }
+  function note(t) { subEl.textContent = t || ''; }
 
-  async function saveKey(key) {
-    try { await Filesystem.mkdir({ directory: 'DATA', path: 'cognos' }); }
-    catch (e) { /* already exists */ }
-    await Filesystem.writeFile({ directory: 'DATA', path: KEY_PATH, data: key });
+  // ---- Views ---------------------------------------------------------------
+  function show(view) {
+    bootView.classList.toggle('hidden', view !== 'boot');
+    formEl.style.display = view === 'key' ? 'flex' : 'none';
+    errorCard.style.display = view === 'error' ? 'flex' : 'none';
   }
+  function fail(friendly, logText) {
+    document.getElementById('errormsg').textContent = friendly;
+    document.getElementById('errorlog').textContent = logText || '(no engine log found)';
+    show('error');
+  }
+  document.getElementById('retry').addEventListener('click', function () {
+    window.location.reload();
+  });
 
-  function askForKey() {
-    return new Promise((resolve) => {
-      spinEl.style.display = 'none';
-      msgEl.style.display = 'none';
-      formEl.style.display = 'flex';
-      const input = document.getElementById('keyinput');
-      setTimeout(() => input.focus(), 300);
-      formEl.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const key = input.value.trim();
-        if (!key) return;
-        try { await saveKey(key); } catch (err) { /* continue anyway */ }
-        resolve();
+  // ---- Key storage ----------------------------------------------------------
+  function keySaved() {
+    return Filesystem.readFile({ directory: 'DATA', path: KEY_PATH })
+      .then(function () { return true; })
+      .catch(function () { return false; });
+  }
+  function saveKey(key) {
+    return Filesystem.mkdir({ directory: 'DATA', path: 'cognos' })
+      .catch(function () { /* already exists */ })
+      .then(function () {
+        return Filesystem.writeFile({ directory: 'DATA', path: KEY_PATH, data: key });
       });
-      document.getElementById('skip').addEventListener('click', () => resolve());
-    }).finally(() => {
-      formEl.style.display = 'none';
-      spinEl.style.display = '';
-      msgEl.style.display = '';
+  }
+  function askForKey() {
+    return new Promise(function (resolve) {
+      show('key');
+      var input = document.getElementById('keyinput');
+      var saveBtn = document.getElementById('save');
+      setTimeout(function () { input.focus(); }, 300);
+      formEl.addEventListener('submit', function onSubmit(e) {
+        e.preventDefault();
+        var key = input.value.trim();
+        if (!key) return;
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving…';
+        saveKey(key).catch(function () { /* continue anyway */ }).then(function () {
+          formEl.removeEventListener('submit', onSubmit);
+          show('boot');
+          resolve();
+        });
+      });
+      document.getElementById('skip').addEventListener('click', function onSkip() {
+        show('boot');
+        resolve();
+      }, { once: true });
     });
   }
 
-  async function boot() {
-    try {
-      const NodeJS = Plugins.CapacitorNodeJS || Plugins.NodeJS;
-      if (!NodeJS || !NodeJS.start) throw new Error('NodeJS plugin unavailable');
-
-      if (Filesystem && !(await keySaved())) {
-        await askForKey();
-      }
-
-      // Internal-storage data dir: <app files>/cognos
-      let filesDir = '/data/data/app.cognos.acuity/files';
-      try {
-        const r = await Filesystem.getUri({ directory: 'DATA', path: '' });
-        filesDir = String(r.uri).replace(/^file:\/\//, '').replace(/\/$/, '');
-      } catch (e) { /* keep the fallback above */ }
-      const dataDir = filesDir + '/cognos';
-
-      // NOTE: NodeJS.start() only resolves when the Node process EXITS — the
-      // plugin settles the call after node::Start() returns. COGNOS is a
-      // long-running server, so that promise never settles. Start the engine
-      // fire-and-forget and use the HTTP health check below as the real
-      // "server is ready" signal instead of awaiting start().
-      msg('Starting local server…');
-      let startError = null;
-      const benign = (e) =>
-        String((e && e.message) || e || '').includes('already been started');
-      try {
-        const p = NodeJS.start({
-          script: 'entry.mjs',
-          env: { COGNOS_DATA_DIR: dataDir, PORT: String(PORT) },
-        });
-        if (p && typeof p.catch === 'function') {
-          // Surface genuine startup failures (e.g. project copy failed);
-          // "already been started" just means the server survived an app
-          // restart — the health check below will confirm it's up.
-          p.catch((e) => { if (!benign(e)) startError = e; });
-        }
-      } catch (e) {
-        if (!benign(e)) startError = e;
-      }
-
-      msg('Opening your database…');
-      const bootT = Date.now();
-      const deadline = bootT + 10 * 60 * 1000; // first launch unpacks the engine; can take minutes
-      let lastNote = 0;
-      let up = false;
-      while (Date.now() < deadline) {
-        if (startError) throw startError;
-        try {
-          await fetch(base + '/', { mode: 'no-cors', cache: 'no-store' });
-          up = true;
-          break; // TCP connect succeeded — the server is up
-        } catch (e) { /* not listening yet */ }
-        const elapsed = Math.floor((Date.now() - bootT) / 1000);
-        if (elapsed - lastNote >= 20) {
-          lastNote = elapsed;
-          msg('Still starting… ' + elapsed + 's elapsed.\nFirst launch unpacks the engine — please keep the app open.');
-        }
-        await new Promise(r => setTimeout(r, 1000));
-      }
-      if (startError) throw startError;
-      if (!up) {
-        // Pull the on-device engine log so the failure is diagnosable.
-        // Include the previous launch's log too: if the app was killed
-        // during startup, the rotated log holds the evidence.
-        async function tailOf(name) {
-          try {
-            const r = await Filesystem.readFile({ directory: 'DATA', path: 'cognos/' + name });
-            const lines = String(r.data || '').split('\n');
-            const tail = lines.slice(-25).join('\n');
-            return tail || '(empty)';
-          } catch (e) { return null; }
-        }
-        const logTail = await tailOf('boot.log');
-        const prevTail = await tailOf('boot.prev.log');
-        let logText = logTail == null ? '(no engine boot log found)' : logTail;
-        if (prevTail) logText += '\n\n--- previous launch ---\n' + prevTail;
-        spinEl.style.display = 'none';
-        msg('Could not reach the local server after 10 minutes.\n\nEngine log:\n' + logText);
-        return;
-      }
-      window.location.href = base + '/';
-    } catch (e) {
-      msg('Startup failed: ' + ((e && e.message) || e));
-    }
+  // ---- Boot ------------------------------------------------------------------
+  function tailOf(name) {
+    return Filesystem.readFile({ directory: 'DATA', path: 'cognos/' + name })
+      .then(function (r) {
+        var lines = String(r.data || '').split('\n');
+        var tail = lines.slice(-25).join('\n');
+        return tail || '(empty)';
+      })
+      .catch(function () { return null; });
   }
 
+  function boot() {
+    var NodeJS = Plugins.CapacitorNodeJS || Plugins.NodeJS;
+    if (!NodeJS || !NodeJS.start) {
+      fail('The app runtime did not load correctly.',
+           'CapacitorNodeJS plugin unavailable — reinstall the app.');
+      return;
+    }
+
+    var proceed = Filesystem ? keySaved().then(function (saved) {
+      return saved ? null : askForKey();
+    }) : Promise.resolve();
+
+    proceed.then(function () {
+      // Internal-storage data dir: <app files>/cognos
+      var filesDir = '/data/data/app.cognos.acuity/files';
+      var dirPromise = Filesystem
+        ? Filesystem.getUri({ directory: 'DATA', path: '' }).then(function (r) {
+            filesDir = String(r.uri).replace(/^file:\/\//, '').replace(/\/$/, '');
+          }).catch(function () { /* keep the fallback above */ })
+        : Promise.resolve();
+
+      return dirPromise.then(function () {
+        var dataDir = filesDir + '/cognos';
+
+        // NOTE: NodeJS.start() only resolves when the Node process EXITS — the
+        // plugin settles the call after node::Start() returns. COGNOS is a
+        // long-running server, so that promise never settles. Start the engine
+        // fire-and-forget and use the HTTP health check below as the real
+        // "server is ready" signal instead of awaiting start().
+        setStep('server', 'active');
+        note('');
+        var startError = null;
+        var benign = function (e) {
+          return String((e && e.message) || e || '').indexOf('already been started') !== -1;
+        };
+        try {
+          var p = NodeJS.start({
+            script: 'entry.mjs',
+            env: { COGNOS_DATA_DIR: dataDir, PORT: String(PORT) },
+          });
+          if (p && typeof p.catch === 'function') {
+            // Surface genuine startup failures (e.g. project copy failed);
+            // "already been started" just means the server survived an app
+            // restart — the health check below will confirm it's up.
+            p.catch(function (e) { if (!benign(e)) startError = e; });
+          }
+        } catch (e) {
+          if (!benign(e)) startError = e;
+        }
+
+        setStep('db', 'active');
+        var bootT = Date.now();
+        var deadline = bootT + 10 * 60 * 1000; // first launch unpacks the engine; can take minutes
+        var lastNote = 0;
+
+        function poll() {
+          if (startError) throw startError;
+          return fetch(base + '/', { mode: 'no-cors', cache: 'no-store' }).then(
+            function () { return true; },
+            function () {
+              if (Date.now() >= deadline) return false;
+              var elapsed = Math.floor((Date.now() - bootT) / 1000);
+              if (elapsed - lastNote >= 20) {
+                lastNote = elapsed;
+                note('Still starting… ' + elapsed + 's elapsed.\nFirst launch unpacks the engine — please keep the app open.');
+              }
+              return new Promise(function (r) { setTimeout(r, 1000); }).then(poll);
+            }
+          );
+        }
+
+        return poll().then(function (up) {
+          if (startError) throw startError;
+          if (!up) {
+            // Pull the on-device engine log so the failure is diagnosable.
+            // Include the previous launch's log too: if the app was killed
+            // during startup, the rotated log holds the evidence.
+            return Promise.all([tailOf('boot.log'), tailOf('boot.prev.log')]).then(function (tails) {
+              var logText = tails[0] == null ? '(no engine boot log found)' : tails[0];
+              if (tails[1]) logText += '\n\n--- previous launch ---\n' + tails[1];
+              fail('The local server did not respond after 10 minutes.', logText);
+            });
+          }
+          setStep('ready', 'active');
+          note('Almost there…');
+          setTimeout(function () { window.location.href = base + '/'; }, 450);
+        });
+      });
+    }).catch(function (e) {
+      fail('Startup failed: ' + ((e && e.message) || e), null);
+    });
+  }
+
+  show('boot');
   boot();
 })();
 </script>
