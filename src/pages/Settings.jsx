@@ -4,10 +4,11 @@
 // workspace instructions editor (which feeds buildContextSystemPrompt verbatim),
 // local browser voice preferences, and runtime status from /api/health.
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Menu, Check, Square, Volume2, ShieldAlert, Scale, KeyRound, Trash2 } from 'lucide-react';
+import { Settings as SettingsIcon, Menu, Check, Square, Volume2, ShieldAlert, Scale, KeyRound, Trash2, Sun, Moon } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
 import { useVoice } from '@/lib/voiceContext';
+import { getTheme, applyTheme } from '@/lib/theme';
 
 /** One governance switch row: label, hint, a toggle, and the honest reason it
  *  is disabled (a pin, or no delegation) rather than a switch that lies. */
@@ -146,6 +147,9 @@ export default function Settings() {
   const [council, setCouncil] = useState(null);
   const [councilBusy, setCouncilBusy] = useState(null);
   const [councilError, setCouncilError] = useState('');
+  const [theme, setTheme] = useState(() => getTheme());
+
+  const setAppearance = (t) => { setTheme(applyTheme(t)); };
 
   useEffect(() => {
     setName(activeWorkspace?.name || '');
@@ -214,6 +218,29 @@ export default function Settings() {
           </section>
 
           <ModelKeySection onChanged={() => api.health().then(setHealth).catch(() => {})} />
+
+          <section className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Appearance</h3>
+            <div className="rounded-xl border border-border bg-card p-3 text-xs">
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { id: 'dark', label: 'Dark', icon: Moon },
+                  { id: 'light', label: 'Light', icon: Sun },
+                ].map(({ id, label, icon: Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setAppearance(id)}
+                    aria-pressed={theme === id}
+                    className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2.5 transition-colors ${theme === id ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-muted-foreground hover:text-foreground'}`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
 
           <section className="space-y-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Voice</h3>            <div className="rounded-xl border border-border bg-card p-3 space-y-4 text-xs">

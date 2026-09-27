@@ -1,8 +1,9 @@
 // No AuthProvider, ProtectedRoute, or auth routes: COGNOS opens directly to chat.
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import CognosLayout from '@/components/CognosLayout';
 import { VoiceProvider } from '@/lib/voiceContext';
+import { startAttentionNotifications } from '@/lib/attentionNotify';
 
 // Pages are split at route boundaries. The System console is intentionally
 // substantial; loading it only when visited keeps the core chat bundle lean.
@@ -27,6 +28,8 @@ function PageFallback() {
 }
 
 export default function App() {
+  useEffect(() => { startAttentionNotifications(); }, []);
+
   return (
     <VoiceProvider>
       <Router>

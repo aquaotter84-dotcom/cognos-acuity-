@@ -31,6 +31,15 @@ import DesignerDrawer from '@/components/autonomy/DesignerDrawer';
 
 const STYLES = ['balanced', 'casual', 'technical', 'strategic'];
 
+// Offline outbox: messages typed with no connection are persisted locally and
+// sent in order when the connection returns.
+const OUTBOX_KEY = 'cognos_outbox_v1';
+const loadOutbox = () => {
+  try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); }
+  catch { return []; }
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 export default function Chat() {
   const { activeWorkspace, setActiveConversationId, refreshConversations, openSidebar, projectById } = useCognos();
   const navigate = useNavigate();
@@ -312,6 +321,64 @@ export default function Chat() {
 
   const handleStop = () => abortRef.current?.abort();
 
+  // --- OFFLINE OUTBOX ----------------------------------------------------------
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [outbox, setOutbox] = useState(loadOutbox);
+  const flushRef = useRef(false);
+  const handleSendRef = useRef(handleSend);
+  handleSendRef.current = handleSend;
+  const isProcessingRef = useRef(isProcessing);
+  isProcessingRef.current = isProcessing;
+  const workspaceRef = useRef(activeWorkspace);
+  workspaceRef.current = activeWorkspace;
+
+  const persistOutbox = useCallback((q) => {
+    try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(q)); } catch { /* private mode */ }
+    setOutbox(q);
+  }, []);
+
+  // Sending while offline queues the message instead of failing.
+  const sendOrQueue = useCallback((text, options = {}) => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      persistOutbox([...loadOutbox(), {
+        id: `q_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        text, options, ts: Date.now(),
+      }]);
+      return;
+    }
+    handleSend(text, options);
+  }, [handleSend, persistOutbox]);
+
+  useEffect(() => {
+    const update = () => setIsOnline(navigator.onLine);
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => {
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+    };
+  }, []);
+
+  // Flush the outbox in order whenever we're back online.
+  useEffect(() => {
+    if (!isOnline || outbox.length === 0 || flushRef.current) return;
+    flushRef.current = true;
+    (async () => {
+      try {
+        let q = loadOutbox();
+        while (q.length && navigator.onLine && workspaceRef.current) {
+          while (isProcessingRef.current) await sleep(600);
+          if (!navigator.onLine || !workspaceRef.current) break;
+          const [item, ...rest] = q;
+          try { await handleSendRef.current(item.text, item.options || {}); }
+          catch { break; } // failed mid-send — keep the rest queued for next time
+          q = rest;
+          persistOutbox(q);
+        }
+      } finally { flushRef.current = false; }
+    })();
+  }, [isOnline, outbox.length, persistOutbox]);
+
   useEffect(() => {
     let cancelled = false;
     const load = () => {
@@ -383,7 +450,7 @@ export default function Chat() {
 
       <div className="flex-1 overflow-y-auto scrollbar-thin min-h-0">
         {messages.length === 0 && !draft ? (
-          <WelcomeScreen onSuggestion={handleSend} />
+          <WelcomeScreen onSuggestion={(t) => sendOrQueue(t)} />
         ) : (
           <div className="max-w-3xl mx-auto px-3 md:px-4 py-4 space-y-4">
             {messages.map(m => (
@@ -468,8 +535,18 @@ export default function Chat() {
         </div>
       )}
 
+      {(!isOnline || outbox.length > 0) && (
+        <div className="shrink-0 px-3 md:px-4 pb-1">
+          <div className="max-w-3xl mx-auto rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-[11px] text-foreground/80">
+            {!isOnline
+              ? `You're offline — ${outbox.length === 0 ? 'new messages' : outbox.length === 1 ? '1 message' : `${outbox.length} messages`} will send when you reconnect.`
+              : `Sending ${outbox.length} queued message${outbox.length === 1 ? '' : 's'}…`}
+          </div>
+        </div>
+      )}
+
       <ChatInput
-        onSend={handleSend}
+        onSend={sendOrQueue}
         disabled={isProcessing}
         isProcessing={isProcessing}
         onStop={handleStop}

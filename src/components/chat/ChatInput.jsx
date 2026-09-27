@@ -4,19 +4,64 @@
 // only because Base44 provided a hosted file store (integrations.Core.UploadFile)
 // that returned public URLs. There is no honest equivalent here without adding a
 // blob store, so rather than fake a broken paperclip the control was removed.
-// Voice dictation (Web Speech API) is browser-native and is kept.
+// Voice dictation prefers the native speech-recognition plugin on Android
+// (Web Speech API is not exposed to Android WebViews) and falls back to the
+// browser's Web Speech API everywhere else.
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Send, Square, Mic, MicOff, FileText, Link as LinkIcon, X } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
+import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 import SourceComposer from '@/components/chat/SourceComposer';
 
 function useSpeechRecognition(onFinal) {
   const [listening, setListening] = useState(false);
   const [interim, setInterim] = useState('');
-  const ref = useRef(null);
-  const SR = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+  const webRef = useRef(null);
+  const nativeListeners = useRef([]);
+  const nativeTranscript = useRef('');
+  const onFinalRef = useRef(onFinal);
+  onFinalRef.current = onFinal;
 
-  const start = () => {
+  const SR = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+  const nativeAvailable = useMemo(() => {
+    try { return Capacitor.isNativePlatform() && !!SpeechRecognition; }
+    catch { return false; }
+  }, []);
+
+  const stopNative = async () => {
+    try { await SpeechRecognition.stop(); } catch { /* already stopped */ }
+    (nativeListeners.current || []).forEach((l) => { try { l.remove(); } catch { /* noop */ } });
+    nativeListeners.current = [];
+    const said = nativeTranscript.current.trim();
+    nativeTranscript.current = '';
+    setListening(false);
+    setInterim('');
+    if (said) onFinalRef.current(said);
+  };
+
+  const startNative = async () => {
+    const avail = await SpeechRecognition.available().catch(() => ({ available: false }));
+    if (!avail || avail.available === false) throw new Error('speech recognition unavailable');
+    const perm = await SpeechRecognition.requestPermissions().catch(() => null);
+    if (perm && perm.speechRecognition && perm.speechRecognition !== 'granted') {
+      throw new Error('microphone permission denied');
+    }
+    nativeTranscript.current = '';
+    nativeListeners.current = [
+      await SpeechRecognition.addListener('partialResults', (d) => {
+        const m = (d && d.matches) || [];
+        if (m.length) { nativeTranscript.current = m[0]; setInterim(m[0]); }
+      }),
+      await SpeechRecognition.addListener('listeningState', (s) => {
+        if (s && s.status === 'stopped') stopNative();
+      }),
+    ];
+    await SpeechRecognition.start({ language: 'en-US', maxResults: 1, partialResults: true, popup: false });
+    setListening(true);
+  };
+
+  const startWeb = () => {
     if (!SR) return;
     const rec = new SR();
     rec.continuous = true;
@@ -29,16 +74,35 @@ function useSpeechRecognition(onFinal) {
         if (e.results[i].isFinal) final += t; else inter += t;
       }
       setInterim(inter);
-      if (final) { onFinal(final.trim()); setInterim(''); }
+      if (final) { onFinalRef.current(final.trim()); setInterim(''); }
     };
     rec.onend = () => { setListening(false); setInterim(''); };
+    rec.onerror = () => { setListening(false); setInterim(''); };
     rec.start();
-    ref.current = rec;
+    webRef.current = rec;
     setListening(true);
   };
-  const stop = () => { ref.current?.stop(); setListening(false); };
 
-  return { supported: Boolean(SR), listening, interim, start, stop };
+  const start = async () => {
+    if (nativeAvailable) {
+      try { await startNative(); return; }
+      catch { /* fall through to the web API */ }
+    }
+    startWeb();
+  };
+
+  const stop = () => {
+    if (nativeAvailable && nativeListeners.current.length) { stopNative(); return; }
+    try { webRef.current?.stop(); } catch { /* noop */ }
+    setListening(false);
+  };
+
+  useEffect(() => () => {
+    try { webRef.current?.stop(); } catch { /* noop */ }
+    (nativeListeners.current || []).forEach((l) => { try { l.remove(); } catch { /* noop */ } });
+  }, []);
+
+  return { supported: nativeAvailable || Boolean(SR), listening, interim, start, stop };
 }
 
 export default function ChatInput({
