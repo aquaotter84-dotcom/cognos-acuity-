@@ -8,7 +8,7 @@
     "build": "vite build",
     "start": "node server/serve.js",
     "preview": "vite preview",
-    "test": "node test/voice.mjs && node test/phase22.mjs && node test/phase23.mjs && node test/phase24.mjs && node test/performance.mjs && node test/sources-agent.mjs && node test/phase18.mjs && node test/autonomy.mjs && node test/autonomy-ux.mjs && node test/council-ux.mjs && node test/phase20.mjs && node test/phase21.mjs && node test/outbox-live.mjs && node test/phase27.mjs && node test/phase28.mjs && node test/phase29.mjs && node test/identity.mjs && node test/integrity.mjs && node test/smoke.mjs",
+    "test": "node test/voice.mjs && node test/phase22.mjs && node test/phase23.mjs && node test/phase24.mjs && node test/performance.mjs && node test/sources-agent.mjs && node test/phase18.mjs && node test/autonomy.mjs && node test/autonomy-ux.mjs && node test/council-ux.mjs && node test/phase20.mjs && node test/phase21.mjs && node test/outbox-live.mjs && node test/phase27.mjs && node test/phase28.mjs && node test/phase29.mjs && node test/identity.mjs && node test/integrity.mjs && node test/smoke.mjs && node test/localdb.mjs",
     "voice": "node test/voice.mjs",
     "phase22": "node test/phase22.mjs",
     "performance": "node test/performance.mjs",
@@ -18,6 +18,7 @@
     "identity": "node test/identity.mjs",
     "integrity": "node test/integrity.mjs",
     "smoke": "node test/smoke.mjs",
+    "localdb": "node test/localdb.mjs",
     "demo": "node test/demo.mjs",
     "baseline": "node test/baseline.mjs",
     "migrate": "node scripts/migrate.mjs",
@@ -37,6 +38,8 @@
     "phase24": "node test/phase24.mjs"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-socket": "^0.2.11",
     "@neondatabase/serverless": "^0.10.4",
     "cheerio": "^1.0.0",
     "cookie-parser": "^1.4.6",
@@ -53,10 +56,13 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.8",
-    "@electric-sql/pglite-socket": "^0.2.11",
+    "@capacitor/android": "^7.4.0",
+    "@capacitor/cli": "^7.4.0",
+    "@capacitor/core": "^7.4.0",
+    "@capacitor/filesystem": "^7.1.0",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "capacitor-nodejs": "https://github.com/hampoelz/capacitor-nodejs/releases/download/v1.0.0-beta.9/capacitor-nodejs.tgz",
     "concurrently": "^9.1.0",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",

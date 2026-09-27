@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>COGNOS</title>
+<style>
+  html, body { margin:0; height:100%; background:#0b0e14; color:#e8eaf0;
+    font-family: system-ui, sans-serif; display:flex; align-items:center;
+    justify-content:center; flex-direction:column; gap:16px; }
+  .spin { width:42px; height:42px; border-radius:50%;
+    border:3px solid #2a3040; border-top-color:#7aa2ff;
+    animation: s 0.9s linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  #msg { font-size:14px; opacity:.75; max-width:72vw; text-align:center; }
+</style>
+</head>
+<body>
+<div class="spin"></div>
+<div id="msg">Starting COGNOS…</div>
+<script>
+(async () => {
+  const msg = (t) => { document.getElementById('msg').textContent = t; };
+  const PORT = 39391;
+  const base = 'http://127.0.0.1:' + PORT;
+  try {
+    const Plugins = (window.Capacitor && window.Capacitor.Plugins) || {};
+    const NodeJS = Plugins.CapacitorNodeJS || Plugins.NodeJS;
+    const Filesystem = Plugins.Filesystem;
+    if (!NodeJS || !NodeJS.start) throw new Error('NodeJS plugin unavailable');
+
+    // Internal-storage data dir: <app files>/cognos
+    let filesDir = '/data/data/app.cognos.acuity/files';
+    try {
+      const r = await Filesystem.getUri({ directory: 'DATA', path: '' });
+      filesDir = String(r.uri).replace(/^file:\/\//, '').replace(/\/$/, '');
+    } catch (e) { /* keep the fallback above */ }
+    const dataDir = filesDir + '/cognos';
+
+    msg('Starting local server…');
+    await NodeJS.start({
+      script: 'entry.mjs',
+      env: { COGNOS_DATA_DIR: dataDir, PORT: String(PORT) },
+    });
+
+    msg('Opening your database…');
+    const deadline = Date.now() + 180000;
+    while (Date.now() < deadline) {
+      try {
+        await fetch(base + '/', { mode: 'no-cors', cache: 'no-store' });
+        break; // TCP connect succeeded — the server is up
+      } catch (e) { await new Promise(r => setTimeout(r, 500)); }
+    }
+    window.location.href = base + '/';
+  } catch (e) {
+    msg('Startup failed: ' + ((e && e.message) || e));
+  }
+})();
+</script>
+</body>
+</html>

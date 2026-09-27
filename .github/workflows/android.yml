@@ -1,0 +1,76 @@
+name: Build COGNOS APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # The action only answers 10 license prompts, but the current SDK
+          # repository has more than that, which fails the step. Accept all
+          # licenses ourselves in the next step instead.
+          accept-android-sdk-licenses: false
+          log-accepted-android-sdk-licenses: false
+          packages: platform-tools
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses > /dev/null || true
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Assemble embedded Node project
+        run: node mobile/make-nodejs-project.mjs
+
+      - name: Add Android platform
+        run: npx cap add android
+
+      - name: Sync Capacitor Android project
+        run: npx cap sync android
+
+      - name: Permit loopback cleartext HTTP
+        # The embedded server speaks plain HTTP on 127.0.0.1 only.
+        # capacitor.config.ts sets server.cleartext; belt-and-braces here.
+        run: |
+          M=android/app/src/main/AndroidManifest.xml
+          grep -q 'usesCleartextTraffic' "$M" || \
+            sed -i 's|<application|<application android:usesCleartextTraffic="true"|' "$M"
+          grep -q 'usesCleartextTraffic="true"' "$M"
+
+      - name: Build debug APK
+        run: cd android && ./gradlew assembleDebug
+
+      - name: Confirm cleartext in merged manifest
+        run: |
+          M=android/app/build/intermediates/merged_manifest/debug/AndroidManifest.xml
+          grep -q 'usesCleartextTraffic="true"' "$M" && echo OK || (echo MISSING && exit 1)
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v5
+        with:
+          name: cognos-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

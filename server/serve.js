@@ -21,9 +21,15 @@ import { autonomyConfig } from "./autonomy/config.js";
 import { refreshSettings } from "./autonomy/settings.js";
 import { startHeartbeat } from "./autonomy/heartbeat.js";
 import { createLogger } from "./shared/logging.js";
+import { bootLocalDatabase } from "./localdb.js";
 
 const logger = createLogger("server");
 const port = Number(process.env.PORT || 3000);
+
+// On-device database: when DATABASE_URL is unset and COGNOS_DATA_DIR is set
+// (Android APK, internal storage), boot a file-backed PGlite before anything
+// touches the database layer. Inert everywhere else.
+await bootLocalDatabase(logger);
 
 const server = app.listen(port, "0.0.0.0", () => {
   const config = getSystemConfig();
