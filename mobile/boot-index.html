@@ -126,7 +126,7 @@
     <p class="tagline">Your mind, on your phone.<br/>Private by design.</p>
     <ol id="steps"></ol>
     <div id="subnote"></div>
-    <button id="viewlog" class="hidden" type="button">Taking longer than expected — view engine log</button>
+    <button id="viewlog" type="button">View engine log</button>
     <pre id="logtext" class="hidden"></pre>
   </div>
 
@@ -361,10 +361,9 @@
         var deadline = bootT + 10 * 60 * 1000; // first launch unpacks the engine; can take minutes
         var lastNote = 0;
         var lastFatalScan = 0;
-        var logLinkShown = false;
         var viewLogBtn = document.getElementById('viewlog');
         var logPre = document.getElementById('logtext');
-        viewLogBtn.addEventListener('click', function () {
+        function loadLogs() {
           viewLogBtn.disabled = true;
           viewLogBtn.textContent = 'Loading engine log…';
           collectLogs().then(function (t) {
@@ -373,7 +372,11 @@
             viewLogBtn.disabled = false;
             viewLogBtn.textContent = 'Refresh engine log';
           });
-        });
+        }
+        viewLogBtn.addEventListener('click', loadLogs);
+        // Show the log immediately on launch: if a previous run was killed,
+        // its phase/RSS markers are already on disk — no 75s wait, no tap race.
+        loadLogs();
 
         function poll() {
           if (startError) throw startError;
@@ -385,10 +388,6 @@
               if (elapsed - lastNote >= 20) {
                 lastNote = elapsed;
                 note('Still starting… ' + elapsed + 's elapsed.\nFirst launch unpacks the engine — please keep the app open.');
-              }
-              if (elapsed >= 75 && !logLinkShown) {
-                logLinkShown = true;
-                viewLogBtn.classList.remove('hidden');
               }
               // Fail fast: the engine logs fatal startup errors to boot.log.
               // If one is already there, show the error card now instead of
