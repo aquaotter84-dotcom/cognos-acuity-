@@ -1,0 +1,34 @@
+name: Publish COGNOS APK to release
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Build workflow run ID whose cognos-apk artifact to publish"
+        required: true
+      tag:
+        description: "Release tag to attach the APK to"
+        required: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download APK artifact from build run
+        uses: actions/download-artifact@v4
+        with:
+          name: cognos-apk
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: apk
+      - name: Rename APK
+        run: mv apk/app-debug.apk apk/cognos-apk-undici-fix.apk
+      - name: Attach APK to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: apk/cognos-apk-undici-fix.apk
