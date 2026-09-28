@@ -46,7 +46,6 @@ export async function bootLocalDatabase(logger) {
   const { PGLiteSocketServer } = await import("@electric-sql/pglite-socket");
   dblog("localdb: phase=imports-loaded " + mem());
   const dataDir = path.join(process.env.COGNOS_DATA_DIR, "pglite");
-  fs.mkdirSync(dataDir, { recursive: true });
   // Pre-flight: first launch copies ~213 MB of engine assets and PGlite
   // writes back a ~39 MB cluster during initdb. Fail fast with an actionable
   // message instead of a cryptic ErrnoError (ENOSPC) from inside PGlite.
@@ -54,10 +53,11 @@ export async function bootLocalDatabase(logger) {
   // process. A reading of exactly 0 is treated as "unknown" (some sandboxed
   // filesystems report zero) — PGlite is allowed to try, and its properly
   // serialized error will tell the truth if the disk really is full.
+  // Checked on COGNOS_DATA_DIR (same filesystem) before creating anything.
   let freeMiB = -1;
   if (typeof fs.statfsSync === "function") {
     try {
-      const st = fs.statfsSync(dataDir);
+      const st = fs.statfsSync(process.env.COGNOS_DATA_DIR);
       freeMiB = Math.floor((Number(st.bavail) * Number(st.bsize)) / 1048576);
       if (freeMiB > 0 && freeMiB < 400) {
         throw new Error(
@@ -71,7 +71,8 @@ export async function bootLocalDatabase(logger) {
       // statfs unavailable or failed — continue and let PGlite try.
     }
   }
-  dblog("localdb: phase=preflight-ok freeMiB=" + freeMiB + " " + mem());
+  dblog("localdb: phase=preflight-ok freeMiB=" + (freeMiB < 0 ? "unknown" : freeMiB) + " " + mem());
+  fs.mkdirSync(dataDir, { recursive: true });
   dblog("localdb: phase=pglite-construct " + mem());
   const pglite = new PGlite({ dataDir });
   dblog("localdb: phase=waitReady-start " + mem());
@@ -82,7 +83,15 @@ export async function bootLocalDatabase(logger) {
   await pgServer.start();
   dblog("localdb: phase=socket-done " + mem());
   const connStr = String(pgServer.getServerConn?.() ?? "");
-  const port = Number(connStr.match(/:(\d+)$/)?.[1] || 0);
+  // Parse the port robustly: prefer URL parsing, fall back to the old
+  // trailing-:PORT regex, so a connection-string format change in a
+  // dependency upgrade can't silently break every on-device boot.
+  let port = 0;
+  try {
+    const u = new URL(connStr);
+    if (u.port) port = Number(u.port);
+  } catch { /* not a parseable URL — fall through to regex */ }
+  if (!port) port = Number(connStr.match(/:(\d+)$/)?.[1] || 0);
   if (!port) throw new Error("localdb: could not determine the PGlite socket port");
   process.env.DATABASE_URL = `postgresql://postgres@127.0.0.1:${port}/postgres?sslmode=disable`;
   logger?.info?.("local PGlite database ready", { dataDir, port });

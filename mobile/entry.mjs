@@ -77,6 +77,10 @@ process.on("uncaughtException", (err) => {
 });
 process.on("unhandledRejection", (err) => {
   bootLog("UNHANDLED_REJECTION " + fmtErr(err));
+  // Fail fast like uncaughtException: a half-booted process with no server
+  // is indistinguishable from "still loading" to the boot page. Exiting now
+  // lets the boot page's fail-fast scan show the logged error immediately.
+  process.exit(1);
 });
 
 if (dataDir) {
