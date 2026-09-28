@@ -41,6 +41,19 @@ const SERVER_DEPS = [
 ];
 
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+// The mobile tree is installed fresh with `npm install` (no lockfile), so
+// version ranges would drift to newest releases at build time. That broke
+// the app once: cheerio pulled undici 7, which references the `File`
+// global at import time — absent on the phone's Node 18 — crashing the
+// engine on every launch. Pin every server dep (and undici itself,
+// belt-and-braces) to the exact versions in the root lockfile, which CI
+// verifies via `npm ci`.
+const lock = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
+const lockedVersion = (name) => {
+  const entry = lock.packages?.[`node_modules/${name}`];
+  if (!entry?.version) throw new Error(`server dep ${name} missing from root package-lock.json`);
+  return entry.version;
+};
 
 fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(nodeDir, { recursive: true });
@@ -65,12 +78,11 @@ const nodePkg = {
   type: "module",
   main: "entry.mjs",
   dependencies: Object.fromEntries(
-    SERVER_DEPS.map((name) => {
-      const version = pkg.dependencies[name];
-      if (!version) throw new Error(`server dep ${name} missing from root package.json dependencies`);
-      return [name, version];
-    })
+    SERVER_DEPS.map((name) => [name, lockedVersion(name)])
   ),
+  overrides: {
+    undici: lockedVersion("undici"),
+  },
 };
 fs.writeFileSync(path.join(nodeDir, "package.json"), JSON.stringify(nodePkg, null, 2) + "\n");
 execSync("npm install --omit=dev --no-audit --no-fund", { cwd: nodeDir, stdio: "inherit" });
