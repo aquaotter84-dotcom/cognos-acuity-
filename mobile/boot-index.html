@@ -146,12 +146,19 @@
     </svg>
     <h2>Give COGNOS a brain</h2>
     <p class="lede">Everything COGNOS remembers — your chats, notes, projects — lives in a
-      database <strong>on this phone</strong> and never leaves it. But to think and answer,
-      it calls an AI model over the internet, and that needs an API key.</p>
+      database <strong>on this phone</strong> and never leaves it (unless you connect a
+      cloud database below). But to think and answer, it calls an AI model over the
+      internet, and that needs an API key.</p>
     <input id="keyinput" type="password" placeholder="Paste your API key"
            autocomplete="off" autocapitalize="off" spellcheck="false" />
     <p class="fine">Use a key from BluesMinds, or any service that speaks the OpenAI API.
       It's stored privately inside this app — no other app can read it.</p>
+    <input id="dburlinput" type="password" placeholder="Database URL (optional — Supabase)"
+           autocomplete="off" autocapitalize="off" spellcheck="false" />
+    <p class="fine">Optional: paste a Postgres connection string to keep your data in a cloud
+      database instead of on this phone — useful on phones where the on-device database
+      struggles. Supabase: Project Settings → Database → Connection string (Session pooler).
+      Leave blank for the on-device database. Stored privately inside this app, same as the key.</p>
     <button id="save" type="submit">Save key &amp; start</button>
     <button id="skip" type="button">Skip for now</button>
     <p class="fine" style="text-align:center">No key yet? Skip — you'll be asked again next time you open the app.</p>
@@ -182,6 +189,7 @@
   var PORT = 39391;
   var base = 'http://127.0.0.1:' + PORT;
   var KEY_PATH = 'cognos/bluesminds_api_key.txt';
+  var DB_URL_PATH = 'cognos/database_url.txt';
 
   var Plugins = (window.Capacitor && window.Capacitor.Plugins) || {};
   var Filesystem = Plugins.Filesystem;
@@ -241,6 +249,13 @@
         return Filesystem.writeFile({ directory: 'DATA', path: KEY_PATH, data: key });
       });
   }
+  function saveDbUrl(url) {
+    return Filesystem.mkdir({ directory: 'DATA', path: 'cognos' })
+      .catch(function () { /* already exists */ })
+      .then(function () {
+        return Filesystem.writeFile({ directory: 'DATA', path: DB_URL_PATH, data: url });
+      });
+  }
   function askForKey() {
     return new Promise(function (resolve) {
       show('key');
@@ -251,9 +266,12 @@
         e.preventDefault();
         var key = input.value.trim();
         if (!key) return;
+        var dbUrl = document.getElementById('dburlinput').value.trim();
         saveBtn.disabled = true;
         saveBtn.textContent = 'Saving…';
-        saveKey(key).catch(function () { /* continue anyway */ }).then(function () {
+        var saves = [saveKey(key).catch(function () { /* continue anyway */ })];
+        if (dbUrl) saves.push(saveDbUrl(dbUrl).catch(function () { /* continue anyway */ }));
+        Promise.all(saves).then(function () {
           formEl.removeEventListener('submit', onSubmit);
           show('boot');
           resolve();

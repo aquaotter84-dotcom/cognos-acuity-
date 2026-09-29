@@ -37,9 +37,11 @@ try {
     // Phase 26 added 2: the delegated council switches (read + flip).
     // Round 3 added 3: the on-device model-key settings routes
     // (GET/POST/DELETE /api/settings/model-key).
-    assert.equal(nonStatic.length, 135);
-    // +1 static route on top of the 135 API routes (was 133 = 132 + 1).
-    if (!process.env.VERCEL) assert.equal(routes.length, 136);
+    // Supabase round added 3: the on-device database-url settings routes
+    // (GET/POST/DELETE /api/settings/database-url).
+    assert.equal(nonStatic.length, 138);
+    // +1 static route on top of the 138 API routes (was 136 = 135 + 1).
+    if (!process.env.VERCEL) assert.equal(routes.length, 139);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",

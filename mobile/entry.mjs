@@ -9,6 +9,20 @@
 import fs from "node:fs";
 import path from "node:path";
 
+// Node 18 (the runtime inside the APK) predates several web globals that
+// newer dependencies expect. CustomEvent (used by @electric-sql/pglite-socket)
+// landed in Node 19 — polyfill it on top of the Event global (present since
+// Node 15) before anything else loads.
+if (typeof globalThis.CustomEvent === "undefined" && typeof globalThis.Event !== "undefined") {
+  class CustomEvent extends globalThis.Event {
+    constructor(type, params = {}) {
+      super(type, params);
+      this.detail = params.detail;
+    }
+  }
+  globalThis.CustomEvent = CustomEvent;
+}
+
 const dataDir = process.env.COGNOS_DATA_DIR;
 
 // On-device boot log: timestamped lines appended to $COGNOS_DATA_DIR/boot.log
@@ -94,6 +108,19 @@ if (dataDir) {
     } catch { /* absent — model calls will fail until a key is provided */ }
   }
   bootLog("entry: key file " + (process.env.BLUESMINDS_API_KEY ? "present" : "absent"));
+  // Optional: database_url.txt points the server at an external Postgres
+  // (e.g. Supabase) instead of the on-device PGlite database. When set,
+  // server/localdb.js skips PGlite entirely — no WASM engine load, no ~1GB
+  // memory spike on boot. Written by the boot page / Settings page; also
+  // settable via adb push without rebuilding the APK.
+  if (!process.env.DATABASE_URL) {
+    const dbUrlFile = path.join(dataDir, "database_url.txt");
+    try {
+      const dbUrl = fs.readFileSync(dbUrlFile, "utf8").trim();
+      if (dbUrl) process.env.DATABASE_URL = dbUrl;
+    } catch { /* absent — falls back to the on-device database */ }
+  }
+  bootLog("entry: database " + (process.env.DATABASE_URL ? "external (DATABASE_URL set)" : "on-device (PGlite)"));
 }
 
 bootLog("entry: loading server/serve.js");

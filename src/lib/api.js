@@ -68,6 +68,11 @@ export const api = {
   setModelKey: (key) => req("/api/settings/model-key", { method: "POST", body: { key } }),
   clearModelKey: () => req("/api/settings/model-key", { method: "DELETE" }),
 
+  // --- On-device database URL (Settings) -----------------------------------
+  databaseUrlStatus: () => req("/api/settings/database-url"),
+  setDatabaseUrl: (url) => req("/api/settings/database-url", { method: "POST", body: { url } }),
+  clearDatabaseUrl: () => req("/api/settings/database-url", { method: "DELETE" }),
+
   getWorkspace: () => req("/api/workspace"),
   updateWorkspace: (data) => req("/api/workspace", { method: "PATCH", body: data }),
 

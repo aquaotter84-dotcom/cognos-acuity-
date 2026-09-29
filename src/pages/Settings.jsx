@@ -4,7 +4,7 @@
 // workspace instructions editor (which feeds buildContextSystemPrompt verbatim),
 // local browser voice preferences, and runtime status from /api/health.
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Menu, Check, Square, Volume2, ShieldAlert, Scale, KeyRound, Trash2, Sun, Moon } from 'lucide-react';
+import { Settings as SettingsIcon, Menu, Check, Square, Volume2, ShieldAlert, Scale, KeyRound, Trash2, Sun, Moon, Database } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
 import { useVoice } from '@/lib/voiceContext';
@@ -136,6 +136,103 @@ function ModelKeySection({ onChanged }) {
   );
 }
 
+/** Point COGNOS at an external Postgres (e.g. Supabase) instead of the
+ *  on-device database — or switch back. Takes effect immediately; the
+ *  connection pool is reset and the schema migrates itself. */
+function DatabaseSection({ onChanged }) {
+  const [status, setStatus] = useState(null);
+  const [urlInput, setUrlInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState(null); // { ok, text }
+
+  const refresh = () => api.databaseUrlStatus().then(setStatus).catch(() => setStatus(null));
+  useEffect(() => { refresh(); }, []);
+
+  const save = async () => {
+    setBusy(true); setMessage(null);
+    try {
+      await api.setDatabaseUrl(urlInput);
+      setUrlInput('');
+      await refresh();
+      onChanged?.();
+      setMessage({ ok: true, text: 'Database switched — COGNOS now uses your cloud database.' });
+    } catch (e) { setMessage({ ok: false, text: e.message || 'Could not save the database URL.' }); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async () => {
+    if (!window.confirm('Switch back to the on-device database? Your cloud data stays where it is — COGNOS will just stop using it.')) return;
+    setBusy(true); setMessage(null);
+    try {
+      await api.clearDatabaseUrl();
+      await refresh();
+      onChanged?.();
+      setMessage({ ok: true, text: 'Switched back to the on-device database.' });
+    } catch (e) { setMessage({ ok: false, text: e.message || 'Could not remove the database URL.' }); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <section className="space-y-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Database</h3>
+      <div className="rounded-xl border border-border bg-card p-3 space-y-3 text-xs">
+        {status === null ? (
+          <p className="text-muted-foreground">Loading…</p>
+        ) : status.managed === 'environment' ? (
+          <p className="text-muted-foreground leading-relaxed">
+            The database for this install is managed by the server environment, so it can't be
+            changed here.
+          </p>
+        ) : (
+          <>
+            <div className="flex items-start gap-2">
+              <Database className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
+              <p className="text-muted-foreground leading-relaxed">
+                {status.external
+                  ? 'COGNOS is using your cloud database. Paste a new connection string below to switch, or remove it to go back to the on-device database.'
+                  : 'COGNOS is using the on-device database. Paste a Postgres connection string below (e.g. from Supabase) to move your data to the cloud instead.'}
+              </p>
+            </div>
+            <input
+              type="password"
+              value={urlInput}
+              onChange={e => setUrlInput(e.target.value)}
+              placeholder="postgresql://…"
+              autoComplete="off" autoCapitalize="off" spellCheck="false"
+              className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/50"
+            />
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={save}
+                disabled={busy || !urlInput.trim()}
+                className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
+              >
+                {busy ? 'Saving…' : 'Save database URL'}
+              </button>
+              {status.external && (
+                <button
+                  onClick={remove}
+                  disabled={busy}
+                  className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Use on-device database
+                </button>
+              )}
+            </div>
+            {message && (
+              <p className={message.ok ? 'text-green-500' : 'text-destructive'}>{message.text}</p>
+            )}
+            <p className="text-muted-foreground/60 leading-relaxed">
+              The URL is stored privately inside the app — no other app can read it. Supabase:
+              Project Settings → Database → Connection string (Session pooler mode).
+            </p>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export default function Settings() {
   const { activeWorkspace, setActiveWorkspace, openSidebar } = useCognos();
   const voice = useVoice();
@@ -218,6 +315,8 @@ export default function Settings() {
           </section>
 
           <ModelKeySection onChanged={() => api.health().then(setHealth).catch(() => {})} />
+
+          <DatabaseSection onChanged={() => api.health().then(setHealth).catch(() => {})} />
 
           <section className="space-y-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Appearance</h3>
