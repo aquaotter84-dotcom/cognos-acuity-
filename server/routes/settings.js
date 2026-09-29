@@ -9,9 +9,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { diagnoseAiConnection, DIAGNOSE_DEFAULT_BASE_URL } from "../ai-diagnose.js";
+import { resolveModel } from "../llm.js";
 
 const KEY_FILE = "bluesminds_api_key.txt";
 const DB_URL_FILE = "database_url.txt";
+const BASE_URL_FILE = "bluesminds_api_url.txt";
+const MODEL_FILE = "cognos_model.txt";
 
 function deviceKeyPath() {
   const dir = process.env.COGNOS_DATA_DIR;
@@ -21,6 +25,16 @@ function deviceKeyPath() {
 function deviceDbUrlPath() {
   const dir = process.env.COGNOS_DATA_DIR;
   return dir ? path.join(dir, DB_URL_FILE) : null;
+}
+
+function deviceBaseUrlPath() {
+  const dir = process.env.COGNOS_DATA_DIR;
+  return dir ? path.join(dir, BASE_URL_FILE) : null;
+}
+
+function deviceModelPath() {
+  const dir = process.env.COGNOS_DATA_DIR;
+  return dir ? path.join(dir, MODEL_FILE) : null;
 }
 
 export function registerSettingsRoutes(app, { wrap, logger }) {
@@ -117,6 +131,117 @@ export function registerSettingsRoutes(app, { wrap, logger }) {
     if (logger) logger.info("settings", "database URL removed from Settings page");
     res.json({ ok: true, configured: false });
   }));
+
+  // Staged AI-connection self-test: replays the model provider connection in
+  // observable stages (key sanity, DNS, TCP, TLS, HTTPS) so a failing stage
+  // names the real cause. Never returns key material — see server/ai-diagnose.js.
+  app.get("/api/settings/diagnose-ai", wrap(async (req, res) => {
+    const result = await diagnoseAiConnection();
+    res.json(result);
+  }));
+
+  // AI provider base URL. Points COGNOS at any OpenAI-compatible endpoint —
+  // e.g. Gemini's https://generativelanguage.googleapis.com/v1beta/openai
+  // (llm.js appends /chat/completions, which is exactly Gemini's documented
+  // path). Stored in bluesminds_api_url.txt on-device (mode 600); llm.js reads
+  // BLUESMINDS_API_URL from process.env on every call, so updating both the
+  // file and the env var takes effect immediately. The URL is not secret, so
+  // GET returns it. An empty POST (or DELETE) resets to the built-in default.
+  app.get("/api/settings/model-base-url", wrap(async (req, res) => {
+    res.json({
+      configured: Boolean(process.env.BLUESMINDS_API_URL || process.env.OPENAI_BASE_URL),
+      value: process.env.BLUESMINDS_API_URL || process.env.OPENAI_BASE_URL || DIAGNOSE_DEFAULT_BASE_URL,
+      isDefault: !process.env.BLUESMINDS_API_URL && !process.env.OPENAI_BASE_URL,
+      managed: deviceBaseUrlPath() ? "device" : "environment",
+    });
+  }));
+
+  app.post("/api/settings/model-base-url", wrap(async (req, res) => {
+    const urlPath = deviceBaseUrlPath();
+    if (!urlPath) {
+      return res.status(400).json({
+        error: "The provider base URL is managed by the server environment on this install — it can't be changed from Settings.",
+      });
+    }
+    const raw = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+    if (!raw) {
+      try { fs.unlinkSync(urlPath); } catch { /* already absent */ }
+      delete process.env.BLUESMINDS_API_URL;
+      if (logger) logger.info("settings", "provider base URL reset to default from Settings page");
+      return res.json({ ok: true, reset: true, value: DIAGNOSE_DEFAULT_BASE_URL });
+    }
+    const problem = validateBaseUrl(raw);
+    if (problem) return res.status(400).json({ error: problem });
+    const url = normalizeBaseUrl(raw);
+    fs.mkdirSync(path.dirname(urlPath), { recursive: true });
+    fs.writeFileSync(urlPath, url, { mode: 0o600, encoding: "utf8" });
+    process.env.BLUESMINDS_API_URL = url;
+    if (logger) logger.info("settings", "provider base URL updated from Settings page");
+    res.json({ ok: true, value: url });
+  }));
+
+  app.delete("/api/settings/model-base-url", wrap(async (req, res) => {
+    const urlPath = deviceBaseUrlPath();
+    if (!urlPath) {
+      return res.status(400).json({
+        error: "The provider base URL is managed by the server environment on this install.",
+      });
+    }
+    try { fs.unlinkSync(urlPath); } catch { /* already absent */ }
+    delete process.env.BLUESMINDS_API_URL;
+    if (logger) logger.info("settings", "provider base URL reset to default from Settings page");
+    res.json({ ok: true, reset: true, value: DIAGNOSE_DEFAULT_BASE_URL });
+  }));
+
+  // AI model id. Same on-device pattern (cognos_model.txt, mode 600 →
+  // COGNOS_MODEL); llm.js resolves the model per call via resolveModel(), so
+  // changes apply immediately. Not secret — GET returns it. Empty POST (or
+  // DELETE) resets to the built-in default. Switching providers usually means
+  // switching the model too (e.g. gemini-2.0-flash for Gemini).
+  app.get("/api/settings/model-id", wrap(async (req, res) => {
+    res.json({
+      configured: Boolean(process.env.COGNOS_MODEL || process.env.OPENAI_MODEL),
+      value: resolveModel(),
+      isDefault: !process.env.COGNOS_MODEL && !process.env.OPENAI_MODEL,
+      managed: deviceModelPath() ? "device" : "environment",
+    });
+  }));
+
+  app.post("/api/settings/model-id", wrap(async (req, res) => {
+    const modelPath = deviceModelPath();
+    if (!modelPath) {
+      return res.status(400).json({
+        error: "The model id is managed by the server environment on this install — it can't be changed from Settings.",
+      });
+    }
+    const raw = typeof req.body?.model === "string" ? req.body.model.trim() : "";
+    if (!raw) {
+      try { fs.unlinkSync(modelPath); } catch { /* already absent */ }
+      delete process.env.COGNOS_MODEL;
+      if (logger) logger.info("settings", "model id reset to default from Settings page");
+      return res.json({ ok: true, reset: true, value: resolveModel() });
+    }
+    const problem = validateModelId(raw);
+    if (problem) return res.status(400).json({ error: problem });
+    fs.mkdirSync(path.dirname(modelPath), { recursive: true });
+    fs.writeFileSync(modelPath, raw, { mode: 0o600, encoding: "utf8" });
+    process.env.COGNOS_MODEL = raw;
+    if (logger) logger.info("settings", "model id updated from Settings page");
+    res.json({ ok: true, value: raw });
+  }));
+
+  app.delete("/api/settings/model-id", wrap(async (req, res) => {
+    const modelPath = deviceModelPath();
+    if (!modelPath) {
+      return res.status(400).json({
+        error: "The model id is managed by the server environment on this install.",
+      });
+    }
+    try { fs.unlinkSync(modelPath); } catch { /* already absent */ }
+    delete process.env.COGNOS_MODEL;
+    if (logger) logger.info("settings", "model id reset to default from Settings page");
+    res.json({ ok: true, reset: true, value: resolveModel() });
+  }));
 }
 
 // The PGlite socket server points DATABASE_URL at a local socket path when the
@@ -139,6 +264,43 @@ export function validateDatabaseUrl(url) {
   }
   if (!/^postgres(ql)?:\/\//i.test(url)) {
     return "That doesn't look like a Postgres connection string — it should start with postgresql://.";
+  }
+  return null;
+}
+
+/**
+ * Friendly validation for a user-supplied AI provider base URL (any
+ * OpenAI-compatible endpoint). Returns an error message string, or null when
+ * the URL is acceptable. Empty input is not an error here — the route treats
+ * it as "reset to the built-in default".
+ */
+export function validateBaseUrl(url) {
+  url = typeof url === "string" ? url.trim() : "";
+  if (!url) return "Paste a provider base URL first, or clear the field to go back to the default.";
+  if (url.length > 200) return "That URL looks too long to be valid — check for extra characters.";
+  if (!/^https:\/\//i.test(url)) {
+    return "The base URL must start with https:// — for example https://generativelanguage.googleapis.com/v1beta/openai";
+  }
+  return null;
+}
+
+/** Normalize a validated base URL: trim and strip trailing slashes (llm.js
+ *  appends /chat/completions itself). */
+export function normalizeBaseUrl(url) {
+  return String(url).trim().replace(/\/+$/, "");
+}
+
+/**
+ * Friendly validation for a user-supplied model id. Returns an error message
+ * string, or null when the id is acceptable. Empty input is not an error here
+ * — the route treats it as "reset to the built-in default".
+ */
+export function validateModelId(model) {
+  model = typeof model === "string" ? model.trim() : "";
+  if (!model) return "Type a model id first, or clear the field to go back to the default.";
+  if (model.length > 100) return "That model id looks too long to be valid — check for extra characters.";
+  if (!/^[A-Za-z0-9.:/_-]+$/.test(model)) {
+    return "Model ids may only contain letters, numbers, and . : / _ - characters.";
   }
   return null;
 }

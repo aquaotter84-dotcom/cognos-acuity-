@@ -67,11 +67,20 @@ export const api = {
   modelKeyStatus: () => req("/api/settings/model-key"),
   setModelKey: (key) => req("/api/settings/model-key", { method: "POST", body: { key } }),
   clearModelKey: () => req("/api/settings/model-key", { method: "DELETE" }),
+  diagnoseAi: () => req("/api/settings/diagnose-ai"),
 
   // --- On-device database URL (Settings) -----------------------------------
   databaseUrlStatus: () => req("/api/settings/database-url"),
   setDatabaseUrl: (url) => req("/api/settings/database-url", { method: "POST", body: { url } }),
   clearDatabaseUrl: () => req("/api/settings/database-url", { method: "DELETE" }),
+
+  // --- On-device AI provider endpoint + model id (Settings) ------------------
+  baseUrlStatus: () => req("/api/settings/model-base-url"),
+  setBaseUrl: (url) => req("/api/settings/model-base-url", { method: "POST", body: { url } }),
+  clearBaseUrl: () => req("/api/settings/model-base-url", { method: "DELETE" }),
+  modelIdStatus: () => req("/api/settings/model-id"),
+  setModelId: (model) => req("/api/settings/model-id", { method: "POST", body: { model } }),
+  clearModelId: () => req("/api/settings/model-id", { method: "DELETE" }),
 
   getWorkspace: () => req("/api/workspace"),
   updateWorkspace: (data) => req("/api/workspace", { method: "PATCH", body: data }),

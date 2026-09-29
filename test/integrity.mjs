@@ -39,9 +39,14 @@ try {
     // (GET/POST/DELETE /api/settings/model-key).
     // Supabase round added 3: the on-device database-url settings routes
     // (GET/POST/DELETE /api/settings/database-url).
-    assert.equal(nonStatic.length, 138);
-    // +1 static route on top of the 138 API routes (was 136 = 135 + 1).
-    if (!process.env.VERCEL) assert.equal(routes.length, 139);
+    // AI-diagnose round added 1: GET /api/settings/diagnose-ai, the staged
+    // AI-connection self-test.
+    // AI-provider round added 6: the on-device provider base-URL and model-id
+    // settings routes (GET/POST/DELETE /api/settings/model-base-url and
+    // GET/POST/DELETE /api/settings/model-id).
+    assert.equal(nonStatic.length, 145);
+    // +1 static route on top of the 145 API routes (was 140 = 139 + 1).
+    if (!process.env.VERCEL) assert.equal(routes.length, 146);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",
@@ -104,7 +109,12 @@ try {
       "get:/api/graph/snapshots/:id",
       "get:/api/graph/verify",
       "get:/api/graph/coverage",
-      "get:/api/graph/state/:entityType/:entityId"
+      "get:/api/graph/state/:entityType/:entityId",
+      "get:/api/settings/diagnose-ai",
+      "get:/api/settings/model-base-url",
+      "post:/api/settings/model-base-url",
+      "get:/api/settings/model-id",
+      "post:/api/settings/model-id"
     ]) assert.ok(routes.includes(route), `missing ${route}`);
   });
 

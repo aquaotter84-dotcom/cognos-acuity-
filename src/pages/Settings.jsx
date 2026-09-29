@@ -4,7 +4,7 @@
 // workspace instructions editor (which feeds buildContextSystemPrompt verbatim),
 // local browser voice preferences, and runtime status from /api/health.
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Menu, Check, Square, Volume2, ShieldAlert, Scale, KeyRound, Trash2, Sun, Moon, Database } from 'lucide-react';
+import { Settings as SettingsIcon, Menu, Check, X, Square, Volume2, ShieldAlert, Scale, KeyRound, Trash2, Sun, Moon, Database } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
 import { useVoice } from '@/lib/voiceContext';
@@ -47,6 +47,8 @@ function ModelKeySection({ onChanged }) {
   const [keyInput, setKeyInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(null); // { ok, text }
+  const [diag, setDiag] = useState(null); // staged AI-connection diagnostic result
+  const [diagBusy, setDiagBusy] = useState(false);
 
   const refresh = () => api.modelKeyStatus().then(setStatus).catch(() => setStatus(null));
   useEffect(() => { refresh(); }, []);
@@ -73,6 +75,15 @@ function ModelKeySection({ onChanged }) {
       setMessage({ ok: true, text: 'Key removed.' });
     } catch (e) { setMessage({ ok: false, text: e.message || 'Could not remove the key.' }); }
     finally { setBusy(false); }
+  };
+
+  const runDiagnostic = async () => {
+    setDiagBusy(true); setDiag(null);
+    try {
+      setDiag(await api.diagnoseAi());
+    } catch (e) {
+      setDiag({ ok: false, summary: e.message || 'The diagnostic could not run.', stages: [] });
+    } finally { setDiagBusy(false); }
   };
 
   return (
@@ -121,14 +132,182 @@ function ModelKeySection({ onChanged }) {
                   <Trash2 className="w-3.5 h-3.5" /> Remove key
                 </button>
               )}
+              <button
+                onClick={runDiagnostic}
+                disabled={diagBusy}
+                className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground disabled:opacity-50"
+                title="Run a staged connection test against your AI provider: key sanity, DNS, TCP, TLS, HTTPS."
+              >
+                {diagBusy ? 'Testing…' : 'Test AI connection'}
+              </button>
             </div>
             {message && (
               <p className={message.ok ? 'text-green-500' : 'text-destructive'}>{message.text}</p>
+            )}
+            {diag && (
+              <div className="rounded-lg border border-border bg-muted/30 p-2.5 space-y-1.5">
+                <p className={diag.ok ? 'text-green-500' : 'text-destructive'}>{diag.summary}</p>
+                {diag.stages.map(s => (
+                  <div key={s.name} className="flex items-start gap-2">
+                    {s.ok
+                      ? <Check className="w-3.5 h-3.5 text-green-500 mt-0.5 shrink-0" />
+                      : <X className="w-3.5 h-3.5 text-destructive mt-0.5 shrink-0" />}
+                    <div className="min-w-0">
+                      <p className="font-medium capitalize">
+                        {s.name}{s.skipped ? ' (skipped)' : ''}
+                        <span className="text-muted-foreground font-normal"> · {s.ms}ms</span>
+                      </p>
+                      <p className="text-muted-foreground leading-snug">{s.detail}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
             <p className="text-muted-foreground/60 leading-relaxed">
               The key is stored privately inside the app — no other app can read it — and is only
               ever sent to your model provider when answering.
             </p>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** Point COGNOS at a different AI provider and/or model — e.g. Gemini's
+ *  OpenAI-compatible endpoint. Takes effect immediately, no restart. Neither
+ *  value is secret, so the current values are shown. */
+function AiProviderSection({ onChanged }) {
+  const [base, setBase] = useState(null);
+  const [baseInput, setBaseInput] = useState('');
+  const [model, setModel] = useState(null);
+  const [modelInput, setModelInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState(null); // { ok, text }
+
+  const refresh = () => Promise.all([
+    api.baseUrlStatus().then(setBase).catch(() => setBase(null)),
+    api.modelIdStatus().then(setModel).catch(() => setModel(null)),
+  ]);
+  useEffect(() => { refresh(); }, []);
+
+  const run = async (fn, doneText) => {
+    setBusy(true); setMessage(null);
+    try {
+      await fn();
+      await refresh();
+      onChanged?.();
+      setMessage({ ok: true, text: doneText });
+    } catch (e) { setMessage({ ok: false, text: e.message || 'Could not save.' }); }
+    finally { setBusy(false); }
+  };
+
+  const saveBase = () => run(
+    () => api.setBaseUrl(baseInput).then(() => setBaseInput('')),
+    'Provider switched — it takes effect immediately.'
+  );
+  const resetBase = () => {
+    if (!window.confirm('Reset the provider to the default?')) return;
+    run(() => api.clearBaseUrl(), 'Provider reset to the default.');
+  };
+  const saveModel = () => run(
+    () => api.setModelId(modelInput).then(() => setModelInput('')),
+    'Model switched — it takes effect immediately.'
+  );
+  const resetModel = () => {
+    if (!window.confirm('Reset the model to the default?')) return;
+    run(() => api.clearModelId(), 'Model reset to the default.');
+  };
+
+  const envManaged = base?.managed === 'environment' || model?.managed === 'environment';
+
+  return (
+    <section className="space-y-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI provider</h3>
+      <div className="rounded-xl border border-border bg-card p-3 space-y-4 text-xs">
+        {(base === null || model === null) ? (
+          <p className="text-muted-foreground">Loading…</p>
+        ) : envManaged ? (
+          <p className="text-muted-foreground leading-relaxed">
+            The provider for this install is managed by the server environment, so it can't be
+            changed here. Endpoint: <span className="break-all">{base.value}</span>.
+            Model: <span className="break-all">{model.value}</span>.
+          </p>
+        ) : (
+          <>
+            <div className="space-y-2">
+              <p className="font-medium text-foreground/90">
+                Endpoint <span className="text-muted-foreground font-normal">· current: </span>
+                <span className="text-muted-foreground font-normal break-all">{base.value}{base.isDefault ? ' (default)' : ''}</span>
+              </p>
+              <input
+                value={baseInput}
+                onChange={e => setBaseInput(e.target.value)}
+                placeholder="https://…"
+                autoComplete="off" autoCapitalize="off" spellCheck="false"
+                className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/50"
+              />
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={saveBase}
+                  disabled={busy || !baseInput.trim()}
+                  className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
+                >
+                  {busy ? 'Saving…' : 'Save endpoint'}
+                </button>
+                {!base.isDefault && (
+                  <button
+                    onClick={resetBase}
+                    disabled={busy}
+                    className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground disabled:opacity-50"
+                  >
+                    Reset to default
+                  </button>
+                )}
+              </div>
+              <p className="text-muted-foreground/60 leading-relaxed">
+                Any OpenAI-compatible endpoint. For Gemini:
+                https://generativelanguage.googleapis.com/v1beta/openai
+              </p>
+            </div>
+            <div className="space-y-2">
+              <p className="font-medium text-foreground/90">
+                Model <span className="text-muted-foreground font-normal">· current: </span>
+                <span className="text-muted-foreground font-normal break-all">{model.value}{model.isDefault ? ' (default)' : ''}</span>
+              </p>
+              <input
+                value={modelInput}
+                onChange={e => setModelInput(e.target.value)}
+                placeholder="e.g. gemini-2.0-flash"
+                autoComplete="off" autoCapitalize="off" spellCheck="false"
+                className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/50"
+              />
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={saveModel}
+                  disabled={busy || !modelInput.trim()}
+                  className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
+                >
+                  {busy ? 'Saving…' : 'Save model'}
+                </button>
+                {!model.isDefault && (
+                  <button
+                    onClick={resetModel}
+                    disabled={busy}
+                    className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground disabled:opacity-50"
+                  >
+                    Reset to default
+                  </button>
+                )}
+              </div>
+              <p className="text-muted-foreground/60 leading-relaxed">
+                Switching providers usually means switching the model too — use the model id
+                your provider expects.
+              </p>
+            </div>
+            {message && (
+              <p className={message.ok ? 'text-green-500' : 'text-destructive'}>{message.text}</p>
+            )}
           </>
         )}
       </div>
@@ -315,6 +494,8 @@ export default function Settings() {
           </section>
 
           <ModelKeySection onChanged={() => api.health().then(setHealth).catch(() => {})} />
+
+          <AiProviderSection onChanged={() => api.health().then(setHealth).catch(() => {})} />
 
           <DatabaseSection onChanged={() => api.health().then(setHealth).catch(() => {})} />
 

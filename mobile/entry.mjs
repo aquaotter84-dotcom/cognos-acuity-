@@ -108,6 +108,26 @@ if (dataDir) {
     } catch { /* absent — model calls will fail until a key is provided */ }
   }
   bootLog("entry: key file " + (process.env.BLUESMINDS_API_KEY ? "present" : "absent"));
+  // Optional: bluesminds_api_url.txt overrides the AI provider base URL
+  // (e.g. Gemini's OpenAI-compatible endpoint). Written by the Settings page.
+  if (!process.env.BLUESMINDS_API_URL && !process.env.OPENAI_BASE_URL) {
+    const baseUrlFile = path.join(dataDir, "bluesminds_api_url.txt");
+    try {
+      const baseUrl = fs.readFileSync(baseUrlFile, "utf8").trim();
+      if (baseUrl) process.env.BLUESMINDS_API_URL = baseUrl;
+    } catch { /* absent — the built-in default is used */ }
+  }
+  bootLog("entry: base URL file " + (process.env.BLUESMINDS_API_URL ? "present" : "absent"));
+  // Optional: cognos_model.txt overrides the model id. Written by the
+  // Settings page.
+  if (!process.env.COGNOS_MODEL && !process.env.OPENAI_MODEL) {
+    const modelFile = path.join(dataDir, "cognos_model.txt");
+    try {
+      const model = fs.readFileSync(modelFile, "utf8").trim();
+      if (model) process.env.COGNOS_MODEL = model;
+    } catch { /* absent — the built-in default is used */ }
+  }
+  bootLog("entry: model file " + (process.env.COGNOS_MODEL ? "present" : "absent"));
   // Optional: database_url.txt points the server at an external Postgres
   // (e.g. Supabase) instead of the on-device PGlite database. When set,
   // server/localdb.js skips PGlite entirely — no WASM engine load, no ~1GB
