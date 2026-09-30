@@ -8,6 +8,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { applyAutonomyDelegationFiles } from "./server/delegation-files.mjs";
 
 // Node 18 (the runtime inside the APK) predates several web globals that
 // newer dependencies expect. CustomEvent (used by @electric-sql/pglite-socket)
@@ -128,6 +129,13 @@ if (dataDir) {
     } catch { /* absent — the built-in default is used */ }
   }
   bootLog("entry: model file " + (process.env.COGNOS_MODEL ? "present" : "absent"));
+  // Optional: autonomy switch delegation files (see server/delegation-files.mjs).
+  // On a phone there is no operator shell, so the Autonomy page hands its own
+  // switches over by writing these files; they take effect here, at boot — an
+  // env var already set keeps winning, and handing a switch over needs the app
+  // to be closed and reopened.
+  const delegatedSwitches = applyAutonomyDelegationFiles(dataDir);
+  bootLog("entry: autonomy delegation " + (delegatedSwitches.length ? delegatedSwitches.join(",") : "none"));
   // Optional: database_url.txt points the server at an external Postgres
   // (e.g. Supabase) instead of the on-device PGlite database. When set,
   // server/localdb.js skips PGlite entirely — no WASM engine load, no ~1GB

@@ -167,6 +167,156 @@ function CopyButton({ text, label = 'Copy' }) {
   );
 }
 
+/** The env-var setup steps, for server deploys where the switches are managed
+    by the environment and this page cannot hand them over itself. */
+function SetupStepsPanel() {
+  return (
+    <div className="mt-2.5 rounded-lg border border-border bg-background/60 p-3">
+      <p className="text-[11px] font-semibold flex items-center gap-1.5">
+        <ClipboardCheck className="w-3.5 h-3.5 text-muted-foreground" />
+        How to turn it on
+      </p>
+      <ol className="mt-2 space-y-2">
+        {SETUP_STEPS.map((step, i) => (
+          <li key={step.env} className="flex items-start gap-2">
+            <span className="text-[10px] text-muted-foreground/70 tabular-nums mt-0.5">{i + 1}.</span>
+            <div className="min-w-0 flex-1">
+              <p className="flex items-center gap-2 flex-wrap">
+                <code className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded">{step.env}</code>
+                {step.env.startsWith('COGNOS_') && <CopyButton text={step.env} />}
+              </p>
+              <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">{step.what}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <CopyButton
+        label="Copy all the steps"
+        text={SETUP_STEPS.map((s, i) => `${i + 1}. ${s.env} — ${s.what}`).join('\n')}
+      />
+    </div>
+  );
+}
+
+/**
+ * The switch handover: the honest answer to "why are the toggles dead?"
+ *
+ * The Autonomy page's switches are held back until an operator hands them over
+ * (server/autonomy/settings.js). On a server deploy that means environment
+ * variables, so the page keeps the copyable setup steps. On this phone there is
+ * no operator shell — Jeremy is the operator — so the page hands the switches
+ * to itself through the delegation files (server/delegation-files.mjs, read at
+ * boot by mobile/entry.mjs). A handover takes effect when the app is closed and
+ * reopened, and the panel says so instead of pretending a toggle is live.
+ * Nothing here touches the governance logic: it only writes the files the boot
+ * reads, and an operator pin still outranks everything.
+ */
+function SwitchHandover({ canToggle, pinned }) {
+  const [state, setState] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    try { setState(await api.autonomyDelegation()); }
+    catch { setState({ managed: 'environment', switches: [] }); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const handOver = async (name) => {
+    if (busy) return;
+    setBusy(name); setError('');
+    try { setState(await api.handOverAutonomySwitch(name)); }
+    catch (e) { setError(e?.message || 'Could not hand the switch over.'); }
+    finally { setBusy(null); }
+  };
+
+  const takeBack = async (name) => {
+    if (busy) return;
+    setBusy(name); setError('');
+    try { setState(await api.takeBackAutonomySwitch(name)); }
+    catch (e) { setError(e?.message || 'Could not take the switch back.'); }
+    finally { setBusy(null); }
+  };
+
+  if (!state) return null;
+
+  // A server deploy: no delegation files, so the env-var setup steps stand.
+  if (state.managed !== 'device') {
+    return (!canToggle && !pinned) ? <SetupStepsPanel /> : null;
+  }
+
+  const switches = state.switches || [];
+  // Shown while any switch is not live — including "handed over, restart
+  // pending", which is exactly when the user needs the restart instruction.
+  if (!switches.some((sw) => !sw.delegated)) return null;
+
+  return (
+    <div className="mt-2.5 rounded-lg border border-border bg-background/60 p-3">
+      <p className="text-[11px] font-semibold flex items-center gap-1.5">
+        <ClipboardCheck className="w-3.5 h-3.5 text-muted-foreground" />
+        The switches are held back
+      </p>
+      <p className="text-[10px] text-muted-foreground mt-1 leading-relaxed">
+        These switches are held back until the operator hands them over. On this phone,
+        you&rsquo;re the operator — tap to hand a switch to this page. It takes effect
+        when you close and reopen the app. An operator pin (a real environment variable,
+        if one is ever set) still outranks everything.
+      </p>
+      {error && <p className="text-[10px] text-destructive mt-1.5">{error}</p>}
+      <div className="mt-2 space-y-2">
+        {switches.map((sw) => (
+          <div key={sw.name} className="rounded-lg border border-border/70 px-2.5 py-2">
+            <p className="text-[11px] font-medium">{sw.label}</p>
+            <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">{sw.blurb}</p>
+            <div className="mt-1.5">
+              {!sw.delegated && !sw.fileDelegated && (
+                <button
+                  onClick={() => handOver(sw.name)}
+                  disabled={busy === sw.name}
+                  className="rounded-lg bg-primary text-primary-foreground px-2.5 py-1.5 text-[11px] disabled:opacity-40"
+                >
+                  {busy === sw.name ? 'Handing over…' : sw.cta}
+                </button>
+              )}
+              {sw.fileDelegated && !sw.delegated && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Pill tone="info">handed over — restart pending</Pill>
+                  <span className="text-[10px] text-muted-foreground">Close and reopen the app to use it.</span>
+                  <button
+                    onClick={() => takeBack(sw.name)}
+                    disabled={busy === sw.name}
+                    className="text-[10px] text-muted-foreground underline hover:text-foreground disabled:opacity-40"
+                  >
+                    Take it back
+                  </button>
+                </div>
+              )}
+              {sw.delegated && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Pill tone="ok">handed over</Pill>
+                  {sw.fileDelegated ? (
+                    <button
+                      onClick={() => takeBack(sw.name)}
+                      disabled={busy === sw.name}
+                      className="text-[10px] text-muted-foreground underline hover:text-foreground disabled:opacity-40"
+                    >
+                      Take it back
+                    </button>
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground">
+                      Handed over by the environment — this page can&rsquo;t take it back.
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** The switch itself — present only when an operator delegated it. */
 function EnableToggle({ status, busy, onToggle }) {
   const on = status?.enabled === true;
@@ -230,32 +380,7 @@ function StatusBanner({ status, busy, onToggle, onError }) {
             </p>
           )}
 
-          {!canToggle && !pinned && (
-            <div className="mt-2.5 rounded-lg border border-border bg-background/60 p-3">
-              <p className="text-[11px] font-semibold flex items-center gap-1.5">
-                <ClipboardCheck className="w-3.5 h-3.5 text-muted-foreground" />
-                How to turn it on
-              </p>
-              <ol className="mt-2 space-y-2">
-                {SETUP_STEPS.map((step, i) => (
-                  <li key={step.env} className="flex items-start gap-2">
-                    <span className="text-[10px] text-muted-foreground/70 tabular-nums mt-0.5">{i + 1}.</span>
-                    <div className="min-w-0 flex-1">
-                      <p className="flex items-center gap-2 flex-wrap">
-                        <code className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded">{step.env}</code>
-                        {step.env.startsWith('COGNOS_') && <CopyButton text={step.env} />}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">{step.what}</p>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-              <CopyButton
-                label="Copy all the steps"
-                text={SETUP_STEPS.map((s, i) => `${i + 1}. ${s.env} — ${s.what}`).join('\n')}
-              />
-            </div>
-          )}
+          <SwitchHandover canToggle={canToggle} pinned={pinned} />
 
           {canToggle && (
             <p className="text-[10px] text-muted-foreground/70 mt-1.5">
@@ -1481,6 +1606,18 @@ function Outbox({ status, onChanged }) {
               >
                 <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-background shadow transition-transform ${writes.rungEnabled ? 'translate-x-4' : ''}`} />
               </button>
+            );
+          })()}
+          {/* Touch-visible honesty: a disabled switch says why in text, not a
+              tooltip — tooltips don't exist on a phone screen. */}
+          {(() => {
+            const refusal = status?.settings?.rungRefusals?.externalWrites || null;
+            const canSet = !refusal && status?.settings?.canSetRungs === true;
+            if (canSet) return null;
+            return (
+              <p className="basis-full text-[10px] text-muted-foreground leading-relaxed">
+                {refusal?.message || 'The rung switches are not delegated to this page.'}
+              </p>
             );
           })()}
           <Pill tone={writes.deliversNow ? 'bad' : 'info'}>outbox {status?.outboxMode || 'shadow'}</Pill>

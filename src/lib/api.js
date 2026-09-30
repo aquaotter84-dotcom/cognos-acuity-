@@ -82,6 +82,20 @@ export const api = {
   setModelId: (model) => req("/api/settings/model-id", { method: "POST", body: { model } }),
   clearModelId: () => req("/api/settings/model-id", { method: "DELETE" }),
 
+  // --- Autonomy switch delegation (Autonomy page, on-device) -----------------
+  /**
+   * Which of the Autonomy page's switches the operator handed to this page.
+   * `managed: "device"` means the handover buttons below work here; on a
+   * server deploy it is "environment" and the page falls back to env-var steps.
+   */
+  autonomyDelegation: () => req("/api/settings/autonomy-delegation"),
+  /** Hand one switch over. Takes effect when the app is closed and reopened. */
+  handOverAutonomySwitch: (name) =>
+    req("/api/settings/autonomy-delegation", { method: "POST", body: { name } }),
+  /** Take one switch back. Takes effect when the app is closed and reopened. */
+  takeBackAutonomySwitch: (name) =>
+    req("/api/settings/autonomy-delegation", { method: "DELETE", body: { name } }),
+
   getWorkspace: () => req("/api/workspace"),
   updateWorkspace: (data) => req("/api/workspace", { method: "PATCH", body: data }),
 

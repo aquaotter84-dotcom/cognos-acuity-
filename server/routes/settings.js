@@ -11,6 +11,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { diagnoseAiConnection, DIAGNOSE_DEFAULT_BASE_URL } from "../ai-diagnose.js";
 import { resolveModel } from "../llm.js";
+import { envFlag } from "../autonomy/settings.js";
+import {
+  AUTONOMY_DELEGATION_FILES,
+  delegationEntry,
+  readDelegationFile,
+} from "../delegation-files.mjs";
 
 const KEY_FILE = "bluesminds_api_key.txt";
 const DB_URL_FILE = "database_url.txt";
@@ -242,6 +248,71 @@ export function registerSettingsRoutes(app, { wrap, logger }) {
     if (logger) logger.info("settings", "model id reset to default from Settings page");
     res.json({ ok: true, reset: true, value: resolveModel() });
   }));
+
+  // --- Autonomy switch delegation (on-device operator handover) --------------
+  // The five *_UI_CONTROL env vars hand the Autonomy page's switches to the UI
+  // (server/autonomy/settings.js). On a phone there is no operator shell, so
+  // the page hands them to itself: writing the delegation file ("true", mode
+  // 600) delegates, deleting it takes the switch back. mobile/entry.mjs reads
+  // the files at boot, so a handover takes effect when the app is closed and
+  // reopened; an env var already set (a real operator) keeps winning and
+  // outranks the file. Delegation names a capability, not a secret, so GET
+  // reports which switches are handed over.
+  app.get("/api/settings/autonomy-delegation", wrap(async (req, res) => {
+    res.json({
+      // "device": the delegation files live in app-internal storage and can be
+      // changed here. "environment": a server deploy — managed by env vars.
+      managed: process.env.COGNOS_DATA_DIR ? "device" : "environment",
+      switches: process.env.COGNOS_DATA_DIR
+        ? AUTONOMY_DELEGATION_FILES.map(delegationSwitchState)
+        : [],
+    });
+  }));
+
+  app.post("/api/settings/autonomy-delegation", wrap(async (req, res) => {
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const entry = delegationEntry(name);
+    if (!entry) {
+      return res.status(400).json({ error: `Unknown switch "${name.slice(0, 40)}". Nothing was changed.` });
+    }
+    const filePath = deviceDelegationPath(entry);
+    if (!filePath) {
+      return res.status(400).json({
+        error: "Switch delegation is managed by the server environment on this install — it can't be changed from the Autonomy page.",
+      });
+    }
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, "true\n", { mode: 0o600, encoding: "utf8" });
+    if (logger) logger.info("settings", `autonomy switch handed over: ${entry.name}`);
+    res.json({
+      ok: true,
+      name: entry.name,
+      restartRequired: true,
+      switches: AUTONOMY_DELEGATION_FILES.map(delegationSwitchState),
+    });
+  }));
+
+  app.delete("/api/settings/autonomy-delegation", wrap(async (req, res) => {
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const entry = delegationEntry(name);
+    if (!entry) {
+      return res.status(400).json({ error: `Unknown switch "${name.slice(0, 40)}". Nothing was changed.` });
+    }
+    const filePath = deviceDelegationPath(entry);
+    if (!filePath) {
+      return res.status(400).json({
+        error: "Switch delegation is managed by the server environment on this install.",
+      });
+    }
+    try { fs.unlinkSync(filePath); } catch { /* already absent */ }
+    if (logger) logger.info("settings", `autonomy switch taken back: ${entry.name}`);
+    res.json({
+      ok: true,
+      name: entry.name,
+      restartRequired: true,
+      switches: AUTONOMY_DELEGATION_FILES.map(delegationSwitchState),
+    });
+  }));
 }
 
 // The PGlite socket server points DATABASE_URL at a local socket path when the
@@ -303,4 +374,58 @@ export function validateModelId(model) {
     return "Model ids may only contain letters, numbers, and . : / _ - characters.";
   }
   return null;
+}
+
+/**
+ * Plain-language labels for the five delegatable switches, for the Autonomy
+ * page's handover panel. The outbox entry says the consequential part out
+ * loud: this is the switch that lets the loop act on the world.
+ */
+const DELEGATION_LABELS = Object.freeze({
+  autonomy: {
+    label: "The on/off switch",
+    cta: "Hand me the on/off switch",
+    blurb: "Lets this page turn the autonomy loop on and off. The loop still stages everything for your approval — the switch only decides whether it wakes at all.",
+  },
+  rungs: {
+    label: "The rung switches",
+    cta: "Hand me the rung switches",
+    blurb: "Decides which tiers exist here — what COGNOS may reach for. Opening a rung never approves an action by itself.",
+  },
+  auto_authorize: {
+    label: "The auto-authorize switch",
+    cta: "Hand me the auto-authorize switch",
+    blurb: "Lets this page choose whether a new goal waits for your approval before it runs, or starts on its own.",
+  },
+  bypass_earning: {
+    label: "The corpus-bypass switch",
+    cta: "Hand me the corpus-bypass switch",
+    blurb: "Lets this page choose whether a live release must first earn its way past the recorded shadow corpus.",
+  },
+  outbox: {
+    label: "The outbox-mode switch",
+    cta: "Hand me the outbox-mode switch",
+    blurb: "Lets this page choose whether the loop may act on the world. Shadow only records; live performs releases — to the one approved destination, judged one effect at a time.",
+  },
+});
+
+/** One switch's handover state for the GET response (and POST/DELETE echoes). */
+function delegationSwitchState(entry) {
+  const dir = process.env.COGNOS_DATA_DIR;
+  return {
+    name: entry.name,
+    envVar: entry.env,
+    ...DELEGATION_LABELS[entry.name],
+    // Effective delegation: a real env var, or a file read at boot (which
+    // entry.mjs turned into the env var). False until the restart after a
+    // handover — the page says so honestly instead of pretending.
+    delegated: envFlag(entry.env, false),
+    fileDelegated: dir ? readDelegationFile(dir, entry.file) : false,
+  };
+}
+
+/** Absolute path of a switch's delegation file, or null on a server deploy. */
+function deviceDelegationPath(entry) {
+  const dir = process.env.COGNOS_DATA_DIR;
+  return dir ? path.join(dir, entry.file) : null;
 }
