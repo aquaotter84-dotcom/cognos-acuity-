@@ -713,6 +713,10 @@ export default function Settings() {
               </p>
             </div>
           </section>
+
+          <p className="text-center text-[11px] text-muted-foreground/50 pb-2">
+            COGNOS · build gemini-2 · 2026-09-30
+          </p>
         </div>
       </div>
     </div>
