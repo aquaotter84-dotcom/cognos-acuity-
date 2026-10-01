@@ -51,6 +51,15 @@ const config = normalizeContextWindowConfig({
 assert.equal(config.maxInputTokens, 4_000);
 assert.equal(normalizeContextWindowConfig({ maxInputTokens: 1 }).maxInputTokens, 4_000);
 
+// Raised headroom (gemini-2.5-flash): section budgets must fit under the ceiling.
+const cwDefaults = normalizeContextWindowConfig({});
+assert.equal(cwDefaults.maxInputTokens, 100_000);
+assert.equal(normalizeContextWindowConfig({ maxInputTokens: 2_000_000 }).maxInputTokens, 1_000_000);
+const sectionSum = cwDefaults.outputReserveTokens + cwDefaults.historyTokens + cwDefaults.summaryTokens
+  + cwDefaults.memoryTokens + cwDefaults.sourceTokens + cwDefaults.supplementalTokens
+  + cwDefaults.graphTokens + cwDefaults.workspaceTokens + cwDefaults.maxUserTokens + cwDefaults.overheadTokens;
+assert.ok(sectionSum < cwDefaults.maxInputTokens, `section budgets (${sectionSum}) fit under the input ceiling`);
+
 const window = assembleContextWindow({
   userMessage: "What should I use for the next data analysis?",
   conversationSummary: "The user is choosing a tool for an analysis project.",

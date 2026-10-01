@@ -10,18 +10,18 @@ import { formatStructuredMemory, memoryLayerLabel } from "./memory/structure.js"
 
 const CHARS_PER_TOKEN = 4;
 const DEFAULTS = Object.freeze({
-  maxInputTokens: 16_000,
-  outputReserveTokens: 2_048,
-  maxHistoryMessages: 40,
-  historyTokens: 4_500,
-  summaryTokens: 500,
-  memoryTokens: 2_000,
-  sourceTokens: 4_800,
-  supplementalTokens: 1_800,
-  graphTokens: 1_200,
-  workspaceTokens: 450,
-  maxUserTokens: 2_600,
-  overheadTokens: 1_600
+  maxInputTokens: 100_000,
+  outputReserveTokens: 4_096,
+  maxHistoryMessages: 100,
+  historyTokens: 24_000,
+  summaryTokens: 1_000,
+  memoryTokens: 8_000,
+  sourceTokens: 16_000,
+  supplementalTokens: 6_000,
+  graphTokens: 4_000,
+  workspaceTokens: 1_000,
+  maxUserTokens: 8_000,
+  overheadTokens: 2_000
 });
 
 function finite(value, fallback) {
@@ -39,7 +39,7 @@ export function contextWindowDefaults() {
 
 export function normalizeContextWindowConfig(config = {}) {
   return {
-    maxInputTokens: clamp(config.maxInputTokens, DEFAULTS.maxInputTokens, 4_000, 128_000),
+    maxInputTokens: clamp(config.maxInputTokens, DEFAULTS.maxInputTokens, 4_000, 1_000_000),
     outputReserveTokens: clamp(config.outputReserveTokens, DEFAULTS.outputReserveTokens, 256, 32_000),
     maxHistoryMessages: clamp(config.maxHistoryMessages, DEFAULTS.maxHistoryMessages, 2, 200),
     historyTokens: clamp(config.historyTokens, DEFAULTS.historyTokens, 256, 64_000),

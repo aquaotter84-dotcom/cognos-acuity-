@@ -43,8 +43,8 @@ const test = async (name, fn) => {
 console.log("phase23: pure checks (context slice, governor audit, seals, merkle)");
 
 // --- context window: the graph slice -----------------------------------------
-await test("graphTokens normalizes to its own clamped slice (default 1200)", () => {
-  assert.equal(normalizeContextWindowConfig({}).graphTokens, 1_200);
+await test("graphTokens normalizes to its own clamped slice (default 4000)", () => {
+  assert.equal(normalizeContextWindowConfig({}).graphTokens, 4_000);
   assert.equal(normalizeContextWindowConfig({ graphTokens: 99_999 }).graphTokens, 16_000);
   assert.equal(normalizeContextWindowConfig({ graphTokens: -40 }).graphTokens, 0);
 });
