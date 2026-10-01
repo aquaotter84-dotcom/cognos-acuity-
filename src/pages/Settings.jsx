@@ -421,6 +421,12 @@ function PersonasSection() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(null); // persona being edited, or 'new'
+  // Phase 33 — label each persona's preferred TTS voice, when one is set.
+  const { voices: deviceVoices } = useVoice();
+  const voiceLabel = (voiceURI) => {
+    const v = (deviceVoices || []).find(item => item.voiceURI === voiceURI);
+    return v ? `${v.name} — ${v.lang}` : voiceURI;
+  };
 
   const load = async () => {
     try {
@@ -468,7 +474,7 @@ function PersonasSection() {
       <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Personas</h3>
       <div className="rounded-xl border border-border bg-card p-3 space-y-3 text-xs">
         <p className="text-muted-foreground leading-relaxed">
-          A persona is the voice COGNOS talks in — prompt, tone, and optional model or
+          A persona is the voice COGNOS talks in — prompt, tone, spoken voice, and optional model or
           temperature. It changes how it speaks, never what it may do: identity, the
           council, and governance stay the same under every persona.
         </p>
@@ -487,6 +493,11 @@ function PersonasSection() {
                       {p.id === activeId && <span className="text-[10px] text-green-500">active</span>}
                     </p>
                     {p.description && <p className="text-muted-foreground mt-0.5 leading-snug">{p.description}</p>}
+                    {p.voice && p.voice.voiceURI && (
+                      <p className="text-muted-foreground/70 mt-0.5 leading-snug">
+                        Spoken voice: {voiceLabel(p.voice.voiceURI)}
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     {p.id !== activeId && (
@@ -534,7 +545,11 @@ function PersonaEditor({ initial, busy, onCancel, onSave }) {
   const [promptText, setPromptText] = useState(initial?.prompt_text || '');
   const [modelOverride, setModelOverride] = useState(initial?.model_override || '');
   const [temperature, setTemperature] = useState(initial?.temperature ?? '');
+  // Phase 33 — preferred TTS voice for this persona. Stored in persona.voice;
+  // switching personas switches the spoken voice. Blank = the Voice settings.
+  const [ttsVoiceURI, setTtsVoiceURI] = useState(initial?.voice?.voiceURI || '');
   const [formError, setFormError] = useState('');
+  const deviceVoices = useVoice().voices;
 
   const submit = () => {
     if (!name.trim()) { setFormError('Give the persona a name.'); return; }
@@ -544,12 +559,16 @@ function PersonaEditor({ initial, busy, onCancel, onSave }) {
       return;
     }
     setFormError('');
+    const voice = { ...(initial?.voice && typeof initial.voice === 'object' ? initial.voice : {}) };
+    if (ttsVoiceURI) voice.voiceURI = ttsVoiceURI;
+    else delete voice.voiceURI;
     onSave({
       name: name.trim(),
       description: description.trim(),
       prompt_text: promptText,
       model_override: modelOverride.trim(),
-      temperature: t === '' ? null : Number(t)
+      temperature: t === '' ? null : Number(t),
+      voice,
     });
   };
 
@@ -572,6 +591,22 @@ function PersonaEditor({ initial, busy, onCancel, onSave }) {
           placeholder="Temperature 0–2 (optional)" inputMode="decimal"
           className={inputCls} title="Optional: sampling temperature for this persona's answer drafts. Blank keeps the provider default." />
       </div>
+      <label className="block text-[11px] text-muted-foreground">
+        Spoken voice
+        <select
+          value={ttsVoiceURI}
+          onChange={e => setTtsVoiceURI(e.target.value)}
+          className="mt-1 block w-full bg-muted/50 border border-border rounded-lg px-2.5 py-2 text-xs text-foreground outline-none focus:border-primary/50"
+          title="The voice this persona speaks in. Blank uses the Voice settings above."
+        >
+          <option value="">Default — from Voice settings</option>
+          {deviceVoices.map((item, index) => (
+            <option key={`${item.voiceURI}-${index}`} value={item.voiceURI}>
+              {item.name} — {item.lang}
+            </option>
+          ))}
+        </select>
+      </label>
       {initial?.builtin && (
         <p className="text-muted-foreground/70 leading-relaxed">Built-in personas can be tuned but not deleted.</p>
       )}
@@ -704,7 +739,8 @@ export default function Settings() {
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Voice</h3>            <div className="rounded-xl border border-border bg-card p-3 space-y-4 text-xs">
               {!voice.supported ? (
                 <p className="text-muted-foreground leading-relaxed">
-                  Speech output is not available in this browser. COGNOS will continue to work normally in text mode.
+                  Speech output is not available on this device.
+                  COGNOS will continue to work normally in text mode.
                 </p>
               ) : (
                 <>
@@ -736,7 +772,7 @@ export default function Settings() {
                   </label>
 
                   <label className="block text-[11px] text-muted-foreground">
-                    Browser voice
+                    {voice.engine === 'native' ? 'Device voice' : 'Browser voice'}
                     <select
                       value={voice.settings.voiceURI}
                       onChange={event => voice.updateSettings({ voiceURI: event.target.value })}
@@ -750,6 +786,20 @@ export default function Settings() {
                       ))}
                     </select>
                   </label>
+                  {voice.engine === 'native' && (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => voice.openInstallVoiceData()}
+                        className="text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        Install voice data
+                      </button>
+                      <p className="text-[10px] text-muted-foreground/60 flex-1 min-w-[12rem]">
+                        Opens the system installer if this device is missing voice data for its on-device voices.
+                      </p>
+                    </div>
+                  )}
 
                   <div className="grid sm:grid-cols-3 gap-4">
                     <label className="text-[11px] text-muted-foreground">
@@ -793,7 +843,9 @@ export default function Settings() {
                       {voice.speakingId === 'voice-preview' ? 'Stop preview' : 'Test voice'}
                     </button>
                     <p className="text-[10px] text-muted-foreground/60 flex-1 min-w-[12rem]">
-                      Browser-native playback: no audio is uploaded, stored, or sent to a separate speech provider.
+                      {voice.engine === 'native'
+                        ? 'On-device playback: no audio is uploaded, stored, or sent to a separate speech provider.'
+                        : 'Browser-native playback: no audio is uploaded, stored, or sent to a separate speech provider.'}
                     </p>
                   </div>
                 </>

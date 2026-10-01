@@ -51,6 +51,7 @@ export default function Chat() {
     speakAutomatically,
     stop: stopSpeaking,
     toggleEnabled: toggleVoiceMode,
+    setActivePersona: setVoicePersona,
   } = useVoice();
   const [searchParams, setSearchParams] = useSearchParams();
   const conversationId = searchParams.get('c');
@@ -118,8 +119,13 @@ export default function Chat() {
     api.listPersonas()
       .then(r => {
         if (cancelled) return;
-        setPersonas(r.personas || []);
-        setActivePersonaId(r.activeId || null);
+        const list = r.personas || [];
+        const activeId = r.activeId || null;
+        setPersonas(list);
+        setActivePersonaId(activeId);
+        // Phase 33 — the voice context resolves the TTS voice from the
+        // active persona, so switching personas switches the spoken voice.
+        try { setVoicePersona(list.find(p => p.id === activeId) || null); } catch { /* voice off */ }
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -132,8 +138,11 @@ export default function Chat() {
     try {
       await api.activatePersona(id);
       const r = await api.listPersonas();
-      setPersonas(r.personas || []);
-      setActivePersonaId(r.activeId || id);
+      const list = r.personas || [];
+      const nextId = r.activeId || id;
+      setPersonas(list);
+      setActivePersonaId(nextId);
+      try { setVoicePersona(list.find(p => p.id === nextId) || null); } catch { /* voice off */ }
     } catch {
       setActivePersonaId(prev);
     }

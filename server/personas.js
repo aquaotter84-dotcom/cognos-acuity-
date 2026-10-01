@@ -15,8 +15,10 @@
 // answer-drafting calls; Critic, Governor, and the other seats always run
 // the configured primary model so governance never shifts with the persona.
 //
-// `voice` is a reserved placeholder for the later TTS build. Nothing reads
-// it yet; it is stored so personas created now carry forward.
+// `voice` carries the persona's preferred TTS voice (Phase 33): an object with
+// optional voiceURI (device voice id), lang, rate, and pitch. The chat client
+// resolves it against the device's installed voices; unknown fields are
+// dropped on write so stored voices stay clean.
 
 import { randomUUID } from "node:crypto";
 
@@ -96,9 +98,37 @@ export function validatePersonaInput(input = {}) {
     if (!Number.isFinite(t) || t < 0 || t > 2)
       problems.push("temperature must be a number between 0 and 2, or omitted");
   }
-  if (input.voice != null && (typeof input.voice !== "object" || Array.isArray(input.voice)))
+  if (input.voice != null && (typeof input.voice !== "object" || Array.isArray(input.voice))) {
     problems.push("voice must be an object");
+  } else if (input.voice != null) {
+    // Phase 33 — TTS voice preference fields.
+    const v = input.voice;
+    if (v.voiceURI != null && typeof v.voiceURI !== "string") problems.push("voice.voiceURI must be a string");
+    else if (typeof v.voiceURI === "string" && v.voiceURI.length > 120)
+      problems.push("voice.voiceURI must be 120 characters or fewer");
+    if (v.lang != null && typeof v.lang !== "string") problems.push("voice.lang must be a string");
+    else if (typeof v.lang === "string" && v.lang.length > 20)
+      problems.push("voice.lang must be 20 characters or fewer");
+    for (const key of ["rate", "pitch"]) {
+      if (v[key] != null && (typeof v[key] !== "number" || !(v[key] >= 0.25 && v[key] <= 4)))
+        problems.push(`voice.${key} must be a number between 0.25 and 4`);
+    }
+  }
   return problems;
+}
+
+function normalizeVoiceObject(input) {
+  if (input == null || typeof input !== "object" || Array.isArray(input)) return {};
+  const out = {};
+  if (typeof input.voiceURI === "string" && input.voiceURI.trim())
+    out.voiceURI = input.voiceURI.trim().slice(0, 120);
+  if (typeof input.lang === "string" && input.lang.trim())
+    out.lang = input.lang.trim().slice(0, 20);
+  for (const key of ["rate", "pitch"]) {
+    const n = Number(input[key]);
+    if (input[key] != null && Number.isFinite(n)) out[key] = Math.min(4, Math.max(0.25, n));
+  }
+  return out;
 }
 
 function normalizePersonaInput(input = {}) {
@@ -114,7 +144,7 @@ function normalizePersonaInput(input = {}) {
     prompt_text: clampStr(String(input.prompt_text ?? ""), LIMITS.prompt_text),
     model_override: modelOverride,
     temperature,
-    voice: input.voice != null ? input.voice : {}
+    voice: normalizeVoiceObject(input.voice)
   };
 }
 

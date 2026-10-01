@@ -12,6 +12,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { Send, Square, Mic, MicOff, FileText, Link as LinkIcon, X } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { SpeechRecognition } from '@capacitor-community/speech-recognition';
+import { useVoice } from '@/lib/voiceContext';
 import SourceComposer from '@/components/chat/SourceComposer';
 
 function useSpeechRecognition(onFinal) {
@@ -121,6 +122,13 @@ export default function ChatInput({
   const { supported: micSupported, listening, interim, start, stop } = useSpeechRecognition(
     (t) => setText(prev => (prev ? prev.trim() + ' ' : '') + t)
   );
+  // Audio focus: never let the mic hear COGNOS talking to itself. Starting
+  // dictation silences any in-flight speech first.
+  const { stop: stopSpeaking } = useVoice();
+  const startDictation = async () => {
+    try { stopSpeaking(); } catch { /* voice provider not mounted */ }
+    await start();
+  };
   const displayText = listening && interim ? (text ? text + ' ' : '') + interim : text;
 
   const handleSend = () => {
@@ -180,7 +188,7 @@ export default function ChatInput({
           />
           {micSupported && (
             <button
-              onClick={() => (listening ? stop() : start())}
+              onClick={() => (listening ? stop() : startDictation())}
               className={`p-2 rounded-xl transition-colors ${listening ? 'bg-destructive text-destructive-foreground animate-pulse' : 'text-muted-foreground hover:text-foreground'}`}
               title={listening ? 'Stop listening' : 'Speak'}
             >
