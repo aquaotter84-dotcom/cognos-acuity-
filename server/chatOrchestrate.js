@@ -39,6 +39,7 @@ import { prepareAgentTurn } from "./agent/runner.js";
 import { buildEvidencePack } from "./sources/index.js";
 import { buildGoalEvidence, formatGoalEvidence } from "./autonomy/goalEvidence.js";
 import { normalizeMemoryFields } from "./memory/structure.js";
+import { embedTexts, parseEmbedding, rankMemoriesBySimilarity, scheduleEmbeddingRefresh } from "./memory/embeddings.js";
 import { assembleContextWindow, normalizeContextWindowConfig, trimToTokens } from "./contextWindow.js";
 import { formatGraphContext } from "./knowledge/graph.js";
 
@@ -206,9 +207,39 @@ const MEMORY_RELEVANCE_SCHEMA = {
 // Phase 7 — relevance-based memory retrieval. When the workspace has more enabled
 // memories than the context budget, a lightweight model ranks the pool by relevance
 // to the current message and the top-N are used. Falls back to importance order.
+// Phase 30 — semantic ranking comes first: when enough of the pool carries
+// embeddings, the message is embedded once and the pool is ranked by cosine
+// similarity. It is cheaper and faster than the LLM ranker below, and it finds
+// memories by meaning rather than wording. Anything short of that — too few
+// embeddings, provider unavailable — falls through to the LLM ranker, then to
+// importance order. Memories missing embeddings are backfilled in the
+// background so coverage improves on its own.
 async function selectRelevantMemories(ctx, userMessage, pool, maxMemories) {
   if (!pool || pool.length === 0) return [];
   if (pool.length <= maxMemories) return pool;
+  const queryFn = typeof ctx?.db?.query === "function" ? ctx.db.query : null;
+  try {
+    const embedded = pool.filter(m => parseEmbedding(m?.embedding));
+    // Backfill whatever is missing — never blocks this turn.
+    if (queryFn && embedded.length < pool.length) {
+      scheduleEmbeddingRefresh(queryFn, pool, { logger: ctx?.logger });
+    }
+    // Semantic ranking needs real coverage: at least half the pool and at
+    // least 3 embedded memories, otherwise the ranking would be noise.
+    if (embedded.length >= 3 && embedded.length * 2 >= pool.length) {
+      const vecs = await embedTexts([userMessage], { logger: ctx?.logger });
+      if (vecs && vecs[0] && vecs[0].length > 0) {
+        const ranked = rankMemoriesBySimilarity(vecs[0], embedded, maxMemories);
+        if (ranked.length > 0) {
+          ctx?.logger?.info?.("memory semantic ranking used",
+            { scored: embedded.length, pool: pool.length, top: ranked.length });
+          return ranked;
+        }
+      }
+    }
+  } catch (e) {
+    ctx?.logger?.warn?.("memory semantic ranking failed, using LLM ranker", { error: String(e?.message || e) });
+  }
   try {
     const inventory = pool.map(m => ({
       id: m.id,

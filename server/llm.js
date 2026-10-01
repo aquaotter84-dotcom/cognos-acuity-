@@ -76,12 +76,21 @@ function requestTuning() {
   return { serviceTier: rawTier || null, promptCacheKey: rawCacheKey || null };
 }
 
-function apiConfig() {
+// Key + endpoint, shared by chat completions and embeddings. BLUESMINDS_* is
+// the primary name; OPENAI_* is accepted as an alias so any OpenAI-compatible
+// gateway still works unchanged. Exported so the embeddings module can reuse
+// the already-configured provider instead of re-resolving (and re-asking).
+export function providerApiConfig() {
   const apiKey = process.env.BLUESMINDS_API_KEY || process.env.OPENAI_API_KEY;
   const baseUrl = (process.env.BLUESMINDS_API_URL || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL)
     .replace(/\/chat\/completions\/?$/, "")   // tolerate a full endpoint URL
     .replace(/\/$/, "");
   if (!apiKey) throw new Error("BLUESMINDS_API_KEY is not configured");
+  return { apiKey, baseUrl };
+}
+
+function apiConfig() {
+  const { apiKey, baseUrl } = providerApiConfig();
   return { apiKey, url: `${baseUrl}/chat/completions` };
 }
 

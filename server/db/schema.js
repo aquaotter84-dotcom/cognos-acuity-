@@ -1237,6 +1237,19 @@ ALTER TABLE autonomy_settings ADD COLUMN IF NOT EXISTS rung_irreversible BOOLEAN
 ALTER TABLE autonomy_settings ADD COLUMN IF NOT EXISTS rung_inbound BOOLEAN;
 `;
 
+// Phase 30 — semantic memory embeddings. Two additive columns on memories:
+// `embedding` holds the JSON-encoded vector, and `embedding_model` records
+// which model produced it so a model change can invalidate stale rows.
+// No pgvector, no new Postgres extensions: cosine similarity runs in JS,
+// which is plenty at personal-app scale. Embeddings are derived from the
+// user's own memories via the already-configured AI provider — no new
+// external service. A NULL embedding simply means "not embedded yet";
+// every consumer treats that as a signal to fall back, never as an error.
+export const PHASE30_SCHEMA = `
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding TEXT;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding_model TEXT;
+`;
+
 export const PHASE_SCHEMAS = [
   { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
   { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
@@ -1255,5 +1268,6 @@ export const PHASE_SCHEMAS = [
   { id: "0015", phase: 26, name: "phase26_council_settings", sql: PHASE26_SCHEMA },
   { id: "0016", phase: 26, name: "phase26_auto_authorize_goals", sql: PHASE26B_SCHEMA },
   { id: "0017", phase: 28, name: "phase28_bypass_earning", sql: PHASE28_SCHEMA },
-  { id: "0018", phase: 29, name: "phase29_rung_switches", sql: PHASE29_SCHEMA }
+  { id: "0018", phase: 29, name: "phase29_rung_switches", sql: PHASE29_SCHEMA },
+  { id: "0019", phase: 30, name: "phase30_memory_embeddings", sql: PHASE30_SCHEMA }
 ];

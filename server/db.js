@@ -42,7 +42,7 @@ import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { newId, num } from "./db/util.js";
-import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA, PHASE24_SCHEMA, PHASE25_SCHEMA, PHASE22B_SCHEMA, PHASE22C_SCHEMA, PHASE26_SCHEMA, PHASE26B_SCHEMA, PHASE28_SCHEMA, PHASE29_SCHEMA } from "./db/schema.js";
+import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA, PHASE24_SCHEMA, PHASE25_SCHEMA, PHASE22B_SCHEMA, PHASE22C_SCHEMA, PHASE26_SCHEMA, PHASE26B_SCHEMA, PHASE28_SCHEMA, PHASE29_SCHEMA, PHASE30_SCHEMA } from "./db/schema.js";
 import { appendEvent, snapshot } from "./knowledge/events.js";
 import {
   createKnowledgeStore, TRACKED_FIELDS,
@@ -55,6 +55,7 @@ import { createAccountsStore } from "./accounts/store.js";
 import { confidenceFromEvidence, statementKey, projectMemoryWrite, retireBeliefByKey } from "./knowledge/beliefs.js";
 import { linkCoActivations } from "./knowledge/relationships.js";
 import { normalizeMemoryFields } from "./memory/structure.js";
+import { scheduleEmbeddingRefresh } from "./memory/embeddings.js";
 
 // Neon's serverless driver talks over WebSockets, which is what works from a
 // Vercel serverless function (no long-lived TCP socket to keep warm). In Node
@@ -213,7 +214,10 @@ CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events (created_date DESC)
 + PHASE28_SCHEMA
 // Phase 29 — the five rung columns on autonomy_settings. Ordered after the two
 // blocks above because all three alter the same table.
-+ PHASE29_SCHEMA;
++ PHASE29_SCHEMA
+// Phase 30 — the two embedding columns on memories. Additive and inert:
+// a NULL embedding means "not embedded yet" and every consumer falls back.
++ PHASE30_SCHEMA;
 
 function isNeon(url) {
   return /\.neon\.tech/i.test(url) || /neon\.database/i.test(url);
@@ -577,7 +581,7 @@ function createCoreStore(run) {
      * store (creating or strengthening the belief that says the same thing).
      */
     async create(data, opts = {}) {
-      return transacted(run, async (store) => {
+      const memory = await transacted(run, async (store) => {
         const r = store ? store.query : run;
         const id = newId("mem");
         const ts = Date.now();
@@ -621,15 +625,21 @@ function createCoreStore(run) {
         memory.belief = projected.belief ? { id: projected.belief.id, confidence: num(projected.belief.confidence), status: projected.belief.status, created: !!projected.created } : null;
         return memory;
       });
+      // Phase 30 — embed the new memory in the background so future recall can
+      // rank by meaning. The write is committed; a failure here never fails it.
+      // bulkCreate passes skipEmbeddingRefresh and schedules once for the batch.
+      if (!opts?.skipEmbeddingRefresh) scheduleEmbeddingRefresh(run, [memory]);
+      return memory;
     },
     /** One transaction for the whole batch, plus the co-activation links
      *  between beliefs written together (Phase 14.4). */
     async bulkCreate(records, opts = {}) {
       if (!records?.length) return [];
-      return transacted(run, async (store) => {
+      const batchOpts = { ...opts, skipEmbeddingRefresh: true };
+      const out = await transacted(run, async (store) => {
         const self = store ? store.Memory : this;
         const out = [];
-        for (const rec of records) out.push(await self.create(rec, opts));
+        for (const rec of records) out.push(await self.create(rec, batchOpts));
         const beliefIds = out.map(m => m.belief?.id).filter(Boolean);
         if (ledgerOn() && beliefIds.length > 1) {
           const src = sourceOf(opts);
@@ -642,9 +652,12 @@ function createCoreStore(run) {
         }
         return out;
       });
+      // Phase 30 — one background embedding pass for the whole batch.
+      scheduleEmbeddingRefresh(run, out);
+      return out;
     },
     async update(id, data, opts = {}) {
-      return transacted(run, async (store) => {
+      const after = await transacted(run, async (store) => {
         const self = store ? store.Memory : this;
         const r = store ? store.query : run;
         const before = await self.get(id);
@@ -727,6 +740,12 @@ function createCoreStore(run) {
         }
         return after;
       });
+      // Phase 30 — content changed means the embedding is stale; re-embed in
+      // the background. Best-effort, never fails the update.
+      if (after && typeof data?.content === "string" && data.content !== undefined) {
+        scheduleEmbeddingRefresh(run, [after], { force: true });
+      }
+      return after;
     },
     /**
      * The row goes (existing semantics preserved) but the knowledge does not

@@ -102,7 +102,8 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
     failContentType: null,
     rejectUnknownModel: true, // 400 model_not_found for model ids matching /nonexistent|bad-/
     cachedTokens: 0,
-    requests: []
+    requests: [],
+    embeddingRequests: []
   };
 
   const reset = (patch = {}) => {
@@ -114,7 +115,7 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
       residentDraft: defaultResidentDraft(),
       malformed: null,
       hang: false, failStatus: null, failRoles: null, failCount: null,
-      failBody: null, failContentType: null
+      failBody: null, failContentType: null, embeddingRequests: []
     }, patch);
   };
 
@@ -123,6 +124,14 @@ export async function createMockModel({ port = 0, host = "127.0.0.1", latencyMs 
     req.on("data", c => (body += c));
     req.on("end", async () => {
       const payload = JSON.parse(body || "{}");
+      const isEmbeddings = /\/embeddings\/?$/.test(String(req.url || "")) || (payload.input !== undefined && payload.messages === undefined);
+      if (isEmbeddings) {
+        // Phase 30 — embeddings attempts are observable but never pollute the
+        // chat-request log that role- and count-based assertions read.
+        state.embeddingRequests.push({ url: req.url, model: payload.model, inputs: Array.isArray(payload.input) ? payload.input.length : 0, at: Date.now() });
+        res.writeHead(400, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ error: { message: "embeddings are not mocked by this server", type: "invalid_request_error", code: "embeddings_not_mocked" } }));
+      }
       const role = roleOf(payload);
       // Test-only instrumentation: keep the prompt text so scenarios can assert
       // what an operator was actually given (e.g. that the Critic received the
