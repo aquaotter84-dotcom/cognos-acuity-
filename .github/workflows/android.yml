@@ -161,6 +161,41 @@ jobs:
           keytool -list -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey > /dev/null || { echo "Restored keystore is missing the androiddebugkey alias" >&2; exit 1; }
           echo "Stable debug keystore restored."
 
+      - name: Pin debug signing to the stable keystore
+        # AGP's implicit ~/.android/debug.keystore lookup proved unreliable:
+        # a build generated a throwaway key and ignored the restored file,
+        # which would have broken updates again. So pin the debug signing
+        # config EXPLICITLY to the restored keystore. Fail loudly if the
+        # expected buildTypes block is missing. Idempotent via marker.
+        run: |
+          G=android/app/build.gradle
+          if ! grep -q 'STABLE_DEBUG_SIGNING' "$G"; then
+            printf '%s\n' \
+              "    // STABLE_DEBUG_SIGNING (injected by CI): pin debug signing to the" \
+              "    // stable keystore restored from COGNOS_DEBUG_KEYSTORE_B64. Every" \
+              "    // build must use the same key or Android rejects updates." \
+              "    signingConfigs {" \
+              "        debug {" \
+              "            storeFile file(System.getProperty('user.home') + '/.android/debug.keystore')" \
+              "            storePassword 'android'" \
+              "            keyAlias 'androiddebugkey'" \
+              "            keyPassword 'android'" \
+              "        }" \
+              "    }" > /tmp/stable-signing.gradle
+            python3 -c "
+          import re
+          g = 'android/app/build.gradle'
+          s = open(g).read()
+          snippet = open('/tmp/stable-signing.gradle').read()
+          s2, n = re.subn(r'(?m)^    buildTypes \{', lambda m: snippet + m.group(0), s, count=1)
+          assert n == 1, 'buildTypes block not found in ' + g
+          open(g, 'w').write(s2)
+          print('pinned explicit debug signingConfig')
+          "
+          fi
+          grep -q "storeFile file(System.getProperty('user.home')" "$G" || { echo "explicit signingConfig not pinned" >&2; exit 1; }
+          grep -n 'STABLE_DEBUG_SIGNING' "$G" | head -2
+
       - name: Build debug APK
         run: cd android && ./gradlew assembleDebug
 

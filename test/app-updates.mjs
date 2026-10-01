@@ -180,6 +180,20 @@ ok('android.yml restores a stable debug keystore before the build', () => {
     'keystore restore must precede the gradle build',
   );
 });
+ok('android.yml pins the debug signingConfig explicitly to the stable keystore', () => {
+  // AGP's implicit ~/.android/debug.keystore lookup generated a throwaway
+  // key instead of using the restored file (build 36939542224), so the
+  // signing config must be explicit, not implicit.
+  assert.match(androidYml, /Pin debug signing to the stable keystore/);
+  assert.match(androidYml, /STABLE_DEBUG_SIGNING/);
+  assert.match(androidYml, /signingConfigs \{/);
+  assert.match(androidYml, /storeFile file\(System\.getProperty\('user\.home'\)/);
+  assert.match(androidYml, /keyAlias 'androiddebugkey'/);
+  assert.ok(
+    androidYml.indexOf('Pin debug signing to the stable keystore') < androidYml.indexOf('Build debug APK'),
+    'signing pin must precede the gradle build',
+  );
+});
 ok('android.yml enables the self-update install path in the manifest', () => {
   assert.match(androidYml, /Enable self-update install path/);
   assert.match(androidYml, /android\.permission\.REQUEST_INSTALL_PACKAGES/);
