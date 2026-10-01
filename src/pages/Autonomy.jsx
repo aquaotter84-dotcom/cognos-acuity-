@@ -26,7 +26,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Activity, AlertTriangle, Bell, Bot, Check, ChevronDown, ChevronRight, ClipboardCheck,
-  Clock, Copy, Gauge, HelpCircle, Inbox, Lock, Menu, Pause, Play, Plus, RefreshCw, ScrollText,
+  Clock, Copy, Gauge, Heart, HelpCircle, Inbox, Lock, Menu, Pause, Play, Plus, RefreshCw, ScrollText,
   Send, ShieldAlert, ShieldCheck, Snowflake, Sparkles, Sprout, MessageCircle, Trash2, ThumbsDown, ThumbsUp, Undo2, X, Zap
 } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -1927,6 +1927,87 @@ function Outbox({ status, onChanged }) {
 }
 
 // ----------------------------------------------------------------- overview
+/**
+ * Phase 31 — heartbeat personality switches. Three independent toggles, each
+ * plainly described. Everything here is skippable: turning one off silences
+ * that behavior entirely, and the loop itself never depends on any of them.
+ */
+function HeartbeatToggles() {
+  const [settings, setSettings] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const r = await api.heartbeatSettings();
+      setSettings(r.settings);
+    } catch {
+      setSettings({ greeting: true, dream: true, checkin: true });
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const flip = async (key) => {
+    if (busy || !settings) return;
+    setBusy(key); setError('');
+    try {
+      const r = await api.setHeartbeatSettings({ [key]: !settings[key] });
+      setSettings(r.settings);
+    } catch (e) {
+      setError(e?.message || 'Could not update the setting.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (!settings) return null;
+
+  const rows = [
+    {
+      key: 'greeting',
+      label: 'Morning greeting',
+      blurb: 'One short, warm hello when you first open the app each day \u2014 referencing something real, like an active goal or yesterday\u2019s memories. In-app only, never a push notification.'
+    },
+    {
+      key: 'dream',
+      label: 'Dream journal',
+      blurb: 'The day\u2019s new memories are quietly distilled into a short dream entry you\u2019ll find in Memory. No fanfare.'
+    },
+    {
+      key: 'checkin',
+      label: 'Gentle check-ins',
+      blurb: 'Rare and soft: if a goal sits untouched for days, the morning greeting may mention it once. Dismiss it and it stays dismissed until tomorrow.'
+    }
+  ];
+
+  return (
+    <Section title="Heartbeat" subtitle="A little personality on the loop \u2014 warm, sparse, never nagging" icon={Heart}>
+      {error && <p className="text-[10px] text-destructive mb-2">{error}</p>}
+      <div className="space-y-2">
+        {rows.map(({ key, label, blurb }) => (
+          <div key={key} className="rounded-lg border border-border/70 px-3 py-2.5 flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-xs font-medium">{label}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{blurb}</p>
+            </div>
+            <button
+              role="switch"
+              aria-checked={settings[key] === true}
+              aria-label={label}
+              disabled={busy === key}
+              onClick={() => flip(key)}
+              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 disabled:opacity-50 ${settings[key] ? 'bg-primary' : 'bg-muted-foreground/30'}`}
+              title={settings[key] ? `Turn ${label.toLowerCase()} off` : `Turn ${label.toLowerCase()} on`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-background shadow transition-transform ${settings[key] ? 'translate-x-5' : ''}`} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 function Overview({ status, residents, goals, onTick, ticking, onToggle, toggling, bannerError,
   attention, attentionLoading, onJump, onDesign, onSeedArchivist, seedingArchivist,
   onAutoAuthorize, autoAuthBusy, onBypassEarning, bypassBusy, onRung, rungBusy }) {
@@ -1948,6 +2029,9 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
           </p>
         ) : null}
       />
+
+      {/* Phase 31 — heartbeat with personality: three silenceable toggles. */}
+      <HeartbeatToggles />
 
       {/* Phase 26 — forgo goal authorization. A delegated switch, reported as its
           own three facts (on / pinned / may-I-change-it), so the toggle can

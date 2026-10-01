@@ -173,6 +173,15 @@ export const api = {
   /** Run one bounded slice now. No-op (frozen) when autonomy is disabled. */
   runTick: (body = {}) => req("/api/autonomy/tick", { method: "POST", body }),
 
+  // --- Phase 31: heartbeat with personality ----------------------------------
+  // The morning greeting (once per device-local day, in-app only — never a
+  // push), the quiet dream journal, and rare gentle check-ins. All three are
+  // independently silenceable from the Autonomy page.
+  /** { served, already, text, checkin, date, dreamWritten, disabled? } */
+  heartbeatGreeting: (params = {}) => req(`/api/heartbeat/greeting${qs(params)}`),
+  heartbeatSettings: () => req("/api/heartbeat/settings"),
+  setHeartbeatSettings: (body) => req("/api/heartbeat/settings", { method: "POST", body }),
+
   // --- Phase 25: hybrid enablement, the attention queue, the designer --------
   /**
    * The delegated switch: what it is, who decided it, and whether this UI may

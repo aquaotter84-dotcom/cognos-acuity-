@@ -8,3 +8,6 @@ mobile-dist
 
 # Capacitor Android project (generated in CI)
 android
+
+# Local PGlite / boot scratch from test runs — never commit
+tmpdata/

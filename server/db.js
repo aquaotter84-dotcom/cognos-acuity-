@@ -42,7 +42,7 @@ import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { newId, num } from "./db/util.js";
-import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA, PHASE24_SCHEMA, PHASE25_SCHEMA, PHASE22B_SCHEMA, PHASE22C_SCHEMA, PHASE26_SCHEMA, PHASE26B_SCHEMA, PHASE28_SCHEMA, PHASE29_SCHEMA, PHASE30_SCHEMA } from "./db/schema.js";
+import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA, PHASE24_SCHEMA, PHASE25_SCHEMA, PHASE22B_SCHEMA, PHASE22C_SCHEMA, PHASE26_SCHEMA, PHASE26B_SCHEMA, PHASE28_SCHEMA, PHASE29_SCHEMA, PHASE30_SCHEMA, PHASE31_SCHEMA } from "./db/schema.js";
 import { appendEvent, snapshot } from "./knowledge/events.js";
 import {
   createKnowledgeStore, TRACKED_FIELDS,
@@ -217,7 +217,10 @@ CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events (created_date DESC)
 + PHASE29_SCHEMA
 // Phase 30 — the two embedding columns on memories. Additive and inert:
 // a NULL embedding means "not embedded yet" and every consumer falls back.
-+ PHASE30_SCHEMA;
++ PHASE30_SCHEMA
+// Phase 31 — the heartbeat_state table for the personality layer. One row per
+// workspace; inert by itself, read only by the heartbeat routes.
++ PHASE31_SCHEMA;
 
 function isNeon(url) {
   return /\.neon\.tech/i.test(url) || /neon\.database/i.test(url);

@@ -46,9 +46,11 @@ try {
     // GET/POST/DELETE /api/settings/model-id).
     // Autonomy-delegation round added 3: the on-device switch-handover routes
     // (GET/POST/DELETE /api/settings/autonomy-delegation).
-    assert.equal(nonStatic.length, 148);
-    // +1 static route on top of the 148 API routes (was 146 = 145 + 1).
-    if (!process.env.VERCEL) assert.equal(routes.length, 149);
+    // Phase 31 added 3: the heartbeat personality routes (GET
+    // /api/heartbeat/greeting, GET/POST /api/heartbeat/settings).
+    assert.equal(nonStatic.length, 151);
+    // +1 static route on top of the 151 API routes (was 149 = 148 + 1).
+    if (!process.env.VERCEL) assert.equal(routes.length, 152);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",

@@ -28,6 +28,7 @@ import GoalCard from '@/components/chat/GoalCard';
 // conversation, and this is where conversations already happen. It creates
 // nothing; the Autonomy surface still owns every write.
 import DesignerDrawer from '@/components/autonomy/DesignerDrawer';
+import HeartbeatCard from '@/components/chat/HeartbeatCard';
 
 const STYLES = ['balanced', 'casual', 'technical', 'strategic'];
 
@@ -77,6 +78,28 @@ export default function Chat() {
   const [goalBusy, setGoalBusy] = useState(false);
   const [goalError, setGoalError] = useState('');
   const [carried, setCarried] = useState(null);
+
+  // Phase 31 — the morning greeting: one fetch per app session, against the
+  // device clock. The server dedupes per day, so this is naturally once-daily.
+  // In-app only, never a push; the X clears it for the session.
+  const [heartbeat, setHeartbeat] = useState(null);
+  const heartbeatFetched = useRef(false);
+  useEffect(() => {
+    if (heartbeatFetched.current) return;
+    heartbeatFetched.current = true;
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const h = d.getHours();
+    const part = h < 5 ? 'night' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
+    api.heartbeatGreeting({ date, part })
+      .then((r) => {
+        if (r?.served && !r?.already && (r.text || r.checkin)) {
+          setHeartbeat({ text: r.text || null, checkin: r.checkin || null });
+        }
+      })
+      .catch(() => { /* the greeting is a nicety; it never breaks chat */ });
+  }, []);
 
   // Hoisted above handleSend: the send callback's dependency array reads
   // goalDetached and refreshGoal, so they must be initialized first.
@@ -449,6 +472,15 @@ export default function Chat() {
       </header>
 
       <div className="flex-1 overflow-y-auto scrollbar-thin min-h-0">
+        {heartbeat && (
+          <div className="max-w-3xl mx-auto px-3 md:px-4 pt-4">
+            <HeartbeatCard
+              text={heartbeat.text}
+              checkin={heartbeat.checkin}
+              onDismiss={() => setHeartbeat(null)}
+            />
+          </div>
+        )}
         {messages.length === 0 && !draft ? (
           <WelcomeScreen onSuggestion={(t) => sendOrQueue(t)} />
         ) : (

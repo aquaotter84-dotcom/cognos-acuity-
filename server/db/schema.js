@@ -1250,6 +1250,30 @@ ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding TEXT;
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding_model TEXT;
 `;
 
+
+// ---------------------------------------------------------------------------
+// Phase 31 — heartbeat with personality: morning greetings, the dream
+// journal, and gentle check-ins (Sapphire-inspired, reimplemented).
+//
+// One row per workspace. last_greeting_date / last_dream_date are device-local
+// YYYY-MM-DD strings supplied by the client, so the server never guesses
+// timezones; they are dedupe keys, not policy. `settings` holds the three
+// independent toggles (greeting, dream, checkin) — all default-on in code,
+// absence here means "never touched". Nothing in this table can stage an
+// effect, spend budget, or widen a rung: it is a personality layer, not
+// authority.
+// ---------------------------------------------------------------------------
+export const PHASE31_SCHEMA = `
+CREATE TABLE IF NOT EXISTS heartbeat_state (
+  workspace_id       TEXT PRIMARY KEY,
+  last_greeting_date TEXT,
+  last_dream_date    TEXT,
+  settings           JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_date       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+`;
+
 export const PHASE_SCHEMAS = [
   { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
   { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
@@ -1269,5 +1293,6 @@ export const PHASE_SCHEMAS = [
   { id: "0016", phase: 26, name: "phase26_auto_authorize_goals", sql: PHASE26B_SCHEMA },
   { id: "0017", phase: 28, name: "phase28_bypass_earning", sql: PHASE28_SCHEMA },
   { id: "0018", phase: 29, name: "phase29_rung_switches", sql: PHASE29_SCHEMA },
-  { id: "0019", phase: 30, name: "phase30_memory_embeddings", sql: PHASE30_SCHEMA }
+  { id: "0019", phase: 30, name: "phase30_memory_embeddings", sql: PHASE30_SCHEMA },
+  { id: "0020", phase: 31, name: "phase31_heartbeat_personality", sql: PHASE31_SCHEMA }
 ];
