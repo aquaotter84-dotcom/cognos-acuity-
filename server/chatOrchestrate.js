@@ -26,6 +26,7 @@ import { createMessage } from "./shared/protocol.js";
 import { CognosError } from "./shared/errors.js";
 import { registerCouncil } from "./council/index.js";
 import { callLLM } from "./llm.js";
+import { getActivePersona } from "./personas.js";
 import db, { newId } from "./db.js";
 // Phase 14 — Dynamic Systems: the subsystems the council consults.
 import { registerKnowledgeStages } from "./knowledge/index.js";
@@ -648,11 +649,24 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
   const startTime = Date.now();
 
   // --- Orchestrate the pipeline ---
+  // Phase 32 — the active persona is resolved once per turn and rides along
+  // in the turn content every council seat receives. A persona failure never
+  // fails the turn: chat simply continues in the default voice.
+  let activePersona = null;
+  try {
+    activePersona = await getActivePersona(db);
+  } catch (e) {
+    ctx?.logger?.warn?.("persona resolve failed; continuing without persona", {
+      error: String(e?.message || e).slice(0, 200)
+    });
+    activePersona = null;
+  }
   const baseTurnContent = {
     conversationId,
     workspaceId,
     userMessage,
     style,
+    persona: activePersona,
     attachments: attachments || [],
     webSearch: !!webSearch,
     agentMode,

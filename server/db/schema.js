@@ -1274,8 +1274,39 @@ CREATE TABLE IF NOT EXISTS heartbeat_state (
 );
 `;
 
-export const PHASE_SCHEMAS = [
-  { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
+// ---------------------------------------------------------------------------
+// Phase 32 — personas: named personality bundles (Sapphire's persona idea,
+// reimplemented from scratch. Sapphire is AGPL-3.0 — none of its code is
+// copied here).
+//
+// One row per persona. `builtin` rows are seeded by ensureBuiltinPersonas()
+// in server/personas.js and may be edited but never deleted. Exactly one row
+// is active at a time; the store enforces that. A persona is a VOICE/STYLE
+// layer only: its prompt_text is framed as a communication persona inside the
+// system prompt (see buildPersonaSection) and can never replace the
+// code-owned identity, the six-operator council, capabilities, governance, or
+// autonomy guardrails — those stay persona-independent. The model override
+// and temperature apply only to the Specialist's answer-drafting calls, so
+// Critic/Governor behavior never changes with the persona. `voice` is a
+// reserved JSONB placeholder for the later TTS build; nothing reads it yet.
+// ---------------------------------------------------------------------------
+export const PHASE32_SCHEMA = `
+CREATE TABLE IF NOT EXISTS personas (
+  id             TEXT PRIMARY KEY,
+  name           TEXT NOT NULL,
+  description    TEXT NOT NULL DEFAULT '',
+  prompt_text    TEXT NOT NULL DEFAULT '',
+  model_override TEXT,
+  temperature    REAL,
+  voice          JSONB NOT NULL DEFAULT '{}'::jsonb,
+  builtin        INTEGER NOT NULL DEFAULT 0,
+  is_active      INTEGER NOT NULL DEFAULT 0,
+  created_date   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+`;
+
+export const PHASE_SCHEMAS = [  { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
   { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
   { id: "0003", phase: 16, name: "phase16_latency_observability", sql: PHASE16_SCHEMA },
   { id: "0004", phase: 17, name: "phase17_sources_and_agents", sql: PHASE17_SCHEMA },
@@ -1294,5 +1325,6 @@ export const PHASE_SCHEMAS = [
   { id: "0017", phase: 28, name: "phase28_bypass_earning", sql: PHASE28_SCHEMA },
   { id: "0018", phase: 29, name: "phase29_rung_switches", sql: PHASE29_SCHEMA },
   { id: "0019", phase: 30, name: "phase30_memory_embeddings", sql: PHASE30_SCHEMA },
-  { id: "0020", phase: 31, name: "phase31_heartbeat_personality", sql: PHASE31_SCHEMA }
+  { id: "0020", phase: 31, name: "phase31_heartbeat_personality", sql: PHASE31_SCHEMA },
+  { id: "0021", phase: 32, name: "phase32_personas", sql: PHASE32_SCHEMA }
 ];

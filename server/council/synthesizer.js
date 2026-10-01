@@ -28,7 +28,7 @@ export const synthesizerAgent = defineAgent({
       // score — the revision prompt says so, and the refusal text is quoted
       // as findings instead of a 1-10 score.
       const isGovernorRevision = critique.source === "governor";
-      const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, isGovernorRevision ? GOV_REVISE_BASE : REVISE_BASE, content.style, content.councilRecord, content.sourceContext, memoryContext, content.graphContext);
+      const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, isGovernorRevision ? GOV_REVISE_BASE : REVISE_BASE, content.style, content.councilRecord, content.sourceContext, memoryContext, content.graphContext, content.persona || null);
       const evalLine = isGovernorRevision
         ? `Governor refusal — deterministic audit findings:\n${critique.reasoning}`
         : `Critic evaluation (score ${critique.score}/10): ${critique.reasoning}`;
@@ -52,7 +52,7 @@ export const synthesizerAgent = defineAgent({
       .map((o, i) => `### Sub-task ${i + 1}: ${o.description || o.agent}\n${o.output || "(no output)"}`)
       .join("\n\n");
 
-    const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, SYNTH_BASE, content.style, content.councilRecord, content.sourceContext, memoryContext, content.graphContext);
+    const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, SYNTH_BASE, content.style, content.councilRecord, content.sourceContext, memoryContext, content.graphContext, content.persona || null);
     const chatMessages = [
       { role: "system", content: systemPrompt },
       ...history.map(msg => ({ role: msg.role, content: msg.content })),

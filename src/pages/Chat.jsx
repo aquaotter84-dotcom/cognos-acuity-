@@ -59,6 +59,10 @@ export default function Chat() {
   const [councilTraces, setCouncilTraces] = useState({});
   const [conversationSummary, setConversationSummary] = useState(null);
   const [style, setStyle] = useState('balanced');
+  // Phase 32 — personas: the active voice/style bundle. Switching changes how
+  // COGNOS talks on the next turn, never the conversation history or state.
+  const [personas, setPersonas] = useState([]);
+  const [activePersonaId, setActivePersonaId] = useState(null);
   const [webSearch, setWebSearch] = useState(false);
   const [selectedSources, setSelectedSources] = useState([]);
   const [agentMode, setAgentMode] = useState('off');
@@ -108,6 +112,32 @@ export default function Chat() {
     try { setGoalDetail(await api.getGoal(id)); setGoalError(''); }
     catch (e) { setGoalError(e.message || 'Could not load the goal'); setGoalDetail(null); }
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.listPersonas()
+      .then(r => {
+        if (cancelled) return;
+        setPersonas(r.personas || []);
+        setActivePersonaId(r.activeId || null);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const switchPersona = async (id) => {
+    if (!id || id === activePersonaId) return;
+    const prev = activePersonaId;
+    setActivePersonaId(id);
+    try {
+      await api.activatePersona(id);
+      const r = await api.listPersonas();
+      setPersonas(r.personas || []);
+      setActivePersonaId(r.activeId || id);
+    } catch {
+      setActivePersonaId(prev);
+    }
+  };
 
   useEffect(() => { refreshGoal(goalId); }, [goalId, refreshGoal]);
 
@@ -462,6 +492,15 @@ export default function Chat() {
         >
           <Globe className="w-4 h-4" />
         </button>
+        <select
+          value={activePersonaId || ''}
+          onChange={e => switchPersona(e.target.value)}
+          className="bg-muted/50 border border-border rounded-lg text-xs px-2 py-1.5 outline-none max-w-[7rem]"
+          title="Persona — the voice COGNOS talks in. Changes how it speaks, never what it may do."
+          aria-label="Active persona"
+        >
+          {personas.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
         <select
           value={style}
           onChange={e => setStyle(e.target.value)}

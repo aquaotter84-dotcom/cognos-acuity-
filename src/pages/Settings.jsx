@@ -4,7 +4,7 @@
 // workspace instructions editor (which feeds buildContextSystemPrompt verbatim),
 // local browser voice preferences, and runtime status from /api/health.
 import { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Menu, Check, X, Square, Volume2, ShieldAlert, Scale, KeyRound, Trash2, Sun, Moon, Database } from 'lucide-react';
+import { Settings as SettingsIcon, Menu, Check, X, Square, Volume2, ShieldAlert, Scale, KeyRound, Trash2, Sun, Moon, Database, Pencil, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
 import { useVoice } from '@/lib/voiceContext';
@@ -412,6 +412,184 @@ function DatabaseSection({ onChanged }) {
   );
 }
 
+/** Phase 32 — personas: named voice/style bundles. A persona changes how
+ *  COGNOS talks, never what it may do — governance stays persona-free.
+ *  Built-ins can be edited but not deleted; custom ones get full CRUD. */
+function PersonasSection() {
+  const [personas, setPersonas] = useState(null);
+  const [activeId, setActiveId] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(null); // persona being edited, or 'new'
+
+  const load = async () => {
+    try {
+      const r = await api.listPersonas();
+      setPersonas(r.personas || []);
+      setActiveId(r.activeId || null);
+      setError('');
+    } catch (e) {
+      setError(e.message || 'Could not load personas');
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const activate = async (id) => {
+    setBusy(true);
+    try {
+      const r = await api.activatePersona(id);
+      setActiveId(r.activeId);
+      setPersonas(prev => (prev || []).map(p => ({ ...p, is_active: p.id === r.activeId })));
+    } catch (e) { setError(e.message || 'Could not switch persona'); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm('Delete this persona? The active voice falls back to COGNOS.')) return;
+    setBusy(true);
+    try { await api.deletePersona(id); await load(); }
+    catch (e) { setError(e.message || 'Could not delete persona'); }
+    finally { setBusy(false); }
+  };
+
+  const saveEdit = async (data) => {
+    setBusy(true);
+    try {
+      if (editing === 'new') await api.createPersona(data);
+      else await api.updatePersona(editing.id, data);
+      setEditing(null);
+      await load();
+    } catch (e) { setError(e.message || 'Could not save persona'); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <section className="space-y-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Personas</h3>
+      <div className="rounded-xl border border-border bg-card p-3 space-y-3 text-xs">
+        <p className="text-muted-foreground leading-relaxed">
+          A persona is the voice COGNOS talks in — prompt, tone, and optional model or
+          temperature. It changes how it speaks, never what it may do: identity, the
+          council, and governance stay the same under every persona.
+        </p>
+        {error && <p className="text-destructive">{error}</p>}
+        {personas === null ? (
+          <p className="text-muted-foreground">Loading…</p>
+        ) : (
+          <div className="space-y-2">
+            {personas.map(p => (
+              <div key={p.id} className={`rounded-lg border p-2.5 ${p.id === activeId ? 'border-primary/50 bg-primary/5' : 'border-border'}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-medium text-foreground/90 flex items-center gap-2">
+                      {p.name}
+                      {p.builtin && <span className="text-[10px] text-muted-foreground font-normal">built-in</span>}
+                      {p.id === activeId && <span className="text-[10px] text-green-500">active</span>}
+                    </p>
+                    {p.description && <p className="text-muted-foreground mt-0.5 leading-snug">{p.description}</p>}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {p.id !== activeId && (
+                      <button onClick={() => activate(p.id)} disabled={busy}
+                        className="text-xs px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground disabled:opacity-50">
+                        Use
+                      </button>
+                    )}
+                    <button onClick={() => setEditing(p)} title="Edit persona"
+                      className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    {!p.builtin && (
+                      <button onClick={() => remove(p.id)} disabled={busy} title="Delete persona"
+                        className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-muted disabled:opacity-50">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={() => setEditing('new')}
+          className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground">
+          <Plus className="w-3.5 h-3.5" /> New persona
+        </button>
+        {editing && (
+          <PersonaEditor
+            initial={editing === 'new' ? null : editing}
+            busy={busy}
+            onCancel={() => setEditing(null)}
+            onSave={saveEdit}
+          />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function PersonaEditor({ initial, busy, onCancel, onSave }) {
+  const [name, setName] = useState(initial?.name || '');
+  const [description, setDescription] = useState(initial?.description || '');
+  const [promptText, setPromptText] = useState(initial?.prompt_text || '');
+  const [modelOverride, setModelOverride] = useState(initial?.model_override || '');
+  const [temperature, setTemperature] = useState(initial?.temperature ?? '');
+  const [formError, setFormError] = useState('');
+
+  const submit = () => {
+    if (!name.trim()) { setFormError('Give the persona a name.'); return; }
+    const t = String(temperature).trim();
+    if (t !== '' && (Number.isNaN(Number(t)) || Number(t) < 0 || Number(t) > 2)) {
+      setFormError('Temperature must be a number between 0 and 2, or left blank.');
+      return;
+    }
+    setFormError('');
+    onSave({
+      name: name.trim(),
+      description: description.trim(),
+      prompt_text: promptText,
+      model_override: modelOverride.trim(),
+      temperature: t === '' ? null : Number(t)
+    });
+  };
+
+  const inputCls = "w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/50";
+  return (
+    <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2.5">
+      <p className="font-medium text-foreground/90">{initial ? `Edit “${initial.name}”` : 'New persona'}</p>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="Name — e.g. Night Owl"
+        maxLength={60} className={inputCls} />
+      <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Short description"
+        maxLength={300} className={inputCls} />
+      <textarea value={promptText} onChange={e => setPromptText(e.target.value)} rows={5}
+        placeholder="How this persona talks — tone, register, habits. This is a voice/style layer only: it can never change COGNOS's identity, capabilities, or governance."
+        maxLength={4000} className={`${inputCls} resize-y`} />
+      <div className="grid grid-cols-2 gap-2">
+        <input value={modelOverride} onChange={e => setModelOverride(e.target.value)}
+          placeholder="Model override (optional)" maxLength={120}
+          className={inputCls} title="Optional: a different model id for this persona's answer drafts. Blank keeps the configured model." />
+        <input value={temperature} onChange={e => setTemperature(e.target.value)}
+          placeholder="Temperature 0–2 (optional)" inputMode="decimal"
+          className={inputCls} title="Optional: sampling temperature for this persona's answer drafts. Blank keeps the provider default." />
+      </div>
+      {initial?.builtin && (
+        <p className="text-muted-foreground/70 leading-relaxed">Built-in personas can be tuned but not deleted.</p>
+      )}
+      {formError && <p className="text-destructive">{formError}</p>}
+      <div className="flex gap-2">
+        <button onClick={submit} disabled={busy || !name.trim()}
+          className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50">
+          {busy ? 'Saving…' : 'Save persona'}
+        </button>
+        <button onClick={onCancel}
+          className="text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Settings() {
   const { activeWorkspace, setActiveWorkspace, openSidebar } = useCognos();
   const voice = useVoice();
@@ -622,6 +800,8 @@ export default function Settings() {
               )}
             </div>
           </section>
+
+          <PersonasSection />
 
           <section className="space-y-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Governance</h3>

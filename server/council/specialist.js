@@ -24,6 +24,13 @@ export const specialistAgent = defineAgent({
   async handle(message, ctx) {
     const { history, memories, workspace, userMessage, classification, taskContext, sourceContext, graphContext, conversationSummary, contextWindow, councilRecord } = message.content;
     const memoryContext = { conversationSummary, contextWindow };
+    // Phase 32 — the active persona's model override and temperature apply to
+    // the Specialist's answer-DRAFTING calls only. The Critic, Governor, and
+    // other seats always run the configured primary model, so governance
+    // never shifts with the persona.
+    const persona = message.content.persona || null;
+    const draftModel = persona?.model_override || ctx.config.models.primary;
+    const draftTemperature = persona?.temperature ?? null;
 
     // --- Decomposed path: execute sub-tasks in parallel ---
     const subTasks = taskContext?.sub_tasks;
@@ -32,7 +39,8 @@ export const specialistAgent = defineAgent({
         const rolePrompt = (SPECIALIST_PROMPTS[st.agent] || SPECIALIST_PROMPTS[classification?.task_type] || SPECIALIST_PROMPTS.conversation) + styleDirective(message.content.style);
         try {
           const output = await callLLM(ctx, {
-            model: ctx.config.models.primary,
+            model: draftModel,
+            temperature: draftTemperature,
             messages: [
               {
                 role: "system",
@@ -45,7 +53,8 @@ export const specialistAgent = defineAgent({
                   councilRecord,
                   sourceContext,
                   memoryContext,
-                  graphContext
+                  graphContext,
+                  persona
                 )
               },
               {
@@ -74,7 +83,7 @@ export const specialistAgent = defineAgent({
     // the council reasons over pulled facts. Attachments (file_urls) forwarded for
     // multimodal analysis.
     const { attachments, searchResults } = message.content;
-    const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, undefined, message.content.style, message.content.councilRecord, sourceContext, memoryContext, graphContext);
+    const systemPrompt = buildContextSystemPrompt(workspace, memories, classification, undefined, message.content.style, message.content.councilRecord, sourceContext, memoryContext, graphContext, persona);
     const userContent = [
       userMessage,
       searchResults ? `[Web search results — current information pulled by the council web search tool; cite as needed]:\n${searchResults}` : null,
@@ -90,7 +99,8 @@ export const specialistAgent = defineAgent({
     // draft stays server-side until the Critic and Governor have ruled; only the
     // orchestrator's governed release point may emit answer chunks over SSE.
     const responseText = await callLLM(ctx, {
-      model: ctx.config.models.primary,
+      model: draftModel,
+      temperature: draftTemperature,
       messages: chatMessages,
       ...(attachments && attachments.length ? { file_urls: attachments.map(a => a.file_url).filter(Boolean) } : {})
     });
@@ -100,7 +110,7 @@ export const specialistAgent = defineAgent({
       needsSynthesis: false,
       subTaskOutputs: null,
       taskType: classification?.task_type || "conversation",
-      modelUsed: ctx.config.models.primary
+      modelUsed: draftModel
     };
   }
 });

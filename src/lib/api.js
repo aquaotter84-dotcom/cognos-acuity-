@@ -182,6 +182,15 @@ export const api = {
   heartbeatSettings: () => req("/api/heartbeat/settings"),
   setHeartbeatSettings: (body) => req("/api/heartbeat/settings", { method: "POST", body }),
 
+  // --- Phase 32: personas ----------------------------------------------------
+  // Named voice/style bundles. Switching the active persona changes how
+  // COGNOS talks, never what it may do — governance stays persona-free.
+  listPersonas: () => req("/api/personas"),
+  createPersona: (body) => req("/api/personas", { method: "POST", body }),
+  updatePersona: (id, body) => req(`/api/personas/${id}`, { method: "PUT", body }),
+  deletePersona: (id) => req(`/api/personas/${id}`, { method: "DELETE" }),
+  activatePersona: (id) => req(`/api/personas/${id}/activate`, { method: "POST" }),
+
   // --- Phase 25: hybrid enablement, the attention queue, the designer --------
   /**
    * The delegated switch: what it is, who decided it, and whether this UI may
