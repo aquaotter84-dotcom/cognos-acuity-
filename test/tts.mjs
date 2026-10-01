@@ -351,10 +351,13 @@ ok('browser fallback on hard failure is unchanged', () => {
 
 // --- CI voice-data installer patch ------------------------------------------------
 const workflowSource = await readFile(new URL('../.github/workflows/android.yml', import.meta.url), 'utf8');
-ok('CI manifest queries block uses the literal TTS install action string', () => {
-  // The manifest needs the intent action's literal string value, not the Java
-  // field name — XML has no constant resolution, and the field-name form
-  // silently keeps the installer button a no-op under package visibility.
+ok('CI manifest queries block uses the literal TTS action strings', () => {
+  // The manifest needs the intent actions' literal string values, not the Java
+  // field names — XML has no constant resolution, and the field-name form
+  // silently keeps things broken under package visibility. TTS_SERVICE is the
+  // critical one: without it, Android 11+ hides the TTS service from our
+  // TextToSpeech client entirely (onInit ERROR, zero voices, silent speaks).
+  assert.match(workflowSource, /android\.intent\.action\.TTS_SERVICE/);
   assert.match(workflowSource, /android\.speech\.tts\.engine\.INSTALL_TTS_DATA/);
   assert.doesNotMatch(workflowSource, /android:name="android\.speech\.tts\.TextToSpeech\.Engine\.ACTION_INSTALL_TTS_DATA"/);
 });

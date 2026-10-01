@@ -74,19 +74,26 @@ jobs:
           sed -i 's|installIntent.setAction(android.speech.tts.TextToSpeech.Engine.ACTION_CHECK_TTS_DATA);|installIntent.setAction(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA);|' "$TTS_JAVA"
           grep -n "installIntent.setAction(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA);" "$TTS_JAVA"
           M=android/app/src/main/AndroidManifest.xml
-          # NOTE: the manifest needs the intent action's literal string value
-          # ("android.speech.tts.engine.INSTALL_TTS_DATA"), NOT the Java field
-          # name — XML has no constant resolution, and a wrong action here
-          # silently keeps the button a no-op under package visibility.
+          # NOTE: the manifest needs the intent actions' literal string values,
+          # NOT Java field names — XML has no constant resolution, and a wrong
+          # action here silently keeps things broken under package visibility.
+          # TTS_SERVICE is the critical one: without it, Android 11+ hides the
+          # TTS service from our TextToSpeech client entirely (onInit ERROR,
+          # zero voices, silent speak failures). INSTALL_TTS_DATA lets the
+          # "Install voice data" button's intent resolve.
+          TTS_SERVICE_ACTION="android.intent.action.TTS_SERVICE"
           TTS_INSTALL_ACTION="android.speech.tts.engine.INSTALL_TTS_DATA"
-          if ! grep -q "$TTS_INSTALL_ACTION" "$M"; then
-            if grep -q "<queries>" "$M"; then
-              # A <queries> block already exists: add our intent inside it.
-              sed -i "0,/<\\/queries>/s//<intent><action android:name=\"$TTS_INSTALL_ACTION\" \\/><\\/intent>\\n    <\\/queries>/" "$M"
-            else
-              sed -i "0,/<application/s//<queries><intent><action android:name=\"$TTS_INSTALL_ACTION\" \\/><\\/intent><\\/queries>\\n    <application/" "$M"
-            fi
+          if grep -q "<queries>" "$M"; then
+            # A <queries> block already exists: add any missing intent inside it.
+            for ACT in "$TTS_SERVICE_ACTION" "$TTS_INSTALL_ACTION"; do
+              if ! grep -q "$ACT" "$M"; then
+                sed -i "0,/<\/queries>/s//<intent><action android:name=\"$ACT\" \/><\/intent>\n    <\/queries>/" "$M"
+              fi
+            done
+          else
+            sed -i "0,/<application/s//<queries><intent><action android:name=\"$TTS_SERVICE_ACTION\" \/><\/intent><intent><action android:name=\"$TTS_INSTALL_ACTION\" \/><\/intent><\/queries>\n    <application/" "$M"
           fi
+          grep -n "$TTS_SERVICE_ACTION" "$M"
           grep -n "$TTS_INSTALL_ACTION" "$M"
 
       - name: Permit loopback cleartext HTTP
