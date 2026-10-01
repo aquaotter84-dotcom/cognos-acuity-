@@ -9,6 +9,10 @@ on:
       tag:
         description: "Release tag to attach the APK to"
         required: true
+      asset_name:
+        description: "APK asset filename (unique per release so installs can't be confused)"
+        required: false
+        default: "cognos-apk-undici-fix.apk"
 
 permissions:
   contents: write
@@ -26,9 +30,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: apk
       - name: Rename APK
-        run: mv apk/app-debug.apk apk/cognos-apk-undici-fix.apk
+        run: mv apk/app-debug.apk "apk/${{ inputs.asset_name }}"
       - name: Attach APK to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag }}
-          files: apk/cognos-apk-undici-fix.apk
+          files: apk/${{ inputs.asset_name }}
