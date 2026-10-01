@@ -55,6 +55,35 @@ jobs:
       - name: Sync Capacitor Android project
         run: npx cap sync android
 
+      - name: Patch TTS plugin voice-data installer intent
+        # The bundled TTS plugin's openInstall() fires ACTION_CHECK_TTS_DATA,
+        # which Android 11+ package visibility silently drops without a
+        # <queries> manifest entry — the "Install voice data" button becomes a
+        # silent no-op. Patch the plugin source (android/ is regenerated fresh
+        # each build, so this must live here, not in a committed file) to fire
+        # the real installer action instead, and declare the <queries> entry
+        # so the intent can resolve. Both sub-steps fail loudly if the expected
+        # strings are missing, so a plugin update can't silently unfix this.
+        run: |
+          TTS_JAVA=node_modules/@capacitor-community/text-to-speech/android/src/main/java/com/getcapacitor/community/tts/TextToSpeech.java
+          CHECK_COUNT=$(grep -c "ACTION_CHECK_TTS_DATA" "$TTS_JAVA")
+          if [ "$CHECK_COUNT" != "1" ]; then
+            echo "Expected exactly 1 ACTION_CHECK_TTS_DATA in $TTS_JAVA, found $CHECK_COUNT" >&2
+            exit 1
+          fi
+          sed -i 's|installIntent.setAction(android.speech.tts.TextToSpeech.Engine.ACTION_CHECK_TTS_DATA);|installIntent.setAction(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA);|' "$TTS_JAVA"
+          grep -n "installIntent.setAction(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA);" "$TTS_JAVA"
+          M=android/app/src/main/AndroidManifest.xml
+          if ! grep -q "ACTION_INSTALL_TTS_DATA" "$M"; then
+            if grep -q "<queries>" "$M"; then
+              # A <queries> block already exists: add our intent inside it.
+              sed -i '0,/<\/queries>/s//<intent><action android:name="android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA" \/><\/intent>\n    <\/queries>/' "$M"
+            else
+              sed -i '0,/<application/s//<queries><intent><action android:name="android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA" \/><\/intent><\/queries>\n    <application/' "$M"
+            fi
+          fi
+          grep -n "ACTION_INSTALL_TTS_DATA" "$M"
+
       - name: Permit loopback cleartext HTTP
         # The embedded server speaks plain HTTP on 127.0.0.1 only.
         # capacitor.config.ts sets server.cleartext; belt-and-braces here.

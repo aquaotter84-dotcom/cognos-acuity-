@@ -322,5 +322,17 @@ ok('voice context retries the native probe and exposes the diagnostics', () => {
   assert.match(voiceSource, /PROBE_ATTEMPTS/);
   assert.match(voiceSource, /probe,/);
 });
+ok('openInstallVoiceData reports whether the installer intent was handed off', () => {
+  // The native method is void, so the wrapper must translate "resolved" into
+  // true and a rejection into false — the UI keys its manual-steps fallback
+  // off this boolean.
+  assert.match(voiceSource, /await tts\.openInstall\(\);[\s\S]{0,400}?return true;/);
+});
+ok('settings falls back to manual voice-data steps when the installer cannot open', () => {
+  assert.match(settingsSource, /handleInstallVoiceData/);
+  assert.match(settingsSource, /voiceInstallHint/);
+  assert.match(settingsSource, /Text-to-speech output/);
+  assert.match(settingsSource, /Install voice data.*download English \(US\)/s);
+});
 
 console.log(`TTS RESULT: ${passed} passed, 0 failed`);

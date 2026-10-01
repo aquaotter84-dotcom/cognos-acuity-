@@ -763,8 +763,17 @@ export default function Settings() {
   const [councilBusy, setCouncilBusy] = useState(null);
   const [councilError, setCouncilError] = useState('');
   const [theme, setTheme] = useState(() => getTheme());
+  const [voiceInstallHint, setVoiceInstallHint] = useState(false);
 
   const setAppearance = (t) => { setTheme(applyTheme(t)); };
+
+  // The system voice-data installer sometimes can't open (no handler for the
+  // intent). openInstallVoiceData() resolves false then, and we fall back to
+  // the manual path instead of leaving a dead button.
+  const handleInstallVoiceData = async () => {
+    const opened = await voice.openInstallVoiceData();
+    if (!opened) setVoiceInstallHint(true);
+  };
 
   useEffect(() => {
     setName(activeWorkspace?.name || '');
@@ -888,11 +897,31 @@ export default function Settings() {
                       </p>
                       <button
                         type="button"
-                        onClick={() => voice.openInstallVoiceData()}
+                        onClick={handleInstallVoiceData}
                         className="mt-2 text-xs px-3 py-2 rounded-lg bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
                       >
                         Install voice data
                       </button>
+                      {voiceInstallHint && (
+                        <div className="mt-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 flex items-start gap-2">
+                          <p className="text-[11px] text-muted-foreground leading-relaxed flex-1">
+                            The installer didn't open, so here's the manual path: open your phone's{' '}
+                            <span className="text-foreground/80">Settings</span>, search{' '}
+                            <span className="text-foreground/80">Text-to-speech</span>, tap{' '}
+                            <span className="text-foreground/80">Text-to-speech output</span>, tap the gear by your
+                            preferred engine, then <span className="text-foreground/80">Install voice data</span> and
+                            download English (US). Reopen COGNOS and pick a voice.
+                          </p>
+                          <button
+                            type="button"
+                            aria-label="Dismiss"
+                            onClick={() => setVoiceInstallHint(false)}
+                            className="text-muted-foreground/60 hover:text-foreground transition-colors shrink-0"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                   <div className="flex items-center justify-between gap-4">
@@ -941,7 +970,7 @@ export default function Settings() {
                     <div className="flex flex-wrap items-center gap-3">
                       <button
                         type="button"
-                        onClick={() => voice.openInstallVoiceData()}
+                        onClick={handleInstallVoiceData}
                         className="text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground transition-colors"
                       >
                         Install voice data

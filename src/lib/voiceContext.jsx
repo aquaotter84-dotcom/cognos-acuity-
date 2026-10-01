@@ -258,7 +258,11 @@ export function VoiceProvider({ children }) {
     if (engine !== 'native' || !tts) return false;
     try {
       if (Capacitor.getPlatform() !== 'android') return false;
-      return await tts.openInstall();
+      await tts.openInstall();
+      // The native method is void, so a resolved call means the installer
+      // intent was at least handed to the system. A rejection (no handler)
+      // surfaces as false so the UI can offer the manual steps.
+      return true;
     } catch {
       return false;
     }
