@@ -3,9 +3,10 @@
 // server env vars only and are never sent to the browser. What remains is the
 // workspace instructions editor (which feeds buildContextSystemPrompt verbatim),
 // local browser voice preferences, and runtime status from /api/health.
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Settings as SettingsIcon, Menu, Check, X, Square, Volume2, ShieldAlert, Scale, KeyRound, Trash2, Sun, Moon, Database, Pencil, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
+import { Pill } from '@/components/system/SystemUi';
 import { useCognos } from '@/lib/cognosContext';
 import { useVoice } from '@/lib/voiceContext';
 import { getTheme, applyTheme } from '@/lib/theme';
@@ -41,8 +42,119 @@ function GovernanceToggle({ label, hint, on, canToggle, refusal, busy, onFlip })
   );
 }
 
-/** Change or remove the on-device model API key — no reinstall needed. */
-function ModelKeySection({ onChanged }) {
+/**
+ * The council switch handover: the honest answer to "why are the Critic and
+ * Governor toggles dead?" — the same pattern as the Autonomy page's
+ * SwitchHandover. The toggles are held back until the operator hands them over
+ * (server/council/settings.js: COGNOS_COUNCIL_UI_CONTROL). On this phone there
+ * is no operator shell — the operator is the person holding it — so the section
+ * hands the switches to itself through the delegation file
+ * (server/delegation-files.mjs, read at boot by mobile/entry.mjs). A handover
+ * takes effect when the app is closed and reopened, and the panel says so
+ * instead of pretending a toggle is live. The handover hands over the toggles
+ * ONLY: both seats still rest ON (fail-closed), and an operator pin still
+ * outranks everything. Nothing here weakens governance.
+ */
+function CouncilHandover() {
+  const [state, setState] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    try { setState(await api.autonomyDelegation()); }
+    catch { setState({ managed: 'environment', switches: [] }); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const handOver = async () => {
+    if (busy) return;
+    setBusy(true); setError('');
+    try { setState(await api.handOverAutonomySwitch('council')); }
+    catch (e) { setError(e?.message || 'Could not hand the switches over.'); }
+    finally { setBusy(false); }
+  };
+
+  const takeBack = async () => {
+    if (busy) return;
+    setBusy(true); setError('');
+    try { setState(await api.takeBackAutonomySwitch('council')); }
+    catch (e) { setError(e?.message || 'Could not take the switches back.'); }
+    finally { setBusy(false); }
+  };
+
+  if (!state) return null;
+
+  // A server deploy: no delegation files — the env var is the only route, and
+  // the page keeps the honest setup line instead of a dead end.
+  if (state.managed !== 'device') {
+    return (
+      <p className="text-muted-foreground leading-relaxed">
+        These switches are not delegated to this page. Set{' '}
+        <span className="font-mono text-foreground/80">COGNOS_COUNCIL_UI_CONTROL=true</span>{' '}
+        and restart to turn them on and off from here.
+      </p>
+    );
+  }
+
+  const sw = (state.switches || []).find((s) => s.name === 'council');
+  if (!sw) return null;
+
+  // Already live (or handed over and pending the restart): show the state and
+  // the take-back, never a bare button that pretends.
+  if (sw.delegated || sw.fileDelegated) {
+    return (
+      <div className="flex items-center gap-2 flex-wrap">
+        {sw.delegated
+          ? <Pill tone="ok">handed over</Pill>
+          : <Pill tone="info">handed over — restart pending</Pill>}
+        {!sw.delegated && (
+          <span className="text-[10px] text-muted-foreground">Close and reopen the app to use the switches.</span>
+        )}
+        {sw.fileDelegated ? (
+          <button
+            onClick={takeBack}
+            disabled={busy}
+            className="text-[10px] text-muted-foreground underline hover:text-foreground disabled:opacity-40"
+          >
+            {busy ? 'Taking back…' : 'Take them back'}
+          </button>
+        ) : (
+          <span className="text-[10px] text-muted-foreground">
+            Handed over by the environment — this page can&rsquo;t take them back.
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-background/60 p-3">
+      <p className="text-[11px] font-semibold flex items-center gap-1.5">
+        <Scale className="w-3.5 h-3.5 text-muted-foreground" />
+        The switches are held back
+      </p>
+      <p className="text-[10px] text-muted-foreground mt-1 leading-relaxed">
+        The Critic and Governor switches are held back until the operator hands them over.
+        On this phone, you&rsquo;re the operator — tap to hand the switches to this page.
+        It takes effect when you close and reopen the app. The handover only hands over
+        the switches: both seats rest <strong>on</strong>, and an operator pin (a real
+        environment variable, if one is ever set) still outranks everything.
+      </p>
+      {error && <p className="text-[10px] text-destructive mt-1.5">{error}</p>}
+      <div className="mt-2">
+        <button
+          onClick={handOver}
+          disabled={busy}
+          className="rounded-lg bg-primary text-primary-foreground px-2.5 py-1.5 text-[11px] disabled:opacity-40"
+        >
+          {busy ? 'Handing over…' : (sw.cta || 'Hand me the council switches')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Change or remove the on-device model API key — no reinstall needed. */function ModelKeySection({ onChanged }) {
   const [status, setStatus] = useState(null);
   const [keyInput, setKeyInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -949,13 +1061,7 @@ export default function Settings() {
                 </p>
               )}
 
-              {!(council?.uiControl) && (
-                <p className="text-muted-foreground leading-relaxed">
-                  These switches are not delegated to this page. Set{' '}
-                  <span className="font-mono text-foreground/80">COGNOS_COUNCIL_UI_CONTROL=true</span> and restart
-                  to turn them on and off from here.
-                </p>
-              )}
+              {!(council?.uiControl) && <CouncilHandover />}
             </div>
           </section>
 

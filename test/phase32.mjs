@@ -40,33 +40,33 @@ function makeDb() {
         if (!rows.has(id)) {
           rows.set(id, { id, name, description, prompt_text, model_override, temperature, voice, builtin: 1, is_active: 0 });
         }
-        return { rows: [] };
+        return [];
       }
       if (q.startsWith("INSERT INTO personas") && q.includes("RETURNING")) {
         const [id, name, description, prompt_text, model_override, temperature, voice, builtin, is_active] = params;
         const row = { id, name, description, prompt_text, model_override, temperature, voice, builtin, is_active };
         rows.set(id, row);
-        return { rows: [row] };
+        return [row];
       }
       if (q.startsWith("SELECT id FROM personas WHERE is_active = 1")) {
         const found = [...rows.values()].find((r) => r.is_active === 1);
-        return { rows: found ? [{ id: found.id }] : [] };
+        return found ? [{ id: found.id }] : [];
       }
       if (q.startsWith("SELECT") && q.includes("FROM personas WHERE id = $1")) {
         const row = rows.get(params[0]);
-        return { rows: row ? [row] : [] };
+        return row ? [row] : [];
       }
       if (q.startsWith("SELECT") && q.includes("FROM personas ORDER BY")) {
         const all = [...rows.values()].sort((a, b) => (b.builtin - a.builtin) || (a.id < b.id ? -1 : 1));
-        return { rows: all };
+        return all;
       }
       if (q.startsWith("SELECT") && q.includes("FROM personas WHERE is_active = 1")) {
         const found = [...rows.values()].find((r) => r.is_active === 1);
-        return { rows: found ? [found] : [] };
+        return found ? [found] : [];
       }
       if (q.startsWith("UPDATE personas SET is_active = 0")) {
         for (const r of rows.values()) r.is_active = 0;
-        return { rows: [] };
+        return [];
       }
       if (q.startsWith("UPDATE personas SET is_active = 1")) {
         // The module inlines the fallback id ('default') in the SQL; custom
@@ -74,21 +74,33 @@ function makeDb() {
         const id = params[0] || (q.match(/WHERE id = '([^']+)'/) || [])[1];
         const row = rows.get(id);
         if (row) row.is_active = 1;
-        return { rows: [] };
+        return [];
       }
       if (q.startsWith("UPDATE personas") && q.includes("SET name = $2")) {
         const row = rows.get(params[0]);
-        if (!row) return { rows: [] };
+        if (!row) return [];
         const [, name, description, prompt_text, model_override, temperature, voice] = params;
         Object.assign(row, { name, description, prompt_text, model_override, temperature, voice });
-        return { rows: [row] };
+        return [row];
       }
       if (q.startsWith("DELETE FROM personas")) {
         rows.delete(params[0]);
-        return { rows: [] };
+        return [];
       }
       throw new Error("unexpected SQL in fake db: " + q.slice(0, 80));
     }
+  };
+  // Contract: the fake must return what the real server/db.js query() returns
+  // — a rows ARRAY, not a pg result object. Phase 33c: the old { rows } shape
+  // let personas.js ship `active.rows.length` on a real array, which threw
+  // "Cannot read properties of undefined (reading 'length')" on Jeremy's phone.
+  const rawQuery = db.query;
+  db.query = async (...args) => {
+    const out = await rawQuery(...args);
+    if (!Array.isArray(out)) {
+      throw new Error("fake db must return a rows array, like server/db.js");
+    }
+    return out;
   };
   return db;
 }
@@ -206,3 +218,44 @@ ok(!section.toLowerCase().includes("governor is") || true, "section does not gra
 }
 
 console.log(`\nphase32: ${pass} assertions passed`);
+
+// --- real-db contract: the store against the true query() shape ----------------
+// Phase 33c: the unit fake returned { rows } while the real server/db.js
+// query() returns a bare rows array, and the mismatch shipped a 500 to
+// Jeremy's phone ("Cannot read properties of undefined (reading 'length')").
+// This block runs the same store functions against the REAL db module over a
+// harness database, so the contract is exercised, not mocked.
+{
+  const { bootHarness } = await import("./harness.mjs");
+  const t = await bootHarness();
+  try {
+    const realDb = await import("../server/db.js");
+    // The real query() returns a rows array.
+    const probe = await realDb.query("SELECT 1 AS one");
+    ok(Array.isArray(probe), "real db.query returns a rows array");
+
+    const listed = await listPersonas(realDb);
+    ok(Array.isArray(listed) && listed.length === 3, "listPersonas works against the real db (3 built-ins)");
+    ok(listed.some((p) => p.id === "default" && p.is_active), "default is active on the real db");
+
+    const created = await createPersona(realDb, {
+      name: "Contract Test",
+      description: "real-db contract",
+      prompt_text: "test",
+      temperature: 0.5
+    });
+    ok(created && typeof created.id === "string", "createPersona round-trips on the real db");
+    const fetched = await getPersona(realDb, created.id);
+    ok(fetched && fetched.name === "Contract Test", "getPersona round-trips on the real db");
+    await setActivePersona(realDb, created.id);
+    const active = await getActivePersona(realDb);
+    ok(active && active.id === created.id, "setActivePersona/getActivePersona round-trip on the real db");
+    await deletePersona(realDb, created.id);
+    ok((await getPersona(realDb, created.id)) === null, "deletePersona round-trips on the real db");
+    const fallback = await getActivePersona(realDb);
+    ok(fallback && fallback.id === "default", "delete falls back to default on the real db");
+    console.log(`  real-db contract: ${pass} assertions passed (cumulative)`);
+  } finally {
+    await t.stop();
+  }
+}

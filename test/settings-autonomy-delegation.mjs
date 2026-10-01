@@ -1,9 +1,10 @@
-// Autonomy switch delegation files (server/delegation-files.mjs).
+// Switch delegation files (server/delegation-files.mjs).
 //
-// The five *_UI_CONTROL env vars hand the Autonomy page's switches to the UI.
-// On a phone there is no operator shell, so mobile/entry.mjs reads these files
-// from the data dir at boot instead. The contract under test:
-//   - the allow-list names exactly the five switches (anything else refused)
+// The *_UI_CONTROL env vars hand the switches to the UI: the five autonomy
+// switches plus the council switches (Critic, Governor). On a phone there is
+// no operator shell, so mobile/entry.mjs reads these files from the data dir
+// at boot instead. The contract under test:
+//   - the allow-list names exactly the six switches (anything else refused)
 //   - only a trimmed "true" delegates (allow-list semantics, like envFlag)
 //   - an env var already set keeps winning over a file
 
@@ -26,21 +27,25 @@ const {
   applyAutonomyDelegationFiles,
 } = await import("../server/delegation-files.mjs");
 
-// The allow-list is exactly the five switches, each with a distinct env var
+// The allow-list is exactly the six switches, each with a distinct env var
 // and a distinct device file.
-ok(AUTONOMY_DELEGATION_FILES.length === 5, "exactly five delegation switches");
+ok(AUTONOMY_DELEGATION_FILES.length === 6, "exactly six delegation switches");
 const names = AUTONOMY_DELEGATION_FILES.map((s) => s.name).sort();
-ok(JSON.stringify(names) === JSON.stringify(["auto_authorize", "autonomy", "bypass_earning", "outbox", "rungs"]),
-  "switch names are the five expected");
+ok(JSON.stringify(names) === JSON.stringify(["auto_authorize", "autonomy", "bypass_earning", "council", "outbox", "rungs"]),
+  "switch names are the six expected");
 ok(AUTONOMY_DELEGATION_FILES.every((s) => s.env.startsWith("COGNOS_") && s.file.endsWith(".txt")),
   "every switch maps a COGNOS_ env var to a .txt device file");
-ok(new Set(AUTONOMY_DELEGATION_FILES.map((s) => s.env)).size === 5, "env vars are distinct");
-ok(new Set(AUTONOMY_DELEGATION_FILES.map((s) => s.file)).size === 5, "files are distinct");
+ok(new Set(AUTONOMY_DELEGATION_FILES.map((s) => s.env)).size === 6, "env vars are distinct");
+ok(new Set(AUTONOMY_DELEGATION_FILES.map((s) => s.file)).size === 6, "files are distinct");
 
-// Allow-list: the five pass, everything else is refused.
+// Allow-list: the six pass, everything else is refused.
 for (const name of names) ok(isDelegationName(name), `accepts "${name}"`);
 ok(delegationEntry("autonomy")?.env === "COGNOS_AUTONOMY_UI_CONTROL", "entry resolves the env var");
 ok(delegationEntry("outbox")?.file === "autonomy_outbox_ui_control.txt", "entry resolves the file");
+// The council entry is the Governance fix: the Critic/Governor toggles get the
+// same on-device handover as the autonomy switches.
+ok(delegationEntry("council")?.env === "COGNOS_COUNCIL_UI_CONTROL", "council entry resolves the council env var");
+ok(delegationEntry("council")?.file === "council_ui_control.txt", "council entry resolves the council file");
 ok(!isDelegationName("nope"), "rejects unknown name");
 ok(!isDelegationName(""), "rejects empty name");
 ok(!isDelegationName(null), "rejects null");
@@ -76,6 +81,16 @@ const applied2 = applyAutonomyDelegationFiles(dir);
 ok(!applied2.includes("autonomy"), "apply skips a switch whose env var is already set");
 ok(process.env[ENV] === "1", "a pre-set env var keeps winning");
 delete process.env[ENV];
+
+// The council entry rides the same boot path: file -> env.
+const COUNCIL_ENV = "COGNOS_COUNCIL_UI_CONTROL";
+delete process.env[COUNCIL_ENV];
+const cf = path.join(dir, "council_ui_control.txt");
+fs.writeFileSync(cf, "true\n");
+const applied3 = applyAutonomyDelegationFiles(dir);
+ok(applied3.includes("council"), "apply picks up the council delegation file");
+ok(process.env[COUNCIL_ENV] === "true", "apply sets the council env var from the file");
+delete process.env[COUNCIL_ENV];
 
 ok(applyAutonomyDelegationFiles(null).length === 0, "null data dir applies nothing");
 ok(applyAutonomyDelegationFiles("/nonexistent-dir-xyz").length === 0, "missing data dir applies nothing");

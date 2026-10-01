@@ -186,17 +186,20 @@ export async function ensureBuiltinPersonas(db) {
   // is active (fresh install, or the active row was somehow removed), fall
   // back to the default voice rather than leaving chat person-less.
   const active = await db.query("SELECT id FROM personas WHERE is_active = 1 LIMIT 1");
-  if (active.rows.length === 0) {
+  if (active.length === 0) {
     await db.query("UPDATE personas SET is_active = 1 WHERE id = 'default'");
   }
 }
 
 export async function listPersonas(db) {
   await ensureBuiltinPersonas(db);
-  const res = await db.query(
+  // db.query returns the rows ARRAY (server/db.js convention), not a pg
+  // result object — see the Phase 33c fix: `.rows` on the array is undefined
+  // and threw "Cannot read properties of undefined (reading 'length')".
+  const rows = await db.query(
     `SELECT ${SELECT_COLS} FROM personas ORDER BY builtin DESC, created_date ASC, id ASC`
   );
-  return res.rows.map(rowToPersona);
+  return rows.map(rowToPersona);
 }
 
 export async function getPersona(db, id) {
@@ -204,16 +207,16 @@ export async function getPersona(db, id) {
   // Every entry point seeds: a PUT/DELETE/activate for a built-in id must
   // work even if no list call happened first in this process.
   await ensureBuiltinPersonas(db);
-  const res = await db.query(`SELECT ${SELECT_COLS} FROM personas WHERE id = $1 LIMIT 1`, [id]);
-  return rowToPersona(res.rows[0] || null);
+  const rows = await db.query(`SELECT ${SELECT_COLS} FROM personas WHERE id = $1 LIMIT 1`, [id]);
+  return rowToPersona(rows[0] || null);
 }
 
 export async function getActivePersona(db) {
   await ensureBuiltinPersonas(db);
-  const res = await db.query(
+  const rows = await db.query(
     `SELECT ${SELECT_COLS} FROM personas WHERE is_active = 1 LIMIT 1`
   );
-  return rowToPersona(res.rows[0] || null);
+  return rowToPersona(rows[0] || null);
 }
 
 export async function createPersona(db, input = {}) {
@@ -226,13 +229,13 @@ export async function createPersona(db, input = {}) {
   }
   const p = normalizePersonaInput(input);
   const id = randomUUID();
-  const res = await db.query(
+  const rows = await db.query(
     `INSERT INTO personas (id, name, description, prompt_text, model_override, temperature, voice, builtin, is_active)
      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 0, 0)
      RETURNING ${SELECT_COLS}`,
     [id, p.name, p.description, p.prompt_text, p.model_override, p.temperature, JSON.stringify(p.voice)]
   );
-  return rowToPersona(res.rows[0]);
+  return rowToPersona(rows[0]);
 }
 
 export async function updatePersona(db, id, input = {}) {
@@ -252,7 +255,7 @@ export async function updatePersona(db, id, input = {}) {
     err.problems = problems;
     throw err;
   }
-  const res = await db.query(
+  const rows = await db.query(
     `UPDATE personas
      SET name = $2, description = $3, prompt_text = $4, model_override = $5,
          temperature = $6, voice = $7::jsonb, updated_date = now()
@@ -260,7 +263,7 @@ export async function updatePersona(db, id, input = {}) {
      RETURNING ${SELECT_COLS}`,
     [id, merged.name, merged.description, merged.prompt_text, merged.model_override, merged.temperature, JSON.stringify(merged.voice)]
   );
-  return rowToPersona(res.rows[0]);
+  return rowToPersona(rows[0]);
 }
 
 export async function deletePersona(db, id) {

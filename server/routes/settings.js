@@ -249,15 +249,16 @@ export function registerSettingsRoutes(app, { wrap, logger }) {
     res.json({ ok: true, reset: true, value: resolveModel() });
   }));
 
-  // --- Autonomy switch delegation (on-device operator handover) --------------
-  // The five *_UI_CONTROL env vars hand the Autonomy page's switches to the UI
-  // (server/autonomy/settings.js). On a phone there is no operator shell, so
-  // the page hands them to itself: writing the delegation file ("true", mode
-  // 600) delegates, deleting it takes the switch back. mobile/entry.mjs reads
-  // the files at boot, so a handover takes effect when the app is closed and
-  // reopened; an env var already set (a real operator) keeps winning and
-  // outranks the file. Delegation names a capability, not a secret, so GET
-  // reports which switches are handed over.
+  // --- Switch delegation (on-device operator handover) -----------------------
+  // The *_UI_CONTROL env vars hand the switches to the UI
+  // (server/autonomy/settings.js for the five autonomy switches,
+  // server/council/settings.js for the council switches). On a phone there is
+  // no operator shell, so the page hands them to itself: writing the delegation
+  // file ("true", mode 600) delegates, deleting it takes the switch back.
+  // mobile/entry.mjs reads the files at boot, so a handover takes effect when
+  // the app is closed and reopened; an env var already set (a real operator)
+  // keeps winning and outranks the file. Delegation names a capability, not a
+  // secret, so GET reports which switches are handed over.
   app.get("/api/settings/autonomy-delegation", wrap(async (req, res) => {
     res.json({
       // "device": the delegation files live in app-internal storage and can be
@@ -278,12 +279,12 @@ export function registerSettingsRoutes(app, { wrap, logger }) {
     const filePath = deviceDelegationPath(entry);
     if (!filePath) {
       return res.status(400).json({
-        error: "Switch delegation is managed by the server environment on this install — it can't be changed from the Autonomy page.",
+        error: "Switch delegation is managed by the server environment on this install — it can't be changed from this page.",
       });
     }
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, "true\n", { mode: 0o600, encoding: "utf8" });
-    if (logger) logger.info("settings", `autonomy switch handed over: ${entry.name}`);
+    if (logger) logger.info("settings", `switch handed over: ${entry.name}`);
     res.json({
       ok: true,
       name: entry.name,
@@ -305,7 +306,7 @@ export function registerSettingsRoutes(app, { wrap, logger }) {
       });
     }
     try { fs.unlinkSync(filePath); } catch { /* already absent */ }
-    if (logger) logger.info("settings", `autonomy switch taken back: ${entry.name}`);
+    if (logger) logger.info("settings", `switch taken back: ${entry.name}`);
     res.json({
       ok: true,
       name: entry.name,
@@ -406,6 +407,15 @@ const DELEGATION_LABELS = Object.freeze({
     label: "The outbox-mode switch",
     cta: "Hand me the outbox-mode switch",
     blurb: "Lets this page choose whether the loop may act on the world. Shadow only records; live performs releases — to the one approved destination, judged one effect at a time.",
+  },
+  // The council switches live on the Settings → Governance section, not the
+  // Autonomy page, but they ride the same handover rails. The handover hands
+  // over the toggles ONLY — both seats still rest ON (fail-closed), and an
+  // operator pin still outranks everything.
+  council: {
+    label: "The council switches",
+    cta: "Hand me the council switches",
+    blurb: "Lets this page turn the Critic and the Governor on and off. Both rest ON — the handover only hands over the switches, never the rest state.",
   },
 });
 
