@@ -349,4 +349,14 @@ ok('browser fallback on hard failure is unchanged', () => {
   assert.match(voiceSource, /if \(!cancelled && browserSupported\(\)\) \{\s*\n\s*recordProbe\(\{ browser: true \}\);/);
 });
 
+// --- CI voice-data installer patch ------------------------------------------------
+const workflowSource = await readFile(new URL('../.github/workflows/android.yml', import.meta.url), 'utf8');
+ok('CI manifest queries block uses the literal TTS install action string', () => {
+  // The manifest needs the intent action's literal string value, not the Java
+  // field name — XML has no constant resolution, and the field-name form
+  // silently keeps the installer button a no-op under package visibility.
+  assert.match(workflowSource, /android\.speech\.tts\.engine\.INSTALL_TTS_DATA/);
+  assert.doesNotMatch(workflowSource, /android:name="android\.speech\.tts\.TextToSpeech\.Engine\.ACTION_INSTALL_TTS_DATA"/);
+});
+
 console.log(`TTS RESULT: ${passed} passed, 0 failed`);
