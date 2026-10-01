@@ -435,6 +435,9 @@ function PersonasSection() {
       setActiveId(r.activeId || null);
       setError('');
     } catch (e) {
+      // Never leave the section stuck on "Loading…": an empty list renders
+      // the error with a retry instead of a spinner that never resolves.
+      setPersonas([]);
       setError(e.message || 'Could not load personas');
     }
   };
@@ -478,7 +481,18 @@ function PersonasSection() {
           temperature. It changes how it speaks, never what it may do: identity, the
           council, and governance stay the same under every persona.
         </p>
-        {error && <p className="text-destructive">{error}</p>}
+        {error && (
+          <div className="flex items-center gap-2">
+            <p className="text-destructive flex-1">{error}</p>
+            <button
+              type="button"
+              onClick={load}
+              className="text-xs px-2.5 py-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground shrink-0"
+            >
+              Retry
+            </button>
+          </div>
+        )}
         {personas === null ? (
           <p className="text-muted-foreground">Loading…</p>
         ) : (
@@ -738,12 +752,37 @@ export default function Settings() {
           <section className="space-y-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Voice</h3>            <div className="rounded-xl border border-border bg-card p-3 space-y-4 text-xs">
               {!voice.supported ? (
-                <p className="text-muted-foreground leading-relaxed">
-                  Speech output is not available on this device.
-                  COGNOS will continue to work normally in text mode.
-                </p>
+                <>
+                  <p className="text-muted-foreground leading-relaxed">
+                    Speech output is not available on this device.
+                    COGNOS will continue to work normally in text mode.
+                  </p>
+                  <p className="text-[11px] text-muted-foreground/60 font-mono leading-relaxed">
+                    probe: native {(voice.probe?.isNative) ? 'yes' : 'no'}
+                    {' · '}plugin {(voice.probe?.plugin) ? 'yes' : 'no'}
+                    {' · '}voices {voice.probe?.voices ?? 0}
+                    {' · '}browser {(voice.probe?.browser) ? 'yes' : 'no'}
+                    {voice.probe?.error ? ` · ${voice.probe.error}` : ''}
+                  </p>
+                </>
               ) : (
                 <>
+                  {voice.engine === 'native' && voice.voices.length === 0 && (
+                    <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-3 py-2.5">
+                      <p className="font-medium text-foreground/90">No voice data on this device yet</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                        The speech engine is ready, but this phone has no voices installed.
+                        Install the system voice data, then pick a voice below.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => voice.openInstallVoiceData()}
+                        className="mt-2 text-xs px-3 py-2 rounded-lg bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
+                      >
+                        Install voice data
+                      </button>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <p className="font-medium text-foreground/90">Voice mode</p>

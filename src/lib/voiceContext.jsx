@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { chunkSpeechText, markdownToSpeechText } from './speechText.js';
-import { loadNativePlugin, createNativeTts } from './ttsNative.js';
+import { loadNativePlugin, probeNativeTts } from './ttsNative.js';
 import { mapNativeVoices, resolveTtsVoice } from './ttsVoice.js';
 
 export { chunkSpeechText, markdownToSpeechText } from './speechText.js';
@@ -54,6 +54,9 @@ export function VoiceProvider({ children }) {
   // speechSynthesis does not exist) first, browser speechSynthesis as fallback.
   const [engine, setEngine] = useState(() => (browserSupported() ? 'browser' : null));
   const [nativeTts, setNativeTts] = useState(null);
+  // One-line probe diagnostics, surfaced in Settings → Voice when speech is
+  // unavailable so a device-specific failure can be reported remotely.
+  const [probe, setProbe] = useState({ isNative: false, plugin: false, voices: 0, browser: false, error: '' });
   const [settings, setSettingsState] = useState(initialSettings);
   const [voices, setVoices] = useState([]);
   const [speakingId, setSpeakingId] = useState(null);
@@ -69,29 +72,46 @@ export function VoiceProvider({ children }) {
   nativeTtsRef.current = nativeTts;
 
   // --- Native engine detection ------------------------------------------------
-  // Runs once on mount. getVoices() doubles as the availability probe: if the
+  // Runs on mount. getVoices() doubles as the availability probe: if the
   // plugin is missing or the engine isn't ready, we fall back to the browser.
+  // The probe retries a few times because the Capacitor native bridge may not
+  // be injected yet when the app first mounts (the boot page redirects to the
+  // loopback server); a slow bridge must not permanently hide a working engine.
   useEffect(() => {
     let cancelled = false;
+    const recordProbe = (patch) => {
+      if (!cancelled) setProbe((prev) => ({ ...prev, ...patch }));
+    };
+    const PROBE_ATTEMPTS = 4;
     (async () => {
-      try {
-        if (Capacitor.isNativePlatform()) {
-          const { plugin } = await loadNativePlugin();
-          if (plugin && !cancelled) {
-            const tts = createNativeTts(plugin);
-            const raw = await tts.getVoices();
-            if (!cancelled) {
-              setNativeTts(tts);
-              setVoices(mapNativeVoices(raw));
-              setEngine('native');
-              return;
-            }
-          }
+      for (let attempt = 0; attempt < PROBE_ATTEMPTS && !cancelled; attempt += 1) {
+        const result = await probeNativeTts({
+          isNativePlatform: () => Capacitor.isNativePlatform(),
+          loadPlugin: loadNativePlugin,
+        });
+        recordProbe({
+          isNative: result.detail.isNative,
+          plugin: result.detail.pluginLoaded,
+          voices: result.detail.voices,
+          error: result.detail.error,
+        });
+        if (!cancelled && result.ok) {
+          // Zero voices is still a working engine — the phone just has no
+          // voice data installed. The UI offers the installer prominently.
+          setNativeTts(result.tts);
+          setVoices(mapNativeVoices(result.rawVoices));
+          setEngine('native');
+          return;
         }
-      } catch {
-        /* fall through to the browser engine */
+        if (!cancelled && browserSupported()) {
+          recordProbe({ browser: true });
+          setEngine('browser');
+          return;
+        }
+        if (attempt < PROBE_ATTEMPTS - 1) {
+          await new Promise((r) => { setTimeout(r, 750 * (attempt + 1)); });
+        }
       }
-      if (!cancelled && browserSupported()) setEngine('browser');
     })();
     return () => { cancelled = true; };
   }, []);
@@ -253,6 +273,7 @@ export function VoiceProvider({ children }) {
   const value = useMemo(() => ({
     engine, // 'native' | 'browser' | null
     supported,
+    probe, // { isNative, plugin, voices, browser, error } — diagnostics for Settings
     settings,
     voices,
     speakingId,
@@ -265,7 +286,7 @@ export function VoiceProvider({ children }) {
     updateSettings,
     toggleEnabled,
     openInstallVoiceData,
-  }), [engine, supported, settings, voices, speakingId, activePersona, setActivePersona,
+  }), [engine, supported, probe, settings, voices, speakingId, activePersona, setActivePersona,
     speak, speakAutomatically, stop, updateSettings, toggleEnabled, openInstallVoiceData]);
 
   return <VoiceContext.Provider value={value}>{children}</VoiceContext.Provider>;

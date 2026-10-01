@@ -92,3 +92,37 @@ export function createNativeTts(plugin) {
     },
   };
 }
+
+/**
+ * Probe the native TTS engine. Pure decision logic over injected dependencies
+ * so node tests can exercise every branch without a device.
+ *
+ * @param {object} deps
+ * @param {() => boolean} deps.isNativePlatform  e.g. () => Capacitor.isNativePlatform()
+ * @param {() => Promise<{ plugin }>} deps.loadPlugin  e.g. loadNativePlugin
+ * @returns {Promise<{ ok: boolean, plugin: object|null, tts: object|null, rawVoices: Array,
+ *                     detail: { isNative: boolean, pluginLoaded: boolean, voices: number, error: string } }>}
+ *
+ * ok === true means the native engine is usable. Zero voices is still ok —
+ * the phone may simply have no voice data installed; the UI keeps
+ * engine='native' and offers the system voice-data installer instead of
+ * declaring TTS unavailable.
+ */
+export async function probeNativeTts({ isNativePlatform, loadPlugin } = {}) {
+  const detail = { isNative: false, pluginLoaded: false, voices: 0, error: '' };
+  try {
+    const isNative = typeof isNativePlatform === 'function' ? isNativePlatform() : false;
+    detail.isNative = isNative === true;
+    if (!detail.isNative) return { ok: false, plugin: null, tts: null, rawVoices: [], detail };
+    const { plugin } = await loadPlugin();
+    detail.pluginLoaded = !!plugin;
+    if (!plugin) return { ok: false, plugin: null, tts: null, rawVoices: [], detail };
+    const tts = createNativeTts(plugin); // throws when the plugin shape is wrong
+    const rawVoices = await tts.getVoices(); // never throws; [] on engine error
+    detail.voices = rawVoices.length;
+    return { ok: true, plugin, tts, rawVoices, detail };
+  } catch (e) {
+    detail.error = String((e && e.message) || e || '').slice(0, 160);
+    return { ok: false, plugin: null, tts: null, rawVoices: [], detail };
+  }
+}

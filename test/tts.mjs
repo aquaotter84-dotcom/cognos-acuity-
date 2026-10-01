@@ -196,7 +196,10 @@ ok('voiceContext exposes the native engine surface', () => {
   assert.match(ctxSource, /setActivePersona/);
   assert.match(ctxSource, /openInstallVoiceData/);
   assert.match(ctxSource, /resolveTtsVoice\(/);
-  assert.match(ctxSource, /loadNativePlugin\(\)/);
+  // The mount probe runs through the testable probeNativeTts helper, with the
+  // plugin loader injected (retried — the native bridge may lag app mount).
+  assert.match(ctxSource, /probeNativeTts\(/);
+  assert.match(ctxSource, /loadPlugin: loadNativePlugin/);
 });
 
 const inputSource = await readFile(new URL('../src/components/chat/ChatInput.jsx', import.meta.url), 'utf8');
@@ -220,6 +223,104 @@ ok('settings offers voice-data install and per-persona spoken voices', () => {
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 ok('package.json carries the on-device TTS plugin', () => {
   assert.ok(pkg.dependencies['@capacitor-community/text-to-speech']);
+});
+
+
+// --- probeNativeTts -------------------------------------------------------------
+// Pure probe logic (src/lib/ttsNative.js): every branch the voice context's
+// mount effect depends on, including the empty-voices contract (plugin loads
+// but the phone has no voice data → still ok, UI offers the installer).
+import { probeNativeTts } from '../src/lib/ttsNative.js';
+
+const fakePlugin = (voices) => ({
+  speak: async () => {},
+  stop: async () => {},
+  // Real plugin resolves { voices: [...] } — the adapter unwraps it.
+  getSupportedVoices: async () => ({ voices }),
+});
+
+{
+  const r = await probeNativeTts({
+    isNativePlatform: () => true,
+    loadPlugin: async () => ({ plugin: fakePlugin([{ voiceURI: 'v1', name: 'V1', lang: 'en-US' }]) }),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.detail.isNative, true);
+  assert.equal(r.detail.pluginLoaded, true);
+  assert.equal(r.detail.voices, 1);
+  assert.equal(r.detail.error, '');
+  passed += 1;
+}
+{
+  // Empty voices: engine still usable — installer banner, not "unavailable".
+  const r = await probeNativeTts({
+    isNativePlatform: () => true,
+    loadPlugin: async () => ({ plugin: fakePlugin([]) }),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.detail.voices, 0);
+  assert.equal(r.rawVoices.length, 0);
+  passed += 1;
+}
+{
+  // Engine error inside getVoices is swallowed by the adapter → [] → ok.
+  const r = await probeNativeTts({
+    isNativePlatform: () => true,
+    loadPlugin: async () => ({ plugin: { speak: async () => {}, getSupportedVoices: async () => { throw new Error('no engine'); } } }),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.detail.voices, 0);
+  passed += 1;
+}
+{
+  // Dynamic import failed (chunk missing at runtime) → not ok, no throw.
+  let called = false;
+  const r = await probeNativeTts({
+    isNativePlatform: () => true,
+    loadPlugin: async () => { called = true; throw new Error('chunk 404'); },
+  });
+  assert.equal(called, true);
+  assert.equal(r.ok, false);
+  assert.equal(r.detail.isNative, true);
+  assert.equal(r.detail.pluginLoaded, false);
+  assert.match(r.detail.error, /chunk 404/);
+  passed += 1;
+}
+{
+  // Plugin with the wrong shape → createNativeTts throws → not ok, error kept.
+  const r = await probeNativeTts({
+    isNativePlatform: () => true,
+    loadPlugin: async () => ({ plugin: {} }),
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.detail.pluginLoaded, true);
+  assert.ok(r.detail.error.length > 0);
+  passed += 1;
+}
+{
+  // Not a native platform → probe skips the plugin entirely.
+  let called = false;
+  const r = await probeNativeTts({
+    isNativePlatform: () => false,
+    loadPlugin: async () => { called = true; return { plugin: null }; },
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.detail.isNative, false);
+  assert.equal(called, false);
+  passed += 1;
+}
+
+// --- settings diagnostic wiring ------------------------------------------------
+const voiceSource = await readFile(new URL('../src/lib/voiceContext.jsx', import.meta.url), 'utf8');
+ok('settings voice section shows the probe diagnostic and the no-voice-data banner', () => {
+  assert.match(settingsSource, /probe: native/);
+  assert.match(settingsSource, /voice\.probe/);
+  assert.match(settingsSource, /No voice data on this device yet/);
+});
+ok('voice context retries the native probe and exposes the diagnostics', () => {
+  assert.match(voiceSource, /probeNativeTts/);
+  assert.match(voiceSource, /PROBE_ATTEMPTS/);
+  assert.match(voiceSource, /probe,/);
 });
 
 console.log(`TTS RESULT: ${passed} passed, 0 failed`);

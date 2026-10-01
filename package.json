@@ -8,7 +8,7 @@
     "build": "vite build",
     "start": "node server/serve.js",
     "preview": "vite preview",
-    "test": "node test/voice.mjs && node test/phase22.mjs && node test/phase23.mjs && node test/phase24.mjs && node test/performance.mjs && node test/sources-agent.mjs && node test/phase18.mjs && node test/autonomy.mjs && node test/autonomy-ux.mjs && node test/council-ux.mjs && node test/phase20.mjs && node test/phase21.mjs && node test/outbox-live.mjs && node test/phase27.mjs && node test/phase28.mjs && node test/phase29.mjs && node test/identity.mjs && node test/integrity.mjs && node test/smoke.mjs && node test/localdb.mjs && node test/settings-dburl.mjs && node test/settings-autonomy-delegation.mjs && node test/ai-diagnose.mjs && node test/memory-semantic.mjs && node test/phase31.mjs && node test/phase32.mjs && node test/tts.mjs",
+    "test": "node test/voice.mjs && node test/phase22.mjs && node test/phase23.mjs && node test/phase24.mjs && node test/performance.mjs && node test/sources-agent.mjs && node test/phase18.mjs && node test/autonomy.mjs && node test/autonomy-ux.mjs && node test/council-ux.mjs && node test/phase20.mjs && node test/phase21.mjs && node test/outbox-live.mjs && node test/phase27.mjs && node test/phase28.mjs && node test/phase29.mjs && node test/identity.mjs && node test/integrity.mjs && node test/smoke.mjs && node test/localdb.mjs && node test/settings-dburl.mjs && node test/settings-autonomy-delegation.mjs && node test/ai-diagnose.mjs && node test/memory-semantic.mjs && node test/phase31.mjs && node test/phase32.mjs && node test/schema-boot.mjs && node test/tts.mjs",
     "voice": "node test/voice.mjs",
     "phase22": "node test/phase22.mjs",
     "performance": "node test/performance.mjs",
