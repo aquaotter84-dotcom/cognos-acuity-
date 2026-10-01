@@ -82,7 +82,7 @@ export function VoiceProvider({ children }) {
     const recordProbe = (patch) => {
       if (!cancelled) setProbe((prev) => ({ ...prev, ...patch }));
     };
-    const PROBE_ATTEMPTS = 4;
+    const PROBE_ATTEMPTS = 6;
     (async () => {
       for (let attempt = 0; attempt < PROBE_ATTEMPTS && !cancelled; attempt += 1) {
         const result = await probeNativeTts({
@@ -95,9 +95,14 @@ export function VoiceProvider({ children }) {
           voices: result.detail.voices,
           error: result.detail.error,
         });
-        if (!cancelled && result.ok) {
-          // Zero voices is still a working engine — the phone just has no
-          // voice data installed. The UI offers the installer prominently.
+        const lastAttempt = attempt === PROBE_ATTEMPTS - 1;
+        if (!cancelled && result.ok && (result.detail.voices > 0 || lastAttempt)) {
+          // Android's TextToSpeech.getVoices() returns an empty set until the
+          // engine finishes its async init, so a zero-voice ok result early in
+          // the loop usually means "still starting up", not "no voice data".
+          // Settle immediately only when voices are present; otherwise keep
+          // retrying, and accept zero voices as genuine only on the final
+          // attempt (that's when the install banner is the honest UI).
           setNativeTts(result.tts);
           setVoices(mapNativeVoices(result.rawVoices));
           setEngine('native');
@@ -108,7 +113,7 @@ export function VoiceProvider({ children }) {
           setEngine('browser');
           return;
         }
-        if (attempt < PROBE_ATTEMPTS - 1) {
+        if (!lastAttempt) {
           await new Promise((r) => { setTimeout(r, 750 * (attempt + 1)); });
         }
       }

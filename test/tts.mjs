@@ -334,5 +334,19 @@ ok('settings falls back to manual voice-data steps when the installer cannot ope
   assert.match(settingsSource, /Text-to-speech output/);
   assert.match(settingsSource, /Install voice data.*download English \(US\)/s);
 });
+ok('native probe settles immediately only when voices are present', () => {
+  assert.match(voiceSource, /const PROBE_ATTEMPTS = 6;/);
+  assert.match(voiceSource, /const lastAttempt = attempt === PROBE_ATTEMPTS - 1;/);
+  assert.match(voiceSource, /result\.ok && \(result\.detail\.voices > 0 \|\| lastAttempt\)/);
+});
+ok('a zero-voice ok result retries the engine init instead of settling', () => {
+  // The comment documents the race: getVoices() is empty until the engine
+  // finishes its async init, so early zero-voice results must not settle.
+  assert.match(voiceSource, /empty set until the[\s\S]{0,300}engine finishes its async init/);
+  assert.match(voiceSource, /accept zero voices as genuine only on the final/);
+});
+ok('browser fallback on hard failure is unchanged', () => {
+  assert.match(voiceSource, /if \(!cancelled && browserSupported\(\)\) \{\s*\n\s*recordProbe\(\{ browser: true \}\);/);
+});
 
 console.log(`TTS RESULT: ${passed} passed, 0 failed`);
