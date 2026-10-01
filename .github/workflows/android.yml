@@ -55,6 +55,20 @@ jobs:
       - name: Sync Capacitor Android project
         run: npx cap sync android
 
+      - name: Stamp versionCode/versionName from build run number
+        # The in-app self-updater compares the installed Android versionCode
+        # against the `versionCode:` stamp the publish workflow writes into
+        # each release body. The build workflow's run_number is monotonic, so
+        # it doubles as the versionCode. Fail loudly if the expected lines are
+        # missing so a Capacitor template change can't silently unstamp builds.
+        run: |
+          G=android/app/build.gradle
+          grep -qE '^\s*versionCode [0-9]+' "$G" || { echo "versionCode line not found in $G" >&2; exit 1; }
+          grep -qE '^\s*versionName "' "$G" || { echo "versionName line not found in $G" >&2; exit 1; }
+          sed -i -E "s/^(\s*)versionCode [0-9]+/\1versionCode ${{ github.run_number }}/" "$G"
+          sed -i -E "s/^(\s*)versionName \"[^\"]*\"/\1versionName \"1.0.${{ github.run_number }}\"/" "$G"
+          grep -nE '^\s*version(Code|Name) ' "$G"
+
       - name: Patch TTS plugin voice-data installer intent
         # The bundled TTS plugin's openInstall() fires ACTION_CHECK_TTS_DATA,
         # which Android 11+ package visibility silently drops without a
@@ -105,6 +119,47 @@ jobs:
           sed -i 's/ android:usesCleartextTraffic="[^"]*"//' "$M"
           sed -i '0,/<application/s//<application android:usesCleartextTraffic="true"/' "$M"
           grep -n 'usesCleartextTraffic' "$M"
+
+      - name: Enable self-update install path
+        # The in-app updater (first-party cognos-updater plugin) downloads the
+        # APK with DownloadManager and installs it via a FileProvider URI.
+        # android/ is regenerated fresh each build, so all of this must live
+        # here, not in a committed file. Idempotent: both inserts are
+        # grep-guarded (the provider carries a marker comment).
+        run: |
+          M=android/app/src/main/AndroidManifest.xml
+          if ! grep -q 'android.permission.REQUEST_INSTALL_PACKAGES' "$M"; then
+            sed -i '0,/<application/s//<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" \/>\n    <application/' "$M"
+          fi
+          grep -q 'android.permission.REQUEST_INSTALL_PACKAGES' "$M" || { echo "REQUEST_INSTALL_PACKAGES missing after patch" >&2; exit 1; }
+          if ! grep -q 'cognos-updater-fileprovider' "$M"; then
+            sed -i '0,/<\/application>/s||<!-- cognos-updater-fileprovider -->\n    <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.fileprovider" android:exported="false" android:grantUriPermissions="true"><meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/cognos_filepaths" /></provider>\n    </application>|' "$M"
+          fi
+          grep -q 'cognos-updater-fileprovider' "$M" || { echo "FileProvider declaration missing after patch" >&2; exit 1; }
+          mkdir -p android/app/src/main/res/xml
+          printf '%s\n' '<?xml version="1.0" encoding="utf-8"?>' '<paths>' '    <!-- APKs downloaded by the self-updater into the app Download dir -->' '    <external-files-path name="apk" path="Download/" />' '</paths>' > android/app/src/main/res/xml/cognos_filepaths.xml
+          grep -q 'external-files-path' android/app/src/main/res/xml/cognos_filepaths.xml
+
+      - name: Restore stable debug keystore
+        # Every CI build MUST be signed with the SAME key or Android refuses
+        # to install it over the previous one (INSTALL_FAILED_UPDATE_INCOMPATIBLE).
+        # The ephemeral runner would otherwise generate a fresh throwaway
+        # debug keystore each run. Restore the stable one from the
+        # COGNOS_DEBUG_KEYSTORE_B64 secret instead. It uses the conventional
+        # debug alias/passwords, so assembleDebug picks it up with zero
+        # build.gradle changes. Fails loudly if the secret is unset.
+        env:
+          COGNOS_DEBUG_KEYSTORE_B64: ${{ secrets.COGNOS_DEBUG_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$COGNOS_DEBUG_KEYSTORE_B64" ]; then
+            echo "COGNOS_DEBUG_KEYSTORE_B64 secret is not set — builds would be signed with a throwaway key" >&2
+            exit 1
+          fi
+          mkdir -p ~/.android
+          printf '%s' "$COGNOS_DEBUG_KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          chmod 600 ~/.android/debug.keystore
+          keytool -list -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey > /dev/null || { echo "Restored keystore is missing the androiddebugkey alias" >&2; exit 1; }
+          echo "Stable debug keystore restored."
 
       - name: Build debug APK
         run: cd android && ./gradlew assembleDebug

@@ -31,8 +31,27 @@ jobs:
           path: apk
       - name: Rename APK
         run: mv apk/app-debug.apk "apk/${{ inputs.asset_name }}"
+      - name: Resolve build versionCode
+        # The build workflow stamps versionCode = its run_number into the APK.
+        # Mirror that number here so the in-app updater can compare builds
+        # without downloading anything. Fails loudly if the API lookup fails.
+        id: build_version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_NUMBER=$(gh api "repos/aquaotter84-dotcom/cognos-acuity-/actions/runs/${{ inputs.run_id }}" --jq .run_number)
+          if [ -z "$RUN_NUMBER" ] || [ "$RUN_NUMBER" = "null" ]; then
+            echo "Could not resolve run_number for build run ${{ inputs.run_id }}" >&2
+            exit 1
+          fi
+          echo "version_code=$RUN_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Build run ${{ inputs.run_id }} -> versionCode $RUN_NUMBER"
       - name: Attach APK to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag }}
           files: apk/${{ inputs.asset_name }}
+          body: |
+            COGNOS Android build.
+            versionCode: ${{ steps.build_version.outputs.version_code }}
+            Asset: ${{ inputs.asset_name }}

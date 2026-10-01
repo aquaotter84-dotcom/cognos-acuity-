@@ -10,6 +10,7 @@ import { Pill } from '@/components/system/SystemUi';
 import { useCognos } from '@/lib/cognosContext';
 import { useVoice } from '@/lib/voiceContext';
 import { getTheme, applyTheme } from '@/lib/theme';
+import AppUpdatesSection from '@/components/settings/AppUpdatesSection';
 
 /** One governance switch row: label, hint, a toggle, and the honest reason it
  *  is disabled (a pin, or no delegation) rather than a switch that lies. */
@@ -842,6 +843,8 @@ export default function Settings() {
           </section>
 
           <ModelKeySection onChanged={() => api.health().then(setHealth).catch(() => {})} />
+
+          <AppUpdatesSection />
 
           <AiProviderSection onChanged={() => api.health().then(setHealth).catch(() => {})} />
 
