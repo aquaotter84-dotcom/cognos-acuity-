@@ -39,6 +39,42 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Patch Capacitor document-start script origins
+        # ROOT CAUSE of the 2026-10-01 incident where NO native plugin worked
+        # on the app page (TTS silent, updater "not implemented", App.getInfo
+        # hanging): the boot page (served by Capacitor at https://localhost/)
+        # starts the embedded Node server, then the WebView redirects to the
+        # loopback origin http://127.0.0.1:<PORT>/ (PORT hardcoded in
+        # mobile/boot-index.html). In Capacitor 7's Bridge.java loadWebView(),
+        # the document-start script that injects window.Capacitor.PluginHeaders
+        # — the thing that makes every native plugin callable from JS — is
+        # registered via WebViewCompat.addDocumentStartJavaScript() with ONLY
+        # the appUrl origin. The loopback page never receives the plugin JS, so
+        # every plugin call fails; window.Capacitor and window.androidBridge
+        # still exist, which is why isNativePlatform() was true and the
+        # failure was silent.
+        # node_modules is installed fresh by npm ci on every run, so this patch
+        # must live here, not in a committed file. Idempotent via the marker
+        # comment; every expectation fails loudly so a Capacitor upgrade can't
+        # silently unfix this.
+        run: |
+          BRIDGE=node_modules/@capacitor/android/capacitor/src/main/java/com/getcapacitor/Bridge.java
+          MARKER="COGNOS-DOCUMENT-START-ORIGINS"
+          if grep -q "$MARKER" "$BRIDGE"; then
+            echo "Bridge.java document-start origins already patched."
+          else
+            for imp in "import java.util.Set;" "import java.util.HashSet;" "import java.util.Arrays;"; do
+              grep -qF "$imp" "$BRIDGE" || { echo "missing $imp in Bridge.java" >&2; exit 1; }
+            done
+            PORT=$(grep -oE 'var PORT = [0-9]+' mobile/boot-index.html | grep -oE '[0-9]+' | head -1)
+            [ -n "$PORT" ] || { echo "Could not read PORT from mobile/boot-index.html" >&2; exit 1; }
+            TARGET='WebViewCompat.addDocumentStartJavaScript(webView, injector.getScriptString(), Collections.singleton(allowedOrigin));'
+            grep -qF "$TARGET" "$BRIDGE" || { echo "target line not found in Bridge.java — Capacitor may have changed loadWebView()" >&2; exit 1; }
+            sed -i "s|${TARGET}|// ${MARKER}: the app page runs at http://127.0.0.1:${PORT} (PORT from mobile/boot-index.html), not appUrl. The plugin-injection script must be registered for both origins or no native plugin works on the app page.\n                Set<String> documentStartOrigins = new HashSet<>(Arrays.asList(allowedOrigin, \"http://127.0.0.1:${PORT}\"));\n                WebViewCompat.addDocumentStartJavaScript(webView, injector.getScriptString(), documentStartOrigins);|" "$BRIDGE"
+            grep -q "$MARKER" "$BRIDGE" || { echo "patch did not land in Bridge.java" >&2; exit 1; }
+            echo "Bridge.java document-start origins patched for port $PORT."
+          fi
+
       - name: Run tests
         # A test failure stops the job before the APK is built.
         run: npm test
