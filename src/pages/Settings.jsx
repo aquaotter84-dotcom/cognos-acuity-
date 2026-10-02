@@ -9,6 +9,7 @@ import { api } from '@/lib/api';
 import { Pill } from '@/components/system/SystemUi';
 import { useCognos } from '@/lib/cognosContext';
 import { useVoice } from '@/lib/voiceContext';
+import { diagnoseTtsNative } from '@/lib/ttsNative';
 import { getTheme, applyTheme } from '@/lib/theme';
 import AppUpdatesSection from '@/components/settings/AppUpdatesSection';
 
@@ -765,6 +766,8 @@ export default function Settings() {
   const [councilError, setCouncilError] = useState('');
   const [theme, setTheme] = useState(() => getTheme());
   const [voiceInstallHint, setVoiceInstallHint] = useState(false);
+  const [ttsDiag, setTtsDiag] = useState(null);
+  const [ttsDiagBusy, setTtsDiagBusy] = useState(false);
 
   const setAppearance = (t) => { setTheme(applyTheme(t)); };
 
@@ -774,6 +777,20 @@ export default function Settings() {
   const handleInstallVoiceData = async () => {
     const opened = await voice.openInstallVoiceData();
     if (!opened) setVoiceInstallHint(true);
+  };
+
+  // Raw native TTS diagnostic: asks the phone directly what its
+  // text-to-speech engine sees, bypassing the voice plugin entirely. The
+  // result is rendered verbatim below so the phone tells us what's failing.
+  const handleTtsDiagnostic = async () => {
+    if (ttsDiagBusy) return;
+    setTtsDiagBusy(true);
+    setTtsDiag(null);
+    try {
+      setTtsDiag(await diagnoseTtsNative());
+    } finally {
+      setTtsDiagBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -1031,6 +1048,25 @@ export default function Settings() {
                         : 'Browser-native playback: no audio is uploaded, stored, or sent to a separate speech provider.'}
                     </p>
                   </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleTtsDiagnostic}
+                      disabled={ttsDiagBusy}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                    >
+                      {ttsDiagBusy ? 'Running diagnostic…' : 'Run TTS diagnostic'}
+                    </button>
+                    <p className="text-[10px] text-muted-foreground/60 flex-1 min-w-[12rem]">
+                      Asks the phone directly what its text-to-speech engine sees, bypassing the voice plugin.
+                    </p>
+                  </div>
+                  {ttsDiag && (
+                    <pre className="text-[10px] font-mono text-muted-foreground bg-muted/40 rounded-lg px-3 py-2.5 overflow-x-auto whitespace-pre-wrap break-all">
+                      {JSON.stringify(ttsDiag, null, 2)}
+                    </pre>
+                  )}
                 </>
               )}
             </div>

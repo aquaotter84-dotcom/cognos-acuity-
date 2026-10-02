@@ -5,10 +5,14 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.provider.Settings;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.Voice;
 
 import androidx.core.content.FileProvider;
 
@@ -22,6 +26,8 @@ import java.io.File;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 /**
  * First-party COGNOS self-updater (Android only).
@@ -187,9 +193,99 @@ public class CognosUpdaterPlugin extends Plugin {
         }
     }
 
+    /**
+     * Raw TTS diagnostic: bypasses the @capacitor-community text-to-speech
+     * plugin and asks the OS directly what the engine looks like.
+     *
+     * The engine is constructed on the calling (main) thread — TextToSpeech
+     * binds its callback handler to a Looper — while the up-to-5s init wait
+     * runs on a worker thread so the UI never blocks. The call is NEVER
+     * rejected on diagnostic failure; problems are reported in the `error`
+     * string field instead.
+     */
+    @PluginMethod
+    public void diagnoseTts(PluginCall call) {
+        final JSObject ret = new JSObject();
+        final Context context = getContext();
+
+        // 1. Is the engine package visible to us at all? On Android 11+ this
+        // is false without a <queries> manifest entry for TTS_SERVICE.
+        boolean engineVisible = false;
+        try {
+            context.getPackageManager().getApplicationInfo(
+                    "com.google.android.tts", 0);
+            engineVisible = true;
+        } catch (PackageManager.NameNotFoundException ignored) {
+            engineVisible = false;
+        }
+        ret.put("engineVisible", engineVisible);
+
+        // 2. The engine the user picked in system settings (may be null).
+        String defaultEngine = null;
+        try {
+            defaultEngine = Settings.Secure.getString(
+                    context.getContentResolver(), Settings.Secure.TTS_DEFAULT_SYNTH);
+        } catch (Exception ignored) {
+            defaultEngine = null;
+        }
+        ret.put("defaultEngine",
+                defaultEngine != null ? defaultEngine : JSObject.NULL);
+
+        // 3. Raw android.speech.tts.TextToSpeech bind.
+        final CountDownLatch latch = new CountDownLatch(1);
+        final int[] initCode = { Integer.MIN_VALUE };
+        final TextToSpeech[] holder = new TextToSpeech[1];
+        try {
+            holder[0] = new TextToSpeech(context, status -> {
+                initCode[0] = status;
+                latch.countDown();
+            });
+        } catch (Exception e) {
+            ret.put("initStatus", "ERROR");
+            ret.put("voiceCount", 0);
+            ret.put("error", "TextToSpeech constructor threw: " + e.getMessage());
+            call.resolve(ret);
+            return;
+        }
+
+        new Thread(() -> {
+            try {
+                boolean finished;
+                try {
+                    finished = latch.await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    finished = false;
+                }
+                String initStatus = !finished ? "TIMEOUT"
+                        : (initCode[0] == TextToSpeech.SUCCESS ? "SUCCESS" : "ERROR");
+                ret.put("initStatus", initStatus);
+
+                int voiceCount = 0;
+                if (finished && initCode[0] == TextToSpeech.SUCCESS) {
+                    try {
+                        Set<Voice> voices = holder[0].getVoices();
+                        voiceCount = voices == null ? 0 : voices.size();
+                    } catch (Exception e) {
+                        ret.put("error", "getVoices failed: " + e.getMessage());
+                    }
+                }
+                ret.put("voiceCount", voiceCount);
+            } catch (Exception e) {
+                ret.put("error", String.valueOf(e.getMessage()));
+            } finally {
+                try {
+                    if (holder[0] != null) holder[0].shutdown();
+                } catch (Exception ignored) {
+                    // Best effort; the diagnostic result stands on its own.
+                }
+            }
+            call.resolve(ret);
+        }, "cognos-tts-diagnose").start();
+    }
+
     @Override
-    protected void handleOnDestroy() {
-        if (downloadReceiver != null) {
+    protected void handleOnDestroy() {        if (downloadReceiver != null) {
             try {
                 getContext().unregisterReceiver(downloadReceiver);
             } catch (Exception ignored) {

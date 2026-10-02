@@ -94,6 +94,37 @@ export function createNativeTts(plugin) {
 }
 
 /**
+ * Raw native TTS diagnostic via the first-party updater plugin
+ * (CognosUpdater.diagnoseTts). Bypasses the @capacitor-community
+ * text-to-speech plugin entirely: it binds android.speech.tts.TextToSpeech
+ * directly and reports what the OS actually sees — engine package
+ * visibility, the system default engine, the raw init status, and the raw
+ * voice count.
+ *
+ * Never throws: resolves `{ ok: false, error }` when the updater plugin or
+ * the diagnoseTts method is unavailable, otherwise `{ ok: true, ... }` with
+ * the native fields verbatim.
+ *
+ * @param {object} deps
+ * @param {() => Promise<{ plugin }>} deps.loadUpdaterPlugin  e.g. from updaterNative.js
+ */
+export async function diagnoseTtsNative({ loadUpdaterPlugin } = {}) {
+  try {
+    const load = typeof loadUpdaterPlugin === 'function'
+      ? loadUpdaterPlugin
+      : (await import('./updaterNative.js')).loadUpdaterPlugin;
+    const { plugin } = await load();
+    if (!plugin || typeof plugin.diagnoseTts !== 'function') {
+      return { ok: false, error: 'Updater plugin (diagnoseTts) not available on this device' };
+    }
+    const result = await plugin.diagnoseTts();
+    return { ok: true, ...(result && typeof result === 'object' ? result : {}) };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e || '').slice(0, 200) };
+  }
+}
+
+/**
  * Probe the native TTS engine. Pure decision logic over injected dependencies
  * so node tests can exercise every branch without a device.
  *
