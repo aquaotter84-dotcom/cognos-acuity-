@@ -610,7 +610,7 @@ function PersonasSection() {
         {personas === null ? (
           <p className="text-muted-foreground">Loading…</p>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-2 max-h-80 overflow-y-auto pr-0.5">
             {personas.map(p => (
               <div key={p.id} className={`rounded-lg border p-2.5 ${p.id === activeId ? 'border-primary/50 bg-primary/5' : 'border-border'}`}>
                 <div className="flex items-center justify-between gap-2">

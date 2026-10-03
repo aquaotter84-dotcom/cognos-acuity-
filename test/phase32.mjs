@@ -106,10 +106,15 @@ function makeDb() {
 }
 
 // --- built-ins ----------------------------------------------------------------
-ok(BUILTIN_PERSONAS.length === 3, "three built-in personas ship");
+ok(BUILTIN_PERSONAS.length === 10, "ten built-in personas ship");
 ok(BUILTIN_PERSONAS.some((p) => p.id === "default"), "default built-in exists");
 ok(BUILTIN_PERSONAS.some((p) => p.id === "technical"), "technical built-in exists");
 ok(BUILTIN_PERSONAS.some((p) => p.id === "mythic"), "mythic built-in exists");
+for (const id of ["shop-talk", "night-owl", "straight-shooter", "storykeeper", "corner-man", "socrates", "editor"]) {
+  ok(BUILTIN_PERSONAS.some((p) => p.id === id), `${id} built-in exists`);
+}
+ok(new Set(BUILTIN_PERSONAS.map((p) => p.id)).size === BUILTIN_PERSONAS.length, "built-in ids are unique");
+ok(new Set(BUILTIN_PERSONAS.map((p) => p.name)).size === BUILTIN_PERSONAS.length, "built-in names are unique");
 const def = BUILTIN_PERSONAS.find((p) => p.id === "default");
 ok(def.prompt_text === "", "default carries no prompt text — today's behavior, unchanged");
 const tech = BUILTIN_PERSONAS.find((p) => p.id === "technical");
@@ -144,12 +149,12 @@ ok(!section.toLowerCase().includes("governor is") || true, "section does not gra
 {
   const db = makeDb();
   await ensureBuiltinPersonas(db);
-  ok(db.rows.size === 3, "three built-ins seeded");
+  ok(db.rows.size === 10, "ten built-ins seeded");
   const active = await getActivePersona(db);
   ok(active && active.id === "default", "fresh install activates default");
   // Seeding is idempotent.
   await ensureBuiltinPersonas(db);
-  ok(db.rows.size === 3, "re-seeding changes nothing");
+  ok(db.rows.size === 10, "re-seeding changes nothing");
 }
 
 // --- store: CRUD -------------------------------------------------------------------
@@ -235,7 +240,7 @@ console.log(`\nphase32: ${pass} assertions passed`);
     ok(Array.isArray(probe), "real db.query returns a rows array");
 
     const listed = await listPersonas(realDb);
-    ok(Array.isArray(listed) && listed.length === 3, "listPersonas works against the real db (3 built-ins)");
+    ok(Array.isArray(listed) && listed.length === 10, "listPersonas works against the real db (10 built-ins)");
     ok(listed.some((p) => p.id === "default" && p.is_active), "default is active on the real db");
 
     const created = await createPersona(realDb, {
