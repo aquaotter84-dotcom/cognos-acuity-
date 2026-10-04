@@ -351,6 +351,74 @@ it needs neighbors.
 
 ---
 
+# Gateway hardening audit (BluesMinds) — v42
+
+Jeremy pasted outside advice on hardening the agent loop for the BluesMinds
+gateway. Audited with judgment; findings below.
+
+## 1. Strict JSON audit — complete, with prompt hardening added
+
+Walked every `callLLM` in the agent/autonomy loop. Every call whose result is
+parsed as JSON already enforces `responseJsonSchema` (sent as a
+`json_schema` response_format *and* `JSON.parse`d with a named
+"malformed structured output" error). The two calls that intentionally
+return prose are not crash vectors:
+
+- `server/council/webSearch.js` (briefing) — consumed as a plain string for
+  the council to reason over; any string is valid output.
+- `server/routes/heartbeat.js` compose (dream distillation, greeting) —
+  prose journal entries with a deterministic fallback
+  ("The day held N memories."); `cleanLine(..., 900)` bounds it.
+
+What was missing: the explicit "return ONLY the JSON object, no
+conversational filler" prompt line. The schema envelope does the heavy
+lifting, but a model that ignores the envelope and chats anyway turns into
+a parse throw. Added the hardening line to: Observer, Strategist, Critic,
+Coherence Monitor, resident designer (its prose lives *inside* the JSON
+`reply` field, so the line points there), memory relevance, conversation
+summarizer (its prompt said "return only the summary text" while the
+schema wants `{ summary }` — fixed to match), and memory extraction. The
+planner, tick worker, subagent, and vision calls already had it. Every one
+of these calls already degrades gracefully (fallbacks or caught errors),
+so a chatty model degrades the turn, never crashes the loop.
+
+Deliberately **not** done: `strict: true` on the schema envelope, and
+retrying malformed JSON. Strict mode is unverified against the BluesMinds
+gateway (a 400 there would break every schema call at once), and the
+parse-throw path with caller fallbacks is the safer posture until Jeremy
+wants to test strict against his account.
+
+## 2. Gateway retry — the main client was already solid; embeddings was the gap
+
+`server/llm.js` (the BluesMinds chat-completions client) already had the
+full treatment: transient statuses (408/429/500/502/503/504), `Retry-After`
+header honored, exponential backoff (250ms × 2^attempt, capped), one logical
+deadline across retries, client-abort always winning. The "most likely real
+gap" was already closed.
+
+The actual gap was `server/memory/embeddings.js`: a single 429/502
+returned null and every caller silently fell back to no-embeddings. Added
+a bounded retry (3 attempts, 250ms→2s backoff) for transient HTTP statuses
+and network blips; hard 4xx still fails fast, aborts stay terminal, and the
+never-throws contract is unchanged. 4 new tests in `test/memory-semantic.mjs`
+(transient-then-success, persistent 503, hard 400, network blip).
+
+## 3. Model selection — noted, not changed
+
+Agent-loop models (`primary`, `memory`/`fast`, and all council seats)
+resolve to `openai/gpt-oss-20b` unless `COGNOS_MODEL` / `COGNOS_FAST_MODEL`
+override — verified live against Jeremy's BluesMinds account 2026-09-27
+(~1.5s completions). The pasted advice names Claude 3.5 Sonnet/3.6, GPT-4o
+Mini, and DeepSeek V4.1 Flash, but **GPT-4o Mini is confirmed "model not
+found" on his account** and the others are unconfirmed on his plan — so
+none of them is an available alternative today. No provider or plan change
+made, per the directive. If structured output ever proves weak on
+gpt-oss-20b (a reasoning-first model; the code already handles its
+`reasoning_content` fallbacks), the lever is the two env vars above,
+pointed at whatever his BluesMinds plan actually lists.
+
+---
+
 # Changes made in v40 (cleanup + humanizing)
 
 > **v41 addendum** — after v40 shipped, Jeremy approved four features that

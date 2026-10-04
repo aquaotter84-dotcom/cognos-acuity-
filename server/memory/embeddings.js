@@ -31,7 +31,14 @@ export function embeddingTextFor(memory) {
 
 // Embed one batch of texts. Returns an array of vectors, or null when
 // embeddings are unavailable for any reason (no key, network, provider
-// error). Never throws — callers treat null as "fall back".
+// error). Never throws — callers treat null as "fall back". Transient
+// provider hiccups (429/5xx) get a small bounded retry so a blip does not
+// silently drop the embedding; anything else fails fast to the fallback.
+const EMBEDDING_TRANSIENT = new Set([408, 429, 500, 502, 503, 504]);
+const EMBEDDING_MAX_ATTEMPTS = 3;
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 export async function embedTexts(texts, { logger = null, timeoutMs = 30000 } = {}) {
   const inputs = (Array.isArray(texts) ? texts : []).map(t => String(t || "").trim()).filter(Boolean);
   if (!inputs.length) return [];
@@ -43,37 +50,55 @@ export async function embedTexts(texts, { logger = null, timeoutMs = 30000 } = {
     return null;
   }
   const model = resolveEmbeddingModel(baseUrl);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${baseUrl}/embeddings`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ input: inputs, model }),
-      signal: controller.signal
-    });
-    if (!res.ok) {
-      logger?.warn?.("embeddings request failed", { status: res.status, model });
+  for (let attempt = 1; attempt <= EMBEDDING_MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${baseUrl}/embeddings`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ input: inputs, model }),
+        signal: controller.signal
+      });
+      if (!res.ok) {
+        // Transient blip: back off and try again. A hard refusal (4xx other
+        // than 429/408) fails fast — retrying will not change the answer.
+        if (EMBEDDING_TRANSIENT.has(res.status) && attempt < EMBEDDING_MAX_ATTEMPTS) {
+          logger?.warn?.("embeddings request transient failure, retrying", { status: res.status, model, attempt });
+          await sleep(Math.min(2000, 250 * (2 ** (attempt - 1))));
+          continue;
+        }
+        logger?.warn?.("embeddings request failed", { status: res.status, model });
+        return null;
+      }
+      const body = await res.json().catch(() => null);
+      const data = body?.data;
+      if (!Array.isArray(data) || data.length !== inputs.length) {
+        logger?.warn?.("embeddings response malformed", { model });
+        return null;
+      }
+      const vectors = data.map(d => (Array.isArray(d?.embedding) ? d.embedding : null));
+      if (vectors.some(v => !v)) {
+        logger?.warn?.("embeddings response missing vectors", { model });
+        return null;
+      }
+      return vectors;
+    } catch (e) {
+      // Network-level failure (DNS, reset, timeout): retry while attempts
+      // remain, then fall back. An abort is terminal — do not spin on it.
+      const aborted = e?.name === "AbortError" || controller.signal.aborted;
+      if (!aborted && attempt < EMBEDDING_MAX_ATTEMPTS) {
+        logger?.warn?.("embeddings request errored, retrying", { error: String(e?.message || e), model, attempt });
+        await sleep(Math.min(2000, 250 * (2 ** (attempt - 1))));
+        continue;
+      }
+      logger?.warn?.("embeddings request errored", { error: String(e?.message || e), model });
       return null;
+    } finally {
+      clearTimeout(timer);
     }
-    const body = await res.json().catch(() => null);
-    const data = body?.data;
-    if (!Array.isArray(data) || data.length !== inputs.length) {
-      logger?.warn?.("embeddings response malformed", { model });
-      return null;
-    }
-    const vectors = data.map(d => (Array.isArray(d?.embedding) ? d.embedding : null));
-    if (vectors.some(v => !v)) {
-      logger?.warn?.("embeddings response missing vectors", { model });
-      return null;
-    }
-    return vectors;
-  } catch (e) {
-    logger?.warn?.("embeddings request errored", { error: String(e?.message || e), model });
-    return null;
-  } finally {
-    clearTimeout(timer);
   }
+  return null;
 }
 
 // Cosine similarity in [-1, 1]. A zero vector has no direction — it scores 0,

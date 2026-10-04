@@ -106,6 +106,29 @@ ok(await embedTexts(["hello"]) === null, "malformed body -> null");
 globalThis.fetch = async () => { throw new Error("boom"); };
 ok(await embedTexts(["hello"]) === null, "network throw -> null");
 
+// --- embedTexts retry (mocked fetch, counting calls) ---
+process.env.BLUESMINDS_API_KEY='<redacted>'
+let calls = 0;
+globalThis.fetch = async () => {
+  calls++;
+  if (calls < 3) return { ok: false, status: 429 };
+  return { ok: true, json: async () => ({ data: [{ embedding: [0.9] }] }) };
+};
+const retried = await embedTexts(["hello"]);
+ok(Array.isArray(retried) && retried[0][0] === 0.9 && calls === 3, "transient 429 retried, then succeeds");
+
+calls = 0;
+globalThis.fetch = async () => { calls++; return { ok: false, status: 503 }; };
+ok(await embedTexts(["hello"]) === null && calls === 3, "persistent 503 -> null after bounded retries");
+
+calls = 0;
+globalThis.fetch = async () => { calls++; return { ok: false, status: 400 }; };
+ok(await embedTexts(["hello"]) === null && calls === 1, "hard 400 fails fast, no retry");
+
+calls = 0;
+globalThis.fetch = async () => { calls++; throw new Error("reset"); };
+ok(await embedTexts(["hello"]) === null && calls === 3, "network blip retried, then null");
+
 delete process.env.BLUESMINDS_API_KEY;
 ok(await embedTexts(["hello"]) === null, "missing key -> null, never throws");
 

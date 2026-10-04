@@ -59,6 +59,7 @@ const COHERENCE_SYSTEM = withCharter(
   "- durable: true only if the claim is worth holding onto beyond this exchange\n" +
   "- note: one short line of reasoning\n\n" +
   "Set verdict to \"contradiction\" if any claim contradicts a stored belief, \"confirmation\" if claims only support stored beliefs, \"mixed\" if both happen, \"coherent\" if the draft touches nothing stored, and \"unclear\" if you cannot tell. Only report a contradiction when the draft and the belief genuinely cannot both be true — a difference of emphasis, an update over time, or a change of the user's mind stated by the user is a contradiction of the OLD belief and should be reported as one, with the new claim marked durable."
+  + "\n\nReturn ONLY the JSON object — no conversational filler, no markdown fences, no commentary."
 );
 
 function normalizeClaims(raw, knownIds) {

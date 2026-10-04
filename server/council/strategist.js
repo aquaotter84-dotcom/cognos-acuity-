@@ -44,7 +44,7 @@ export const strategistAgent = defineAgent({
         messages: [
           {
             role: "system",
-            content: `You are the Strategist of the COGNOS council. Decompose the user's goal into 2-4 focused sub-tasks, each assigned to a specialist agent. Set each sub_task's agent to one of [${ALLOWED_AGENTS.join(", ")}]. Keep sub-tasks independent and non-overlapping.`
+            content: `You are the Strategist of the COGNOS council. Decompose the user's goal into 2-4 focused sub-tasks, each assigned to a specialist agent. Set each sub_task's agent to one of [${ALLOWED_AGENTS.join(", ")}]. Keep sub-tasks independent and non-overlapping. Return ONLY the JSON object — no conversational filler, no markdown fences, no commentary.`
           },
           {
             role: "user",
