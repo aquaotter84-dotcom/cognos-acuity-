@@ -605,3 +605,4 @@ redundant keys, subsumed pairs, fragments with dream exclusion, stale
 volatile, graph orphans/dupes/dead-ends/contradictions); proposal
 idempotency; approve-applies/refuse-stands against a fake db; fragment
 merge; `cleanupDue` day-guard; `cleanup_report` wording.
+# CI re-trigger 1791085844
