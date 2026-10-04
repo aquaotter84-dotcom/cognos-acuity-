@@ -106,6 +106,7 @@ import { autonomyConfig } from "./autonomy/config.js";
 import { registerProjectRoutes } from "./routes/projects.js";
 import { registerGraphRoutes } from "./routes/graph.js";
 import { registerDataCleanupRoutes } from "./routes/dataCleanup.js";
+import { registerInsightsEmailRoutes } from "./routes/insightsEmail.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerAccountRoutes } from "./routes/accounts.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
@@ -354,6 +355,7 @@ registerPersonasRoutes(app, { wrap, db, logger });
 registerCouncilRoutes(app, { wrap, db, logger });
 registerGraphRoutes(app, { wrap, db, logger });
 registerDataCleanupRoutes(app, { wrap, db, logger });
+registerInsightsEmailRoutes(app, { wrap, db, logger });
 registerSettingsRoutes(app, { wrap, logger });
 
 // --- Static frontend (self-hosted only) -------------------------------------

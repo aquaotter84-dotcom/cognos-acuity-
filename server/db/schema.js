@@ -1624,6 +1624,51 @@ CREATE INDEX IF NOT EXISTS resident_watches_due_idx
   ON resident_watches (status, last_check_ms);
 `;
 
+// Phase 38 -- Daily Insights resident: email delivery for the morning digest.
+// ---------------------------------------------------------------------------
+// Jeremy's direction: a resident that watches all stored data and emails him
+// a short digest every day, from a dedicated Gmail account he created for
+// COGNOS. Auth is a Gmail app password over SMTP (implicit TLS).
+//
+// Security rules:
+//   * The app password is write-only: encrypted with the vault envelope
+//     (server/autonomy/vault.js) before it touches the row, and no accessor
+//     ever returns it. The UI shows "set / not set", never the value.
+//   * The digest is only ever sent to the configured address itself — the
+//     account owner's address. There is no recipient field anywhere.
+export const PHASE38_SCHEMA = `
+-- 38.1 Email configuration, one row per workspace. The password column holds
+-- a vault envelope (v1.nonce.tag.ciphertext), never plaintext.
+CREATE TABLE IF NOT EXISTS insights_email_config (
+  workspace_id      TEXT PRIMARY KEY,
+  email_address     TEXT NOT NULL DEFAULT '',
+  app_password_enc  TEXT NOT NULL DEFAULT '',
+  enabled           BOOLEAN NOT NULL DEFAULT FALSE,
+  send_time         TEXT NOT NULL DEFAULT '07:00',
+  updated_date      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT insights_email_config_time_check
+    CHECK (send_time ~ '^[0-2][0-9]:[0-5][0-9]$')
+);
+
+-- 38.2 Digest run journal. Every attempt is recorded — a failed send is
+-- visible in Settings, never silent.
+CREATE TABLE IF NOT EXISTS insights_digest_runs (
+  id            TEXT PRIMARY KEY,
+  workspace_id  TEXT NOT NULL,
+  started_ms    BIGINT NOT NULL,
+  finished_ms   BIGINT,
+  status        TEXT NOT NULL DEFAULT 'running',
+  error         TEXT,
+  subject       TEXT,
+  preview       TEXT,
+  created_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT insights_digest_runs_status_check
+    CHECK (status IN ('running','sent','failed','skipped'))
+);
+CREATE INDEX IF NOT EXISTS insights_digest_runs_ws_idx
+  ON insights_digest_runs (workspace_id, started_ms DESC);
+`;
+
 export const PHASE_SCHEMAS = [  { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },  { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },  { id: "0003", phase: 16, name: "phase16_latency_observability", sql: PHASE16_SCHEMA },
   { id: "0004", phase: 17, name: "phase17_sources_and_agents", sql: PHASE17_SCHEMA },
   { id: "0005", phase: 18, name: "phase18_research_projects_images", sql: PHASE18_SCHEMA },
@@ -1647,7 +1692,8 @@ export const PHASE_SCHEMAS = [  { id: "0001", phase: 14, name: "phase14_dynamic_
   { id: "0023", phase: 34, name: "phase34b_goal_deletion_fk", sql: PHASE34B_SCHEMA },
   { id: "0024", phase: 35, name: "phase35_sapphire_memory_transplant", sql: PHASE35_SCHEMA },
   { id: "0025", phase: 36, name: "phase36_resident_tools", sql: PHASE36_SCHEMA },
-  { id: "0026", phase: 37, name: "phase37_openmuse_steals", sql: PHASE37_SCHEMA }
+  { id: "0026", phase: 37, name: "phase37_openmuse_steals", sql: PHASE37_SCHEMA },
+  { id: "0027", phase: 38, name: "phase38_daily_insights", sql: PHASE38_SCHEMA }
 ];
 
 // ---------------------------------------------------------------------------

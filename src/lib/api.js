@@ -78,6 +78,15 @@ export const api = {
   clearDataCategory: (category) => req(`/api/data/cleanup/${category}`, { method: "POST", body: { confirm: true } }),
   clearAllData: (phrase) => req("/api/data/cleanup/all", { method: "POST", body: { confirm: phrase } }),
 
+  // --- Daily Insights email (Settings) -------------------------------------
+  // The app password is write-only: saved encrypted, never returned.
+  insightsEmailStatus: () => req("/api/insights/email"),
+  insightsEmailSave: ({ email_address, app_password }) => req("/api/insights/email", { method: "POST", body: { email_address, app_password } }),
+  insightsEmailClearPassword: () => req("/api/insights/email/password", { method: "DELETE" }),
+  insightsEmailSchedule: ({ enabled, send_time }) => req("/api/insights/email/schedule", { method: "POST", body: { enabled, send_time } }),
+  insightsEmailTest: () => req("/api/insights/email/test", { method: "POST" }),
+  insightsEmailRun: () => req("/api/insights/email/run", { method: "POST" }),
+
   // --- Model selection (Settings): tap options, not variables ---------------
   // The live catalog (GET /v1/models on the configured provider) so new
   // models appear without another release. API keys and endpoint URLs stay

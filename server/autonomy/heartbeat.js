@@ -19,6 +19,8 @@ import { autonomyConfig } from "./config.js";
 import { refreshSettings } from "./settings.js";
 import { cleanupDue, runCleanupAudit } from "./cleanup.js";
 import { librarianDue, runLibrarian } from "../memory/librarian.js";
+import { insightsDue } from "../insights/schedule.js";
+import { runInsightsDigest } from "../insights/digest.js";
 import { createLogger } from "../shared/logging.js";
 
 export function startHeartbeat({ db, logger = createLogger("autonomy.heartbeat"), intervalMs = null } = {}) {
@@ -90,6 +92,21 @@ export function startHeartbeat({ db, logger = createLogger("autonomy.heartbeat")
       } catch (tendingListError) {
         logger.warn("memory tending workspace list failed", {
           error: String(tendingListError?.message || tendingListError).slice(0, 300)
+        });
+      }
+      // Phase 38 — the Daily Insights digest rides the heartbeat too:
+      // due once a day past Jeremy's send time (America/New_York), behind
+      // the same kill switch as everything above. A failed digest never
+      // kills the beat — it logs, the run journal records it, and the next
+      // beat tries again.
+      try {
+        const ws = await db.Workspace.ensureDefault();
+        if (await insightsDue(db, ws.id)) {
+          await runInsightsDigest({ db, workspaceId: ws.id, logger });
+        }
+      } catch (insightsError) {
+        logger.warn("insights digest failed", {
+          error: String(insightsError?.message || insightsError).slice(0, 300)
         });
       }
     } catch (error) {
