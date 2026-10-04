@@ -74,9 +74,11 @@ try {
     // POST /api/autonomy/ideas/refresh), the watch routes (GET/POST
     // /api/autonomy/watches, PATCH/DELETE /api/autonomy/watches/:id), and
     // the ledger edit/delete routes (PATCH/DELETE /api/knowledge/events/:id).
-    assert.equal(nonStatic.length, 185);
-    // +1 static route on top of the 185 API routes (was 175 = 174 + 1).
-    if (!process.env.VERCEL) assert.equal(routes.length, 186);
+    // Stored-data cleanup added 3: GET /api/data/cleanup/counts, POST
+    // /api/data/cleanup/:category, POST /api/data/cleanup/all.
+    assert.equal(nonStatic.length, 188);
+    // +1 static route on top of the 188 API routes (was 175 = 174 + 1).
+    if (!process.env.VERCEL) assert.equal(routes.length, 189);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",
@@ -149,7 +151,10 @@ try {
       "get:/api/settings/fast-model-id",
       "post:/api/settings/fast-model-id",
       "get:/api/settings/image-model-id",
-      "post:/api/settings/image-model-id"
+      "post:/api/settings/image-model-id",
+      "get:/api/data/cleanup/counts",
+      "post:/api/data/cleanup/:category",
+      "post:/api/data/cleanup/all"
     ]) assert.ok(routes.includes(route), `missing ${route}`);
   });
 
