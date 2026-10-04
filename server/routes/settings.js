@@ -12,7 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { diagnoseAiConnection } from "../ai-diagnose.js";
-import { resolveModel, providerApiConfig } from "../llm.js";
+import { resolveModel, providerApiConfig, providerModelsUrl } from "../llm.js";
 import { envFlag } from "../autonomy/settings.js";
 import {
   AUTONOMY_DELEGATION_FILES,
@@ -163,7 +163,8 @@ export function registerSettingsRoutes(app, { wrap, logger }) {
     res.json(safe);
   }));
 
-  // Live model catalog. Fetches the provider's /v1/models with the
+  // Live model catalog. Fetches the provider's /models (baseUrl already ends
+  // in /v1) with the
   // server-side key (never exposed) so new models — Claude included — show up
   // as tap options without another release. Cached for an hour; ?refresh=1
   // bypasses the cache. Offline or provider trouble degrades to a friendly
@@ -174,9 +175,9 @@ export function registerSettingsRoutes(app, { wrap, logger }) {
     if (!bypass && modelsCache.at && now - modelsCache.at < MODELS_CACHE_TTL_MS) {
       return res.json({ ok: true, cached: true, fetchedAt: modelsCache.at, models: modelsCache.models });
     }
-    let apiKey, baseUrl;
+    let apiKey;
     try {
-      ({ apiKey, baseUrl } = providerApiConfig());
+      ({ apiKey } = providerApiConfig());
     } catch {
       return res.status(503).json({
         ok: false,
@@ -185,8 +186,11 @@ export function registerSettingsRoutes(app, { wrap, logger }) {
     }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20_000);
+    // providerModelsUrl() is the single source of truth for the catalog path
+    // (baseUrl already ends in /v1 — never append it again).
+    const modelsUrl = providerModelsUrl();
     try {
-      const r = await fetch(`${baseUrl}/v1/models`, {
+      const r = await fetch(modelsUrl, {
         headers: { Authorization: `Bearer ${apiKey}` },
         signal: controller.signal,
       });

@@ -91,6 +91,15 @@ export function providerApiConfig() {
   return { apiKey, baseUrl };
 }
 
+/**
+ * The provider's model-catalog URL. baseUrl already ends in /v1 (see
+ * DEFAULT_BASE_URL), so this appends only /models — appending /v1/models
+ * doubles the version prefix and the provider 404s (seen 2026-10-04).
+ */
+export function providerModelsUrl() {
+  return `${providerApiConfig().baseUrl}/models`;
+}
+
 function apiConfig() {
   const { apiKey, baseUrl } = providerApiConfig();
   return { apiKey, url: `${baseUrl}/chat/completions` };

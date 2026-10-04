@@ -122,6 +122,21 @@ await test("no configured key → 503 with a plain-language error", async () => 
   process.env.BLUESMINDS_API_KEY = "test-provider-key";
 });
 
+await test("the catalog URL never doubles the /v1 prefix", async () => {
+  // 2026-10-04: the route built `${baseUrl}/v1/models` while baseUrl already
+  // ended in /v1 → the provider 404d. providerModelsUrl() is the single
+  // source of truth now; assert on it directly and on the outgoing request.
+  const { providerModelsUrl } = await import("../server/llm.js");
+  const url = providerModelsUrl();
+  assert.ok(!url.includes("/v1/v1/"), `no doubled prefix in ${url}`);
+  assert.ok(/\/v1\/models$/.test(url), `ends in /v1/models: ${url}`);
+  let seen = null;
+  providerHandler = async (u) => { seen = u; return providerJson([{ id: "m1" }])(); };
+  const r = await call("GET", "/api/settings/models?refresh=1");
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.ok(seen && !seen.includes("/v1/v1/"), `outgoing request has no doubled prefix: ${seen}`);
+});
+
 // --- fast / image model routes --------------------------------------------------
 await test("fast-model: set, persist (0600), apply, reset", async () => {
   const r = await call("POST", "/api/settings/fast-model-id", { model: "z-ai/glm4.7" });
