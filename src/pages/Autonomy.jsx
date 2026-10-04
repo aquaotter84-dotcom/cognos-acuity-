@@ -436,7 +436,7 @@ function AttentionPanel({ data, onJump, loading }) {
       action={<Pill tone={groups.length ? 'warn' : 'ok'}>{data?.total ?? 0} waiting</Pill>}
     >
       {groups.length === 0 ? (
-        <p className="text-xs text-muted-foreground py-1">
+        <p className="text-sm text-muted-foreground py-1">
           Nothing is waiting on you. {data?.enabled ? 'The loop is running and has no questions.' : 'Autonomy is off, so there is nothing to ask.'}
         </p>
       ) : (
@@ -593,7 +593,7 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
       <div className="px-1 pt-1">
         <p className="orbit-eyebrow">Your team</p>
         <h2 className="orbit-page-title text-xl mt-1">Meet your residents.</h2>
-        <p className="orbit-page-sub text-xs mt-1">Made by you, for the things you want to get done.</p>
+        <p className="orbit-page-sub text-sm mt-1">Made by you, for the things you want to get done.</p>
       </div>
 
       <Section
@@ -703,7 +703,7 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
                       className="block w-full text-left mt-0.5 cursor-pointer"
                       title={expandedPurpose === resident.id ? 'Tap to collapse' : 'Tap to read the full description'}
                     >
-                      <span className={`text-xs text-muted-foreground ${expandedPurpose === resident.id ? '' : 'truncate'} block`}>
+                      <span className={`text-sm text-muted-foreground ${expandedPurpose === resident.id ? '' : 'truncate'} block`}>
                         {resident.purpose}
                       </span>
                     </button>
@@ -973,7 +973,7 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
       <div className="px-1 pt-1">
         <p className="orbit-eyebrow">Goals</p>
         <h2 className="orbit-page-title text-xl mt-1">What they're working toward.</h2>
-        <p className="orbit-page-sub text-xs mt-1">Nothing runs until you say so.</p>
+        <p className="orbit-page-sub text-sm mt-1">Nothing runs until you say so.</p>
       </div>
 
       <Section
@@ -1084,7 +1084,7 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                       <p className="text-xs text-muted-foreground">Loading…</p>
                     ) : (
                       <>
-                        <p className="text-xs text-muted-foreground whitespace-pre-wrap">{d.goal.objective}</p>
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{d.goal.objective}</p>
 
                         {/* ---- THE BARRIER ---- */}
                         {d.goal.status === 'awaiting_authorization' && (
@@ -1688,7 +1688,7 @@ function ActivityTab() {
       <div className="px-1 pt-1">
         <p className="orbit-eyebrow">Activity</p>
         <h2 className="orbit-page-title text-xl mt-1">A running story.</h2>
-        <p className="orbit-page-sub text-xs mt-1">Every run, and how it got there.</p>
+        <p className="orbit-page-sub text-sm mt-1">Every run, and how it got there.</p>
       </div>
     <Section title="Activity" subtitle="One running story — goals, actions, notices" icon={Activity}>
       {error && <p className="text-xs text-destructive mb-2">{error}</p>}
@@ -1700,7 +1700,7 @@ function ActivityTab() {
         <div className="space-y-2">
           {items.map((item) => (
             <div key={item.id} className="rounded-lg border border-border/70 px-3 py-2.5">
-              <p className="text-xs leading-relaxed">{item.text}</p>
+              <p className="text-sm leading-relaxed">{item.text}</p>
               <p className="text-[10px] text-muted-foreground mt-1">
                 {item.atMs ? new Date(item.atMs).toLocaleString() : ''}
                 {item.severity === 'warning' ? ' · needs attention' : ''}
@@ -1746,7 +1746,7 @@ function Notices({ onChanged }) {
               <div key={notice.id} className="flex items-start gap-3 rounded-lg border border-border px-3 py-2.5">
                 <Inbox className="w-3.5 h-3.5 text-primary mt-0.5 shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs">{notice.text || '—'}</p>
+                  <p className="text-sm">{notice.text || '—'}</p>
                   <p className="text-[10px] text-muted-foreground mt-0.5">
                     {notice.templateId} · {notice.severity} · {fmtTime(notice.createdMs)}
                     {notice.goalId ? ` · goal ${shortId(notice.goalId)}` : ''}
@@ -2155,7 +2155,7 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
       <div className="px-1 pt-1">
         <p className="orbit-eyebrow">Overview</p>
         <h2 className="orbit-page-title text-xl mt-1">Everything your residents are up to.</h2>
-        <p className="orbit-page-sub text-xs mt-1">One greeting, the whole story.</p>
+        <p className="orbit-page-sub text-sm mt-1">One greeting, the whole story.</p>
       </div>
       <StatusBanner
         status={status}
@@ -2173,7 +2173,7 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
           switches. The chat understands "stop saying good morning" and
           friends. */}
       <Section title="Daily rhythms" subtitle="Morning greetings, dreams, check-ins — just ask" icon={MessageCircle}>
-        <p className="text-xs text-muted-foreground leading-relaxed">
+        <p className="text-sm text-muted-foreground leading-relaxed">
           These aren't switches anymore. Open any resident's chat and say what you
           want — <span className="text-foreground">"stop saying good morning"</span>,{" "}
           <span className="text-foreground">"start the dreams again"</span>,{" "}
@@ -2356,7 +2356,7 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
           {skills.map(skill => (
             <div key={skill.id} className="flex items-start gap-2 rounded-lg border border-border px-3 py-2">
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium">{skill.summary}</p>
+                <p className="text-sm font-medium">{skill.summary}</p>
                 <p className="text-[10px] text-muted-foreground/80 mt-0.5">{tierLabel(skill.tier)}</p>
               </div>
               <Pill tone={skill.enabled ? 'ok' : 'muted'}>{skill.enabled ? 'available' : 'not available here'}</Pill>

@@ -55,7 +55,7 @@ export default function WelcomeScreen({ onSuggestion }) {
       <p className="orbit-eyebrow mb-2">Your AI, on your phone</p>
       <h1 className="orbit-page-title text-3xl mb-2">Welcome to COGNOS</h1>
       <p className="orbit-page-sub text-sm mb-8 text-center max-w-md">
-        An AI that thinks out loud, remembers what matters, and keeps everything on this phone.
+        An AI that shows its work, remembers what matters, and keeps your data in your own hands. To answer, your words travel to the model and search providers — they don’t stay on the phone.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
         {suggestions.map(({ icon: Icon, title, text }) => (

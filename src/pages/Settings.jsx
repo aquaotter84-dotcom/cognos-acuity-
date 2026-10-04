@@ -166,7 +166,7 @@ function ModelSection({ onChanged }) {
   return (
     <section className="space-y-2">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI models</h3>
-      <div className="rounded-xl border border-border bg-card p-3 space-y-5 text-xs">
+      <div className="rounded-xl border border-border bg-card p-3 space-y-5 text-sm">
         <ModelPicker
           title="Answering model"
           blurb="The main brain — the one that talks to you."
@@ -471,7 +471,7 @@ function DatabaseSection({ onChanged }) {
   return (
     <section className="space-y-2">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Database</h3>
-      <div className="rounded-xl border border-border bg-card p-3 space-y-3 text-xs">
+      <div className="rounded-xl border border-border bg-card p-3 space-y-3 text-sm">
         {status === null ? (
           <p className="text-muted-foreground">Loading…</p>
         ) : status.managed === 'environment' ? (
@@ -592,7 +592,7 @@ function PersonasSection() {
   return (
     <section className="space-y-2">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Personas</h3>
-      <div className="rounded-xl border border-border bg-card p-3 space-y-3 text-xs">
+      <div className="rounded-xl border border-border bg-card p-3 space-y-3 text-sm">
         <p className="text-muted-foreground leading-relaxed">
           A persona is the voice COGNOS talks in — prompt, tone, spoken voice, and optional model or
           temperature. It changes how it speaks, never what it may do: identity, the
@@ -870,7 +870,7 @@ export default function Settings() {
 
           <section className="space-y-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Appearance</h3>
-            <div className="rounded-xl border border-border bg-card p-3 text-xs">
+            <div className="rounded-xl border border-border bg-card p-3 text-sm">
               <div className="grid grid-cols-2 gap-2">
                 {[
                   { id: 'dark', label: 'Dark', icon: Moon },
@@ -892,7 +892,7 @@ export default function Settings() {
           </section>
 
           <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Voice</h3>            <div className="rounded-xl border border-border bg-card p-3 space-y-4 text-xs">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Voice</h3>            <div className="rounded-xl border border-border bg-card p-3 space-y-4 text-sm">
               {!voice.supported ? (
                 <>
                   <p className="text-muted-foreground leading-relaxed">
@@ -1077,7 +1077,7 @@ export default function Settings() {
 
           <section className="space-y-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Governance</h3>
-            <div className="rounded-xl border border-border bg-card p-3 space-y-4 text-xs">
+            <div className="rounded-xl border border-border bg-card p-3 space-y-4 text-sm">
               <div className="flex items-start gap-2">
                 <Scale className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
                 <p className="text-muted-foreground leading-relaxed">
@@ -1136,7 +1136,7 @@ export default function Settings() {
 
           <section className="space-y-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Runtime</h3>
-            <div className="rounded-xl border border-border bg-card p-3 text-xs">
+            <div className="rounded-xl border border-border bg-card p-3 text-sm">
               {health ? (
                 <>
                   <Row label="COGNOS self-model" value={`v${health.identityVersion || 'unknown'}`} />
