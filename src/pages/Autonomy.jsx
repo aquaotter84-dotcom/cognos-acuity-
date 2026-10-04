@@ -39,6 +39,7 @@ import { api } from '@/lib/api';
 import { noteLocator } from '@/components/chat/GoalCard';
 import { useCognos } from '@/lib/cognosContext';
 import { Pill, Empty, ErrorNote } from '@/components/system/SystemUi';
+import { Btn, IconBtn, SectionCard, TextInput, TextArea, Select } from '@/components/ui/CognosUi';
 import DesignerDrawer from '@/components/autonomy/DesignerDrawer';
 import ResidentChatDrawer from '@/components/autonomy/ResidentChatDrawer';
 import AuthorizeConsent from '@/components/autonomy/AuthorizeConsent';
@@ -124,7 +125,7 @@ const shortId = (v) => (v ? String(v).slice(0, 12) : '—');
 /** A spend line against its ceiling, so "is it nearly out?" is a glance. */
 function Meter({ label, used, limit, suffix = '' }) {
   const pct = limit > 0 ? Math.min(100, (Number(used) / Number(limit)) * 100) : 0;
-  const tone = pct >= 100 ? 'bg-destructive' : pct >= 75 ? 'bg-yellow-500' : 'bg-primary';
+  const tone = pct >= 100 ? 'bg-destructive' : pct >= 75 ? 'bg-warn' : 'bg-primary';
   return (
     <div>
       <div className="flex items-baseline justify-between text-[10px] text-muted-foreground">
@@ -140,19 +141,13 @@ function Meter({ label, used, limit, suffix = '' }) {
   );
 }
 
+/** v52 — the local Section delegates to the kit's SectionCard: one card, one
+ *  header, everywhere. */
 function Section({ title, subtitle, icon: Icon, children, action }) {
   return (
-    <section className="rounded-xl border border-border bg-card overflow-hidden">
-      <header className="flex items-center gap-2 px-4 py-2.5 border-b border-border/60">
-        {Icon && <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
-        <div className="flex-1 min-w-0">
-          <h3 className="text-xs font-semibold">{title}</h3>
-          {subtitle && <p className="text-[10px] text-muted-foreground/70 leading-snug">{subtitle}</p>}
-        </div>
-        {action}
-      </header>
-      <div className="p-4">{children}</div>
-    </section>
+    <SectionCard title={title} subtitle={subtitle} icon={Icon} action={action}>
+      {children}
+    </SectionCard>
   );
 }
 
@@ -193,7 +188,7 @@ function CopyButton({ text, label = 'Copy' }) {
       className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted/50"
       title="Copy to clipboard"
     >
-      {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+      {copied ? <Check className="w-3 h-3 text-ok" /> : <Copy className="w-3 h-3" />}
       {copied ? 'Copied' : label}
     </button>
   );
@@ -302,13 +297,12 @@ function SwitchHandover({ canToggle, pinned }) {
             <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">{sw.blurb}</p>
             <div className="mt-1.5">
               {!sw.delegated && !sw.fileDelegated && (
-                <button
+                <Btn variant="primary" size="sm"
                   onClick={() => handOver(sw.name)}
                   disabled={busy === sw.name}
-                  className="rounded-lg bg-primary text-primary-foreground px-2.5 py-1.5 text-[11px] disabled:opacity-40"
                 >
                   {busy === sw.name ? 'Handing over…' : sw.cta}
-                </button>
+                </Btn>
               )}
               {sw.fileDelegated && !sw.delegated && (
                 <div className="flex items-center gap-2 flex-wrap">
@@ -475,7 +469,7 @@ function AttentionPanel({ data, onJump, loading }) {
                 className="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-muted/40 transition-colors"
                 title={`Open the ${group.tab} tab`}
               >
-                <span className="mt-0.5 shrink-0 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[10px] font-semibold px-1.5 py-0.5 tabular-nums">
+                <span className="mt-0.5 shrink-0 rounded-full bg-warn/15 text-warn text-[10px] font-semibold px-1.5 py-0.5 tabular-nums">
                   {group.count}
                 </span>
                 <span className="min-w-0 flex-1">
@@ -639,43 +633,38 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
               <Sparkles className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Design with COGNOS</span>
             </button>
-            <button
+            <Btn variant="primary" size="sm"
               onClick={() => setCreating(v => !v)}
               disabled={frozen}
               title={frozen ? 'Autonomy is off — turn it on, or design a resident first' : 'Fill in the form yourself'}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium disabled:opacity-40"
             >
               {creating ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
               {creating ? 'Cancel' : 'New resident'}
-            </button>
+            </Btn>
           </div>
         }
       >
         {creating && (
           <form onSubmit={handleCreate} className="mb-4 rounded-lg border border-border bg-background p-3 space-y-2">
             <div className="grid sm:grid-cols-2 gap-2">
-              <input
+              <TextInput
                 autoFocus value={form.name}
                 onChange={e => setForm(f => ({ ...f, name: e.target.value, slug: f.slug || slugify(e.target.value) }))}
                 placeholder="Name — e.g. Recorder"
-                className="bg-background border border-border rounded-lg px-2.5 py-2 text-xs outline-none focus:border-primary/60"
               />
-              <input
+              <TextInput className="font-mono"
                 value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value }))}
                 placeholder="slug"
-                className="bg-background border border-border rounded-lg px-2.5 py-2 text-xs font-mono outline-none focus:border-primary/60"
               />
             </div>
-            <input
+            <TextInput
               value={form.purpose} onChange={e => setForm(f => ({ ...f, purpose: e.target.value }))}
               placeholder="Purpose — one line, shown wherever the resident appears"
-              className="w-full bg-background border border-border rounded-lg px-2.5 py-2 text-xs outline-none focus:border-primary/60"
             />
-            <textarea
+            <TextArea
               value={form.brief} onChange={e => setForm(f => ({ ...f, brief: e.target.value }))}
               placeholder="Brief — operating instructions. A brief never grants a skill; only the allowlist below does."
               rows={3}
-              className="w-full bg-background border border-border rounded-lg px-2.5 py-2 text-xs outline-none focus:border-primary/60 resize-none"
             />
             <div>
               <p className="text-[10px] text-muted-foreground mb-1.5">
@@ -699,10 +688,9 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
                 })}
               </div>
             </div>
-            <button type="submit" disabled={busy || !form.name.trim()}
-              className="rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs disabled:opacity-40">
+            <Btn variant="primary" size="sm" type="submit" disabled={busy || !form.name.trim()}>
               Create resident
-            </button>
+            </Btn>
           </form>
         )}
 
@@ -802,24 +790,22 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
                     </div>
                   )}
                   <p className="text-[10px] text-muted-foreground flex items-start gap-1.5">
-                    <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-amber-500" />
+                    <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-warn" />
                     <span>
                       Saving creates <strong>version {resident.brief_version + 1}</strong>. The previous brief is
                       kept, so you can always see what this resident was told when it did the thing you are
                       looking at (pin.resident_brief_subordinate).
                     </span>
                   </p>
-                  <textarea
+                  <TextArea className="font-mono"
                     autoFocus value={editing.brief}
                     onChange={e => setEditing({ ...editing, brief: e.target.value })}
                     rows={4}
-                    className="w-full bg-background border border-border rounded-lg px-2.5 py-2 text-xs outline-none focus:border-primary/60 resize-none font-mono"
                   />
                   <div className="flex items-center gap-2">
-                    <button onClick={() => handleBrief(resident)} disabled={busy}
-                      className="rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs disabled:opacity-40">
+                    <Btn variant="primary" size="sm" onClick={() => handleBrief(resident)} disabled={busy}>
                       Save as version {resident.brief_version + 1}
-                    </button>
+                    </Btn>
                     <button onClick={() => handleDelete(resident)} disabled={busy}
                       className="rounded-lg border border-destructive/40 text-destructive px-3 py-1.5 text-xs disabled:opacity-40 hover:bg-destructive/10">
                       <Trash2 className="w-3 h-3 inline mr-1" />Delete resident
@@ -881,12 +867,11 @@ function DestinationEditor({ destinations, input, onInput, onAdd, onRemove, hint
         </div>
       ))}
       <div className="flex items-center gap-1.5">
-        <input
+        <TextInput className="flex-1 font-mono"
           value={input}
           onChange={e => onInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
           placeholder="https://hooks.example.com/cognos"
-          className="flex-1 bg-background border border-border rounded-lg px-2.5 py-1.5 text-xs font-mono outline-none focus:border-primary/60"
         />
         <button type="button" onClick={add} disabled={!input.trim()}
           className="shrink-0 rounded-lg border border-border px-2 py-1.5 text-[11px] hover:bg-muted/50 disabled:opacity-40">
@@ -1009,48 +994,43 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
         icon={ScrollText}
         action={
           <div className="flex items-center gap-2">
-            <select
+            <Select
               value={filter} onChange={e => setFilter(e.target.value)}
-              className="bg-background border border-border rounded-lg px-2 py-1.5 text-xs outline-none"
             >
               <option value="">Any state</option>
               {['awaiting_authorization', 'active', 'parked', 'completed', 'cancelled'].map(s => (
                 <option key={s} value={s}>{goalStatusLabel(s)}</option>
               ))}
-            </select>
-            <button
+            </Select>
+            <Btn variant="primary" size="sm"
               onClick={() => setCreating(v => !v)}
               disabled={frozen || residents.length === 0}
               title={frozen ? 'Autonomy is frozen' : residents.length === 0 ? 'Create a resident first' : undefined}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium disabled:opacity-40"
             >
               {creating ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
               {creating ? 'Cancel' : 'New goal'}
-            </button>
+            </Btn>
           </div>
         }
       >
         {creating && (
           <form onSubmit={handleCreate} className="mb-4 rounded-lg border border-border bg-background p-3 space-y-2">
-            <input
+            <TextInput
               autoFocus value={form.title}
               onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
               placeholder="Title — e.g. Watch the county record"
-              className="w-full bg-background border border-border rounded-lg px-2.5 py-2 text-xs outline-none focus:border-primary/60"
             />
-            <textarea
+            <TextArea
               value={form.objective} onChange={e => setForm(f => ({ ...f, objective: e.target.value }))}
               placeholder="Objective — what would count as done?"
               rows={3}
-              className="w-full bg-background border border-border rounded-lg px-2.5 py-2 text-xs outline-none focus:border-primary/60 resize-none"
             />
-            <select
+            <Select
               value={form.agent_id} onChange={e => setForm(f => ({ ...f, agent_id: e.target.value }))}
-              className="w-full bg-background border border-border rounded-lg px-2.5 py-2 text-xs outline-none"
             >
               <option value="">No resident (unowned)</option>
               {residents.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-            </select>
+            </Select>
             <DestinationEditor
               destinations={destinations}
               input={destInput}
@@ -1065,10 +1045,9 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
               The goal is created <strong>waiting for you</strong> (<span className="font-mono">awaiting_authorization</span>).
               Nothing runs until you authorize it.
             </p>
-            <button type="submit" disabled={busy || !form.title.trim() || !form.objective.trim()}
-              className="rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs disabled:opacity-40">
+            <Btn variant="primary" size="sm" type="submit" disabled={busy || !form.title.trim() || !form.objective.trim()}>
               Create goal
-            </button>
+            </Btn>
           </form>
         )}
 
@@ -1143,16 +1122,14 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                             </div>
                             {declining === goal.id ? (
                               <div className="flex items-center gap-2 mt-2.5">
-                                <input
+                                <TextInput className="flex-1"
                                   autoFocus value={reason}
                                   onChange={e => setReason(e.target.value)}
                                   placeholder="Why not? (optional, recorded)"
-                                  className="flex-1 bg-background border border-border rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-primary/60"
                                 />
-                                <button onClick={() => decide(goal.id, 'decline', { reason: reason || undefined })} disabled={busy}
-                                  className="rounded-lg bg-destructive text-destructive-foreground px-3 py-1.5 text-xs disabled:opacity-40">
+                                <Btn variant="danger" size="sm" onClick={() => decide(goal.id, 'decline', { reason: reason || undefined })} disabled={busy}>
                                   Decline
-                                </button>
+                                </Btn>
                                 <button onClick={() => { setDeclining(null); setReason(''); }}
                                   className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground">
                                   <X className="w-3.5 h-3.5" />
@@ -1160,10 +1137,9 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                               </div>
                             ) : (
                               <div className="flex items-center gap-2 mt-2.5">
-                                <button onClick={() => decide(goal.id, 'authorize')} disabled={busy}
-                                  className="flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs disabled:opacity-40">
+                                <Btn variant="primary" size="sm" onClick={() => decide(goal.id, 'authorize')} disabled={busy}>
                                   <ThumbsUp className="w-3.5 h-3.5" /> Authorize
-                                </button>
+                                </Btn>
                                 <button onClick={() => setDeclining(goal.id)} disabled={busy}
                                   className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-muted/50 disabled:opacity-40">
                                   <ThumbsDown className="w-3.5 h-3.5" /> Decline
@@ -1200,22 +1176,20 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                         <div className="flex items-center gap-2">
                           {editingGoal ? (
                             <div className="flex-1 space-y-2 rounded-lg border border-border bg-background/60 p-2.5">
-                              <input
+                              <TextInput
                                 autoFocus
                                 value={editTitle}
                                 onChange={e => setEditTitle(e.target.value)}
                                 placeholder="Goal title"
-                                className="w-full bg-background border border-border rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-primary/60"
                               />
-                              <textarea
+                              <TextArea
                                 value={editObjective}
                                 onChange={e => setEditObjective(e.target.value)}
                                 placeholder="Objective — what would count as done?"
                                 rows={3}
-                                className="w-full bg-background border border-border rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-primary/60 resize-none"
                               />
                               <div className="flex items-center gap-2">
-                                <button
+                                <Btn variant="primary" size="sm"
                                   onClick={async () => {
                                     if (busy || !editTitle.trim() || !editObjective.trim()) return;
                                     setBusy(true); setError('');
@@ -1234,10 +1208,9 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                                     }
                                   }}
                                   disabled={busy || !editTitle.trim() || !editObjective.trim()}
-                                  className="flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-2.5 py-1.5 text-xs disabled:opacity-40"
                                 >
                                   <Check className="w-3.5 h-3.5" /> Save
-                                </button>
+                                </Btn>
                                 <button
                                   onClick={() => setEditingGoal(false)}
                                   disabled={busy}
@@ -1293,9 +1266,9 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                         </div>
 
                         {/* ---- findings: evidence, never an answer ---- */}
-                        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                        <div className="rounded-lg border border-warn/30 bg-warn/5 p-3">
                           <p className="text-xs font-semibold flex items-center gap-1.5">
-                            <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
+                            <ShieldAlert className="w-3.5 h-3.5 text-warn" />
                             Untrusted findings — {findings.length}
                           </p>
                           <p className="text-[10px] text-muted-foreground mt-1 leading-relaxed">
@@ -1306,19 +1279,18 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                             <ul className="mt-2 space-y-1">
                               {findings.slice(0, 5).map(note => (
                                 <li key={note.id} className="flex items-start gap-2 text-[11px]">
-                                  <span className="font-mono text-[9px] text-muted-foreground mt-0.5 shrink-0">[{note.ordinal}]</span>
+                                  <span className="font-mono text-[10px] text-muted-foreground mt-0.5 shrink-0">[{note.ordinal}]</span>
                                   <span className="text-foreground/80">{note.body}</span>
                                 </li>
                               ))}
                             </ul>
                           )}
-                          <button
+                          <Btn variant="primary" size="sm"
                             onClick={() => d.goal.conversation_id && navigate(`/?c=${d.goal.conversation_id}&goal=${d.goal.id}`)}
                             disabled={!d.goal.conversation_id}
-                            className="mt-2.5 flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs disabled:opacity-40"
                           >
                             Ask COGNOS about this <ChevronRight className="w-3.5 h-3.5" />
-                          </button>
+                          </Btn>
                           <p className="text-[10px] text-muted-foreground/70 mt-1">
                             Opens this resident's conversation. You ask; the council answers through the
                             Governor. A goal can never propose a draft answer.
@@ -1476,7 +1448,7 @@ function PromotionRow({ promotion: p, busy, onDecide }) {
         </div>
       )}
       {p.status === 'applied' && (p.applied_memory_id || p.applied_belief_id) && (
-        <p className="text-[10px] text-green-600 dark:text-green-400 mt-1 font-mono">
+        <p className="text-[10px] text-ok mt-1 font-mono">
           landed as inferred → {p.applied_memory_id || p.applied_belief_id}
         </p>
       )}
@@ -1511,9 +1483,8 @@ function Promotions({ frozen, onChanged }) {
       subtitle="The only route from a working note to memory — every application lands inferred with origin tags"
       icon={Sprout}
       action={
-        <select
+        <Select
           value={filter} onChange={e => setFilter(e.target.value)}
-          className="bg-background border border-border rounded-lg px-2 py-1.5 text-xs outline-none"
         >
           <option value="">Any state</option>
           {['requested', 'approved', 'applied', 'refused'].map(s => (
@@ -1521,7 +1492,7 @@ function Promotions({ frozen, onChanged }) {
               {s === 'requested' ? 'Waiting for you' : s === 'applied' ? 'Added to knowledge' : s[0].toUpperCase() + s.slice(1)}
             </option>
           ))}
-        </select>
+        </Select>
       }
     >
       <ErrorNote error={error} />
@@ -1653,16 +1624,15 @@ function Cleanup({ frozen, onChanged }) {
       icon={Sparkles}
       action={
         <div className="flex items-center gap-2">
-          <select
+          <Select
             value={filter} onChange={e => setFilter(e.target.value)}
-            className="bg-background border border-border rounded-lg px-2 py-1.5 text-xs outline-none"
           >
             {['requested', 'applied', 'refused', ''].map(s => (
               <option key={s} value={s}>
                 {s === 'requested' ? 'Waiting for you' : s === '' ? 'Any state' : s[0].toUpperCase() + s.slice(1)}
               </option>
             ))}
-          </select>
+          </Select>
           <button onClick={runNow} disabled={running || frozen}
             className="rounded-lg border border-border px-2 py-1.5 text-xs hover:bg-muted/50 disabled:opacity-40">
             {running ? 'Tidying…' : 'Run a pass now'}
@@ -1822,7 +1792,7 @@ function ReceiptLine({ receipt }) {
   if (r.reversal) parts.push(r.reversal.unsendable ? 'reversed · cannot be un-sent' : 'reversed');
 
   return (
-    <p className={`text-[10px] mt-0.5 font-mono ${r.accepted === false || r.reversal?.unsendable ? 'text-yellow-500' : 'text-muted-foreground'}`}>
+    <p className={`text-[10px] mt-0.5 font-mono ${r.accepted === false || r.reversal?.unsendable ? 'text-warn' : 'text-muted-foreground'}`}>
       {parts.join(' · ')}
     </p>
   );
@@ -1948,7 +1918,7 @@ function Outbox({ status, onChanged }) {
               <p className="text-lg font-semibold tabular-nums">
                 {value}
               </p>
-              <p className="text-[9px] text-muted-foreground/70">{hint}</p>
+              <p className="text-[10px] text-muted-foreground/70">{hint}</p>
             </div>
           ))}
         </div>
@@ -1989,9 +1959,9 @@ function Outbox({ status, onChanged }) {
             {destination.configured ? (
               <span className="font-mono text-foreground/80">{destination.hostname}</span>
             ) : destination.misconfigured ? (
-              <span className="text-yellow-500">set, but the adapter would refuse it — {destination.reason}</span>
+              <span className="text-warn">set, but the adapter would refuse it — {destination.reason}</span>
             ) : (
-              <span className="text-yellow-500">none, so no live delivery has anywhere it is allowed to go</span>
+              <span className="text-warn">none, so no live delivery has anywhere it is allowed to go</span>
             )}
             <span className="text-muted-foreground/70">
               {' '}— a live write needs this AND the destination granted in the goal's own scope.
@@ -2012,8 +1982,8 @@ function Outbox({ status, onChanged }) {
               {live.conditions.map(c => (
                 <li key={c.id} className="text-[10px] flex items-start gap-1.5">
                   {c.met
-                    ? <Check className="w-3 h-3 mt-0.5 shrink-0 text-green-500" />
-                    : <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-yellow-500" />}
+                    ? <Check className="w-3 h-3 mt-0.5 shrink-0 text-ok" />
+                    : <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-warn" />}
                   <span className={c.met ? 'text-muted-foreground' : 'text-foreground/80'}>
                     {c.label}
                     {!c.met && c.sentence && (
@@ -2033,14 +2003,13 @@ function Outbox({ status, onChanged }) {
                 <Undo2 className={`w-3.5 h-3.5 ${flipping ? 'animate-pulse' : ''}`} /> Back to shadow
               </button>
             ) : (
-              <button onClick={() => flipMode('live')}
+              <Btn variant="primary" size="sm" onClick={() => flipMode('live')}
                 disabled={flipping || live?.ready !== true || status?.canSetOutboxMode === false}
-                className="flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-2.5 py-1.5 text-[11px] disabled:opacity-40"
                 title={live?.ready
                   ? 'Every condition is met. A release verdict will now be performed.'
                   : 'Not yet — every unmet condition is named above'}>
                 <Zap className={`w-3.5 h-3.5 ${flipping ? 'animate-pulse' : ''}`} /> Go live
-              </button>
+              </Btn>
             )}
             <p className="text-[10px] text-muted-foreground max-w-md leading-relaxed">
               {status?.canSetOutboxMode === false
@@ -2095,29 +2064,27 @@ function Outbox({ status, onChanged }) {
                       </div>
                       {effect.status === 'staged' && (
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <button onClick={() => decide(effect.id, 'approve')} disabled={busy}
+                          <Btn variant="primary" size="sm" onClick={() => decide(effect.id, 'approve')} disabled={busy}
                             title={
                               effect.tier === 'T5'
                                 ? 'Approve this exact irreversible effect. It releases one at a time, never by class, and only after the Action Governor also rules it safe.'
                                 : 'Ask the Action Governor to release this effect'
-                            }
-                            className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] disabled:opacity-40 bg-primary text-primary-foreground">
+                            }>
                             <ThumbsUp className="w-3 h-3" /> Approve
-                          </button>
-                          <button onClick={() => decide(effect.id, 'refuse')} disabled={busy}
-                            className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] hover:bg-muted/50 disabled:opacity-40">
+                          </Btn>
+                          <Btn variant="secondary" size="sm" onClick={() => decide(effect.id, 'refuse')} disabled={busy}>
                             <ThumbsDown className="w-3 h-3" /> Refuse
-                          </button>
+                          </Btn>
                         </div>
                       )}
                       {['released', 'refused', 'would_release', 'failed'].includes(effect.status) && (
-                        <button onClick={() => decide(effect.id, 'revert')} disabled={busy}
+                        <Btn variant="secondary" size="sm" onClick={() => decide(effect.id, 'revert')} disabled={busy}
+                          className="shrink-0"
                           title={effect.status === 'released' && effect.effect_type === 'external_write'
                             ? 'Record the reversal. A delivered webhook cannot be un-sent — the row will say so.'
-                            : 'Record the reversal as a new transition; the original row stays'}
-                          className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] hover:bg-muted/50 shrink-0 disabled:opacity-40">
+                            : 'Record the reversal as a new transition; the original row stays'}>
                           <Undo2 className="w-3 h-3" /> Revert
-                        </button>
+                        </Btn>
                       )}
                     </div>
 
@@ -2145,7 +2112,7 @@ function Outbox({ status, onChanged }) {
                         <ul className="mt-1 space-y-0.5">
                           {verdict.passed.map((p, i) => (
                             <li key={i} className="text-[10px] text-muted-foreground flex items-start gap-1">
-                              <Check className="w-3 h-3 mt-0.5 text-green-500 shrink-0" /> {p}
+                              <Check className="w-3 h-3 mt-0.5 text-ok shrink-0" /> {p}
                             </li>
                           ))}
                         </ul>
@@ -2283,8 +2250,8 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           ['Residents', counts.residents ?? residents.length, Bot, 'text-accent'],
-          ['Running goals', counts.activeGoals ?? 0, Activity, 'text-green-500'],
-          ['Paused goals', counts.parkedGoals ?? 0, Pause, 'text-yellow-500'],
+          ['Running goals', counts.activeGoals ?? 0, Activity, 'text-ok'],
+          ['Paused goals', counts.parkedGoals ?? 0, Pause, 'text-warn'],
           ['Actions waiting', counts.stagedEffects ?? 0, ShieldCheck, 'text-primary'],
         ].map(([label, value, Icon, tone]) => (
           <div key={label} className="rounded-xl border border-border bg-card px-3 py-3">
@@ -2356,11 +2323,11 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
               </p>
             </div>
           </div>
-          <button onClick={onTick} disabled={ticking || frozen}
-            className="mt-3 flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs disabled:opacity-40"
+          <Btn variant="primary" size="sm" onClick={onTick} disabled={ticking || frozen}
+            className="mt-3"
             title={frozen ? 'Autonomy is off' : 'Run one bounded slice now'}>
             <RefreshCw className={`w-3.5 h-3.5 ${ticking ? 'animate-spin' : ''}`} /> Run a slice now
-          </button>
+          </Btn>
           <details className="mt-2.5 text-[10px] text-muted-foreground">
             <summary className="cursor-pointer select-none">Technical details</summary>
             <div className="grid grid-cols-2 gap-x-2 gap-y-1 mt-1.5 font-mono">
@@ -2586,29 +2553,29 @@ export default function Autonomy() {
         <span className="text-[10px] text-muted-foreground hidden sm:inline">
           your team, their work, and everything waiting on you
         </span>
-        <button
+        <IconBtn
           onClick={() => setHelpOpen(true)}
-          className="ml-auto p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
+          className="ml-auto"
           title="What do these words mean?"
           aria-label="Open the glossary"
         >
           <HelpCircle className="w-3.5 h-3.5" />
-        </button>
-        <button
+        </IconBtn>
+        <Btn
+          variant="primary" size="sm"
           onClick={() => setDesignerOpen(true)}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium"
           title="Describe a resident in plain words and COGNOS drafts it"
         >
           <Sparkles className="w-3.5 h-3.5" />
           <span className="hidden sm:inline">Design with COGNOS</span>
-        </button>
-        <button
+        </Btn>
+        <IconBtn
           onClick={() => { refreshAll(); refreshAttention(); }}
-          className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
           title="Refresh"
+          aria-label="Refresh"
         >
           <RefreshCw className="w-3.5 h-3.5" />
-        </button>
+        </IconBtn>
       </header>
 
       <div className="px-3 md:px-4 py-2 border-b border-border overflow-x-auto shrink-0">

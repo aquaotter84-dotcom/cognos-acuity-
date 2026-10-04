@@ -1,4 +1,6 @@
 import { AlertTriangle, Gauge, GitBranch, History, Link2, Scale, Share2 } from 'lucide-react';
+// v52 — Pill is the kit Badge: one badge, one set of tones, everywhere.
+export { Badge as Pill } from '../ui/CognosUi';
 
 export const SYSTEM_TABS = [
   { id: 'ledger', label: 'Ledger', icon: History },
@@ -27,17 +29,6 @@ export function Card({ title, subtitle, children, action }) {
       <div className="p-3">{children}</div>
     </section>
   );
-}
-
-export function Pill({ tone = 'muted', children }) {
-  const tones = {
-    muted: 'bg-muted text-muted-foreground',
-    ok: 'bg-green-500/15 text-green-400',
-    warn: 'bg-yellow-500/15 text-yellow-400',
-    bad: 'bg-destructive/15 text-destructive',
-    info: 'bg-primary/15 text-primary',
-  };
-  return <span className={`shrink-0 px-1.5 py-0.5 rounded font-medium uppercase text-[10px] whitespace-nowrap ${tones[tone] || tones.muted}`}>{children}</span>;
 }
 
 export function Json({ value, className = '' }) {

@@ -12,6 +12,9 @@ import { useVoice } from '@/lib/voiceContext';
 import { diagnoseTtsNative } from '@/lib/ttsNative';
 import { getTheme, applyTheme } from '@/lib/theme';
 import AppUpdatesSection from '@/components/settings/AppUpdatesSection';
+import {
+  Btn, IconBtn, SectionCard, TextInput, TextArea, Select, Field, Disclosure,
+} from '@/components/ui/CognosUi';
 
 /** One governance switch row: label, hint, a toggle, and the honest reason it
  *  is disabled (a pin, or no delegation) rather than a switch that lies. */
@@ -21,7 +24,7 @@ function GovernanceToggle({ label, hint, on, canToggle, refusal, busy, onFlip })
       <div className="min-w-0">
         <p className="font-medium text-foreground/90 flex items-center gap-1.5">
           {label}
-          {on ? <span className="text-[10px] text-green-500">on</span> : <span className="text-[10px] text-destructive">off</span>}
+          {on ? <span className="text-[10px] text-ok">on</span> : <span className="text-[10px] text-destructive">off</span>}
         </p>
         <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">{hint}</p>
         {!canToggle && refusal && (
@@ -164,36 +167,33 @@ function CouncilHandover() {
  *  keyed in: they are never shown, edited, or offered here. */
 function ModelSection({ onChanged }) {
   return (
-    <section className="space-y-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI models</h3>
-      <div className="rounded-xl border border-border bg-card p-3 space-y-5 text-sm">
-        <ModelPicker
-          title="Answering model"
-          blurb="The main brain — the one that talks to you."
-          statusFn={api.modelIdStatus}
-          setFn={api.setModelId}
-          clearFn={api.clearModelId}
-          onChanged={onChanged}
-        />
-        <ModelPicker
-          title="Quick-tasks model"
-          blurb="The smaller brain behind background jobs — ranking memories, the council's quick passes."
-          statusFn={api.fastModelStatus}
-          setFn={api.setFastModel}
-          clearFn={api.clearFastModel}
-          onChanged={onChanged}
-        />
-        <ModelPicker
-          title="Image-reading model"
-          blurb="Reads the images you attach."
-          statusFn={api.imageModelStatus}
-          setFn={api.setImageModel}
-          clearFn={api.clearImageModel}
-          onChanged={onChanged}
-        />
-        <ConnectionTest />
-      </div>
-    </section>
+    <SectionCard title="AI models" bodyClassName="space-y-5 text-sm">
+      <ModelPicker
+        title="Answering model"
+        blurb="The main brain — the one that talks to you."
+        statusFn={api.modelIdStatus}
+        setFn={api.setModelId}
+        clearFn={api.clearModelId}
+        onChanged={onChanged}
+      />
+      <ModelPicker
+        title="Quick-tasks model"
+        blurb="The smaller brain behind background jobs — ranking memories, the council's quick passes."
+        statusFn={api.fastModelStatus}
+        setFn={api.setFastModel}
+        clearFn={api.clearFastModel}
+        onChanged={onChanged}
+      />
+      <ModelPicker
+        title="Image-reading model"
+        blurb="Reads the images you attach."
+        statusFn={api.imageModelStatus}
+        setFn={api.setImageModel}
+        clearFn={api.clearImageModel}
+        onChanged={onChanged}
+      />
+      <ConnectionTest />
+    </SectionCard>
   );
 }
 
@@ -292,29 +292,17 @@ function ModelPicker({ title, blurb, statusFn, setFn, clearFn, onChanged }) {
         Current: <span className="break-all text-foreground/80">{current}{status.isDefault ? ' (default)' : ''}</span>
       </p>
       <div className="flex flex-wrap gap-2">
-        <button
-          onClick={() => setOpen(v => !v)}
-          disabled={busy}
-          className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
-        >
+        <Btn variant="primary" size="sm" onClick={() => setOpen(v => !v)} disabled={busy}>
           {open ? 'Close list' : 'Choose a model'}
-        </button>
+        </Btn>
         {!status.isDefault && (
-          <button
-            onClick={reset}
-            disabled={busy}
-            className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground disabled:opacity-50"
-          >
+          <Btn variant="secondary" size="sm" onClick={reset} disabled={busy}>
             Reset to default
-          </button>
+          </Btn>
         )}
-        <button
-          onClick={() => setManual(v => !v)}
-          disabled={busy}
-          className="text-xs px-3 py-2 rounded-lg text-muted-foreground hover:text-foreground disabled:opacity-50"
-        >
+        <Btn variant="ghost" size="sm" onClick={() => setManual(v => !v)} disabled={busy}>
           {manual ? 'Hide manual entry' : 'Type one in'}
-        </button>
+        </Btn>
       </div>
 
       {open && (
@@ -357,25 +345,21 @@ function ModelPicker({ title, blurb, statusFn, setFn, clearFn, onChanged }) {
 
       {manual && (
         <div className="flex gap-2">
-          <input
+          <TextInput
             value={manualInput}
             onChange={e => setManualInput(e.target.value)}
             placeholder="e.g. openai/gpt-oss-20b"
             autoComplete="off" autoCapitalize="off" spellCheck="false"
-            className="flex-1 bg-muted/50 border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-primary/50"
+            className="flex-1 font-mono"
           />
-          <button
-            onClick={saveManual}
-            disabled={busy || !manualInput.trim()}
-            className="text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
-          >
+          <Btn variant="primary" size="sm" onClick={saveManual} disabled={busy || !manualInput.trim()}>
             {busy ? 'Saving…' : 'Use it'}
-          </button>
+          </Btn>
         </div>
       )}
 
       {message && (
-        <p className={message.ok ? 'text-green-500' : 'text-destructive'}>{message.text}</p>
+        <p className={message.ok ? 'text-ok' : 'text-destructive'}>{message.text}</p>
       )}
     </div>
   );
@@ -400,22 +384,22 @@ function ConnectionTest() {
     <div className="space-y-2 pt-1 border-t border-border/60">
       <div className="flex items-center justify-between pt-2">
         <p className="font-medium text-foreground/90">Connection test</p>
-        <button
+        <Btn
+          variant="secondary" size="sm"
           onClick={run}
           disabled={busy}
-          className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground disabled:opacity-50"
           title="Run a staged connection test against your AI provider: key sanity, DNS, TCP, TLS, HTTPS."
         >
           {busy ? 'Testing…' : 'Test AI connection'}
-        </button>
+        </Btn>
       </div>
       {diag && (
         <div className="rounded-lg border border-border bg-muted/30 p-2.5 space-y-1.5">
-          <p className={diag.ok ? 'text-green-500' : 'text-destructive'}>{diag.summary}</p>
+          <p className={diag.ok ? 'text-ok' : 'text-destructive'}>{diag.summary}</p>
           {(diag.stages || []).map(s => (
             <div key={s.name} className="flex items-start gap-2">
               {s.ok
-                ? <Check className="w-3.5 h-3.5 text-green-500 mt-0.5 shrink-0" />
+                ? <Check className="w-3.5 h-3.5 text-ok mt-0.5 shrink-0" />
                 : <X className="w-3.5 h-3.5 text-destructive mt-0.5 shrink-0" />}
               <div className="min-w-0">
                 <p className="font-medium capitalize">
@@ -469,9 +453,7 @@ function DatabaseSection({ onChanged }) {
   };
 
   return (
-    <section className="space-y-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Database</h3>
-      <div className="rounded-xl border border-border bg-card p-3 space-y-3 text-sm">
+    <SectionCard title="Database" bodyClassName="space-y-3 text-sm">
         {status === null ? (
           <p className="text-muted-foreground">Loading…</p>
         ) : status.managed === 'environment' ? (
@@ -489,34 +471,25 @@ function DatabaseSection({ onChanged }) {
                   : 'COGNOS is using the on-device database. Paste a Postgres connection string below (e.g. from Supabase) to move your data to the cloud instead.'}
               </p>
             </div>
-            <input
+            <TextInput
               type="password"
               value={urlInput}
               onChange={e => setUrlInput(e.target.value)}
               placeholder="postgresql://…"
               autoComplete="off" autoCapitalize="off" spellCheck="false"
-              className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/50"
             />
             <div className="flex flex-wrap gap-2">
-              <button
-                onClick={save}
-                disabled={busy || !urlInput.trim()}
-                className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
-              >
+              <Btn variant="primary" size="sm" onClick={save} disabled={busy || !urlInput.trim()}>
                 {busy ? 'Saving…' : 'Save database URL'}
-              </button>
+              </Btn>
               {status.external && (
-                <button
-                  onClick={remove}
-                  disabled={busy}
-                  className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 disabled:opacity-50"
-                >
+                <Btn variant="secondary" size="sm" onClick={remove} disabled={busy}>
                   <Trash2 className="w-3.5 h-3.5" /> Use on-device database
-                </button>
+                </Btn>
               )}
             </div>
             {message && (
-              <p className={message.ok ? 'text-green-500' : 'text-destructive'}>{message.text}</p>
+              <p className={message.ok ? 'text-ok' : 'text-destructive'}>{message.text}</p>
             )}
             <p className="text-muted-foreground/60 leading-relaxed">
               The URL is stored privately inside the app — no other app can read it. Supabase:
@@ -524,8 +497,7 @@ function DatabaseSection({ onChanged }) {
             </p>
           </>
         )}
-      </div>
-    </section>
+    </SectionCard>
   );
 }
 
@@ -590,9 +562,7 @@ function PersonasSection() {
   };
 
   return (
-    <section className="space-y-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Personas</h3>
-      <div className="rounded-xl border border-border bg-card p-3 space-y-3 text-sm">
+    <SectionCard title="Personas" bodyClassName="space-y-3 text-sm">
         <p className="text-muted-foreground leading-relaxed">
           A persona is the voice COGNOS talks in — prompt, tone, spoken voice, and optional model or
           temperature. It changes how it speaks, never what it may do: identity, the
@@ -621,7 +591,7 @@ function PersonasSection() {
                     <p className="font-medium text-foreground/90 flex items-center gap-2">
                       {p.name}
                       {p.builtin && <span className="text-[10px] text-muted-foreground font-normal">built-in</span>}
-                      {p.id === activeId && <span className="text-[10px] text-green-500">active</span>}
+                      {p.id === activeId && <span className="text-[10px] text-ok">active</span>}
                     </p>
                     {p.description && <p className="text-muted-foreground mt-0.5 leading-snug">{p.description}</p>}
                     {p.voice && p.voice.voiceURI && (
@@ -632,20 +602,17 @@ function PersonasSection() {
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     {p.id !== activeId && (
-                      <button onClick={() => activate(p.id)} disabled={busy}
-                        className="text-xs px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground disabled:opacity-50">
+                      <Btn variant="primary" size="sm" onClick={() => activate(p.id)} disabled={busy}>
                         Use
-                      </button>
+                      </Btn>
                     )}
-                    <button onClick={() => setEditing(p)} title="Edit persona"
-                      className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted">
+                    <IconBtn onClick={() => setEditing(p)} title="Edit persona" aria-label={`Edit ${p.name}`}>
                       <Pencil className="w-3.5 h-3.5" />
-                    </button>
+                    </IconBtn>
                     {!p.builtin && (
-                      <button onClick={() => remove(p.id)} disabled={busy} title="Delete persona"
-                        className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-muted disabled:opacity-50">
+                      <IconBtn onClick={() => remove(p.id)} disabled={busy} title="Delete persona" aria-label={`Delete ${p.name}`} className="hover:text-destructive">
                         <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      </IconBtn>
                     )}
                   </div>
                 </div>
@@ -653,10 +620,9 @@ function PersonasSection() {
             ))}
           </div>
         )}
-        <button onClick={() => setEditing('new')}
-          className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground">
+        <Btn variant="secondary" size="sm" onClick={() => setEditing('new')}>
           <Plus className="w-3.5 h-3.5" /> New persona
-        </button>
+        </Btn>
         {editing && (
           <PersonaEditor
             initial={editing === 'new' ? null : editing}
@@ -665,8 +631,7 @@ function PersonasSection() {
             onSave={saveEdit}
           />
         )}
-      </div>
-    </section>
+    </SectionCard>
   );
 }
 
@@ -703,32 +668,28 @@ function PersonaEditor({ initial, busy, onCancel, onSave }) {
     });
   };
 
-  const inputCls = "w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/50";
   return (
     <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2.5">
       <p className="font-medium text-foreground/90">{initial ? `Edit “${initial.name}”` : 'New persona'}</p>
-      <input value={name} onChange={e => setName(e.target.value)} placeholder="Name — e.g. Night Owl"
-        maxLength={60} className={inputCls} />
-      <input value={description} onChange={e => setDescription(e.target.value)} placeholder="Short description"
-        maxLength={300} className={inputCls} />
-      <textarea value={promptText} onChange={e => setPromptText(e.target.value)} rows={5}
+      <TextInput value={name} onChange={e => setName(e.target.value)} placeholder="Name — e.g. Night Owl"
+        maxLength={60} aria-label="Persona name" />
+      <TextInput value={description} onChange={e => setDescription(e.target.value)} placeholder="Short description"
+        maxLength={300} aria-label="Persona description" />
+      <TextArea value={promptText} onChange={e => setPromptText(e.target.value)} rows={5}
         placeholder="How this persona talks — tone, register, habits. This is a voice/style layer only: it can never change COGNOS's identity, capabilities, or governance."
-        maxLength={4000} className={`${inputCls} resize-y`} />
+        maxLength={4000} aria-label="Persona prompt" />
       <div className="grid grid-cols-2 gap-2">
-        <input value={modelOverride} onChange={e => setModelOverride(e.target.value)}
-          placeholder="Model override (optional)" maxLength={120}
-          className={inputCls} title="Optional: a different model id for this persona's answer drafts. Blank keeps the configured model." />
-        <input value={temperature} onChange={e => setTemperature(e.target.value)}
-          placeholder="Temperature 0–2 (optional)" inputMode="decimal"
-          className={inputCls} title="Optional: sampling temperature for this persona's answer drafts. Blank keeps the provider default." />
+        <TextInput value={modelOverride} onChange={e => setModelOverride(e.target.value)}
+          placeholder="Model override (optional)" maxLength={120} aria-label="Model override (optional)"
+          title="Optional: a different model id for this persona's answer drafts. Blank keeps the configured model." />
+        <TextInput value={temperature} onChange={e => setTemperature(e.target.value)}
+          placeholder="Temperature 0–2 (optional)" inputMode="decimal" aria-label="Temperature (optional)"
+          title="Optional: sampling temperature for this persona's answer drafts. Blank keeps the provider default." />
       </div>
-      <label className="block text-[11px] text-muted-foreground">
-        Spoken voice
-        <select
+      <Field label="Spoken voice" hint="The voice this persona speaks in. Blank uses the Voice settings.">
+        <Select
           value={ttsVoiceURI}
           onChange={e => setTtsVoiceURI(e.target.value)}
-          className="mt-1 block w-full bg-muted/50 border border-border rounded-lg px-2.5 py-2 text-xs text-foreground outline-none focus:border-primary/50"
-          title="The voice this persona speaks in. Blank uses the Voice settings above."
         >
           <option value="">Default — from Voice settings</option>
           {deviceVoices.map((item, index) => (
@@ -736,21 +697,19 @@ function PersonaEditor({ initial, busy, onCancel, onSave }) {
               {item.name} — {item.lang}
             </option>
           ))}
-        </select>
-      </label>
+        </Select>
+      </Field>
       {initial?.builtin && (
         <p className="text-muted-foreground/70 leading-relaxed">Built-in personas can be tuned but not deleted.</p>
       )}
       {formError && <p className="text-destructive">{formError}</p>}
       <div className="flex gap-2">
-        <button onClick={submit} disabled={busy || !name.trim()}
-          className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50">
+        <Btn variant="primary" size="sm" onClick={submit} disabled={busy || !name.trim()}>
           {busy ? 'Saving…' : 'Save persona'}
-        </button>
-        <button onClick={onCancel}
-          className="text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground">
+        </Btn>
+        <Btn variant="secondary" size="sm" onClick={onCancel}>
           Cancel
-        </button>
+        </Btn>
       </div>
     </div>
   );
@@ -850,17 +809,16 @@ export default function Settings() {
         <div className="max-w-2xl mx-auto space-y-6">
           {error && <p className="text-xs text-destructive">{error}</p>}
 
-          <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workspace</h3>
-            <input value={name} onChange={e => setName(e.target.value)} placeholder="Workspace name"
-              className="w-full bg-card border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/50" />
-            <textarea value={instructions} onChange={e => setInstructions(e.target.value)} rows={6}
+          <SectionCard title="Workspace" bodyClassName="space-y-3">
+            <TextInput value={name} onChange={e => setName(e.target.value)} placeholder="Workspace name"
+              aria-label="Workspace name" />
+            <TextArea value={instructions} onChange={e => setInstructions(e.target.value)} rows={6}
               placeholder="Workspace instructions — injected into every council system prompt."
-              className="w-full bg-card border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/50 resize-y" />
-            <button onClick={save} className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground">
+              aria-label="Workspace instructions" />
+            <Btn variant="primary" size="sm" onClick={save}>
               {saved ? <><Check className="w-3.5 h-3.5" /> Saved</> : 'Save'}
-            </button>
-          </section>
+            </Btn>
+          </SectionCard>
 
           <ModelSection onChanged={() => api.health().then(setHealth).catch(() => {})} />
 
@@ -868,31 +826,27 @@ export default function Settings() {
 
           <DatabaseSection onChanged={() => api.health().then(setHealth).catch(() => {})} />
 
-          <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Appearance</h3>
-            <div className="rounded-xl border border-border bg-card p-3 text-sm">
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { id: 'dark', label: 'Dark', icon: Moon },
-                  { id: 'light', label: 'Light', icon: Sun },
-                ].map(({ id, label, icon: Icon }) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setAppearance(id)}
-                    aria-pressed={theme === id}
-                    className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2.5 transition-colors ${theme === id ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-muted-foreground hover:text-foreground'}`}
-                  >
-                    <Icon className="w-4 h-4" />
-                    {label}
-                  </button>
-                ))}
-              </div>
+          <SectionCard title="Appearance" bodyClassName="text-sm">
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { id: 'dark', label: 'Dark', icon: Moon },
+                { id: 'light', label: 'Light', icon: Sun },
+              ].map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setAppearance(id)}
+                  aria-pressed={theme === id}
+                  className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2.5 transition-colors ${theme === id ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-muted-foreground hover:text-foreground'}`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {label}
+                </button>
+              ))}
             </div>
-          </section>
+          </SectionCard>
 
-          <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Voice</h3>            <div className="rounded-xl border border-border bg-card p-3 space-y-4 text-sm">
+          <SectionCard title="Voice" bodyClassName="space-y-4 text-sm">
               {!voice.supported ? (
                 <>
                   <p className="text-muted-foreground leading-relaxed">
@@ -910,19 +864,20 @@ export default function Settings() {
               ) : (
                 <>
                   {voice.engine === 'native' && voice.voices.length === 0 && (
-                    <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-3 py-2.5">
+                    <div className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2.5">
                       <p className="font-medium text-foreground/90">No voice data on this device yet</p>
                       <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
                         The speech engine is ready, but this phone has no voices installed.
                         Install the system voice data, then pick a voice below.
                       </p>
-                      <button
+                      <Btn
+                        variant="accentSoft" size="sm"
                         type="button"
                         onClick={handleInstallVoiceData}
-                        className="mt-2 text-xs px-3 py-2 rounded-lg bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
+                        className="mt-2"
                       >
                         Install voice data
-                      </button>
+                      </Btn>
                       {voiceInstallHint && (
                         <div className="mt-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 flex items-start gap-2">
                           <p className="text-[11px] text-muted-foreground leading-relaxed flex-1">
@@ -933,14 +888,14 @@ export default function Settings() {
                             preferred engine, then <span className="text-foreground/80">Install voice data</span> and
                             download English (US). Reopen COGNOS and pick a voice.
                           </p>
-                          <button
+                          <IconBtn
                             type="button"
                             aria-label="Dismiss"
                             onClick={() => setVoiceInstallHint(false)}
-                            className="text-muted-foreground/60 hover:text-foreground transition-colors shrink-0"
+                            className="shrink-0"
                           >
                             <X size={14} />
-                          </button>
+                          </IconBtn>
                         </div>
                       )}
                     </div>
@@ -974,10 +929,10 @@ export default function Settings() {
 
                   <label className="block text-[11px] text-muted-foreground">
                     {voice.engine === 'native' ? 'Device voice' : 'Browser voice'}
-                    <select
+                    <Select
                       value={voice.settings.voiceURI}
                       onChange={event => voice.updateSettings({ voiceURI: event.target.value })}
-                      className="mt-1 block w-full bg-muted/50 border border-border rounded-lg px-2.5 py-2 text-xs text-foreground outline-none focus:border-primary/50"
+                      className="mt-1"
                     >
                       <option value="">System default</option>
                       {voice.voices.map((item, index) => (
@@ -985,17 +940,17 @@ export default function Settings() {
                           {item.name} — {item.lang}{item.localService ? '' : ' · network'}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                   {voice.engine === 'native' && (
                     <div className="flex flex-wrap items-center gap-3">
-                      <button
+                      <Btn
+                        variant="secondary" size="sm"
                         type="button"
                         onClick={handleInstallVoiceData}
-                        className="text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground transition-colors"
                       >
                         Install voice data
-                      </button>
+                      </Btn>
                       <p className="text-[10px] text-muted-foreground/60 flex-1 min-w-[12rem]">
                         Opens the system installer if this device is missing voice data for its on-device voices.
                       </p>
@@ -1033,16 +988,16 @@ export default function Settings() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3">
-                    <button
+                    <Btn
+                      variant="accentSoft" size="sm"
                       type="button"
                       onClick={() => voice.speakingId === 'voice-preview'
                         ? voice.stop()
                         : voice.speak("Hello. I'm COGNOS. Voice mode is ready, and I will only speak the council's governed final answer.", { id: 'voice-preview' })}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg bg-accent/15 text-accent hover:bg-accent/25 transition-colors"
                     >
                       {voice.speakingId === 'voice-preview' ? <Square className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
                       {voice.speakingId === 'voice-preview' ? 'Stop preview' : 'Test voice'}
-                    </button>
+                    </Btn>
                     <p className="text-[10px] text-muted-foreground/60 flex-1 min-w-[12rem]">
                       {voice.engine === 'native'
                         ? 'On-device playback: no audio is uploaded, stored, or sent to a separate speech provider.'
@@ -1051,14 +1006,14 @@ export default function Settings() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3">
-                    <button
+                    <Btn
+                      variant="secondary" size="sm"
                       type="button"
                       onClick={handleTtsDiagnostic}
                       disabled={ttsDiagBusy}
-                      className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
                     >
                       {ttsDiagBusy ? 'Running diagnostic…' : 'Run TTS diagnostic'}
-                    </button>
+                    </Btn>
                     <p className="text-[10px] text-muted-foreground/60 flex-1 min-w-[12rem]">
                       Asks the phone directly what its text-to-speech engine sees, bypassing the voice plugin.
                     </p>
@@ -1070,14 +1025,11 @@ export default function Settings() {
                   )}
                 </>
               )}
-            </div>
-          </section>
+          </SectionCard>
 
           <PersonasSection />
 
-          <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Governance</h3>
-            <div className="rounded-xl border border-border bg-card p-3 space-y-4 text-sm">
+          <SectionCard title="Governance" bodyClassName="space-y-4 text-sm">
               <div className="flex items-start gap-2">
                 <Scale className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
                 <p className="text-muted-foreground leading-relaxed">
@@ -1110,7 +1062,7 @@ export default function Settings() {
               />
 
               {council?.governorEnabled === false && (
-                <p className="flex items-start gap-2 text-[11px] leading-relaxed text-yellow-600 dark:text-yellow-400 bg-yellow-500/10 rounded-lg px-3 py-2">
+                <p className="flex items-start gap-2 text-[11px] leading-relaxed text-warn bg-warn/10 border border-warn/30 rounded-lg px-3 py-2">
                   <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   <span>
                     The Governor is off. Nothing deterministic is vetoing answers anymore — empty responses,
@@ -1131,34 +1083,34 @@ export default function Settings() {
               )}
 
               {!(council?.uiControl) && <CouncilHandover />}
-            </div>
-          </section>
+          </SectionCard>
 
-          <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Runtime</h3>
-            <div className="rounded-xl border border-border bg-card p-3 text-sm">
+          <SectionCard title="Runtime" bodyClassName="text-sm">
               {health ? (
                 <>
                   <Row label="COGNOS self-model" value={`v${health.identityVersion || 'unknown'}`} />
                   <Row label="Model" value={health.model} />
                   <Row label="Fast model" value={health.fastModel} />
-                  <Row label="Model deadline" value={health.modelRequestPolicy?.timeoutMs != null ? `${health.modelRequestPolicy.timeoutMs}ms total` : 'unknown'} />
-                  <Row label="Transient model retries" value={health.modelRequestPolicy?.maxRetries ?? 'unknown'} />
                   <Row label="Model key configured" value={health.modelKeyConfigured ? 'yes' : 'no'} />
-                  <Row label="LLM service tier" value={health.llmServiceTier || 'provider-default'} />
-                  <Row label="Prompt-cache routing" value={health.promptCacheKeyConfigured ? 'configured' : 'automatic/provider-default'} />
                   <Row label="Database configured" value={health.databaseConfigured ? 'yes' : 'no'} />
                   <Row label="Web search" value={health.searchProvider} />
-                  <Row label="Document/link sources" value={health.sources ? 'enabled' : 'disabled'} />
-                  <Row label="Agent mode" value={health.agent?.enabled ? `${(health.agent.modes || []).join(', ')} · writes ${health.agent.autonomousWrites ? 'enabled' : 'disabled'}` : 'disabled'} />
-                  <Row label="Access gate" value={health.gate ? 'enabled' : 'disabled'} />
+                  <Disclosure summary="More runtime detail" className="mt-3">
+                    <div>
+                      <Row label="Model deadline" value={health.modelRequestPolicy?.timeoutMs != null ? `${health.modelRequestPolicy.timeoutMs}ms total` : 'unknown'} />
+                      <Row label="Transient model retries" value={health.modelRequestPolicy?.maxRetries ?? 'unknown'} />
+                      <Row label="LLM service tier" value={health.llmServiceTier || 'provider-default'} />
+                      <Row label="Prompt-cache routing" value={health.promptCacheKeyConfigured ? 'configured' : 'automatic/provider-default'} />
+                      <Row label="Document/link sources" value={health.sources ? 'enabled' : 'disabled'} />
+                      <Row label="Agent mode" value={health.agent?.enabled ? `${(health.agent.modes || []).join(', ')} · writes ${health.agent.autonomousWrites ? 'enabled' : 'disabled'}` : 'disabled'} />
+                      <Row label="Access gate" value={health.gate ? 'enabled' : 'disabled'} />
+                    </div>
+                  </Disclosure>
                 </>
               ) : <p className="text-muted-foreground">Loading…</p>}
               <p className="text-muted-foreground/60 mt-3 leading-relaxed">
                 Secrets are read from server environment variables and are never sent to the browser.
               </p>
-            </div>
-          </section>
+          </SectionCard>
 
           <p className="text-center text-[11px] text-muted-foreground/50 pb-2">
             COGNOS · build autonomy-switches · 2026-09-30

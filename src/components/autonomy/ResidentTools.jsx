@@ -183,9 +183,9 @@ function ToolForm({ initial, onSave, onCancel, busy }) {
           />
         </div>
       )}
-      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5">
+      <div className="rounded-lg border border-warn/30 bg-warn/5 p-2.5">
         <p className="text-[11px] font-medium flex items-center gap-1.5">
-          <KeyRound className="w-3.5 h-3.5 text-amber-500" />
+          <KeyRound className="w-3.5 h-3.5 text-warn" />
           Secrets — write-only
         </p>
         <p className="text-[10px] text-muted-foreground mt-0.5 mb-1.5">
@@ -532,7 +532,7 @@ export default function ToolsTab({ residents, onChanged }) {
 
       <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
         <p className="text-[11px] font-medium flex items-center gap-1.5">
-          <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+          <AlertTriangle className="w-3.5 h-3.5 text-warn" />
           How tools stay safe
         </p>
         <ul className="text-[11px] text-muted-foreground mt-1.5 space-y-1 list-disc list-inside">

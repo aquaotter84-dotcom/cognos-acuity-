@@ -26,6 +26,8 @@
     --accent-foreground: 0 0% 100%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
+    --ok: 142 60% 32%;
+    --warn: 36 92% 36%;
     --border: 110 10% 89%;
     --input: 110 10% 89%;
     --ring: 110 32% 42%;
@@ -69,6 +71,8 @@
     --accent-foreground: 110 25% 12%;
     --destructive: 0 72% 55%;
     --destructive-foreground: 0 0% 100%;
+    --ok: 142 65% 58%;
+    --warn: 42 95% 62%;
     --border: 110 12% 18%;
     --input: 110 12% 18%;
     --ring: 84 60% 55%;
@@ -93,6 +97,20 @@
     @apply border-border outline-ring/50;
   }
 
+  /* v52 — one focus state, everywhere: keyboard focus always draws the ring.
+     Kit components rely on this rule and never set `outline-none`. */
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  summary:focus-visible,
+  [role="switch"]:focus-visible,
+  [role="tab"]:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
   body {
     @apply bg-background text-foreground font-body antialiased;
     overscroll-behavior: none;
@@ -108,7 +126,8 @@
  * Orbit's visual language, app-wide. White cards with soft borders and
  * generous radius, eyebrow labels, friendly headings, the dark-green button
  * and the lime good-news pill. Rebuilt here on COGNOS's own variables —
- * no Orbit code is imported.
+ * no Orbit code is imported. v52: every color rides the shared tokens, so
+ * the face stays one face in both themes; no raw hex lives here anymore.
  * ------------------------------------------------------------------------- */
 @layer components {
   .orbit-eyebrow {
@@ -116,61 +135,50 @@
     font-weight: 800;
     letter-spacing: 0.13em;
     text-transform: uppercase;
-    color: #92a093;
+    color: hsl(var(--muted-foreground));
   }
-  .dark .orbit-eyebrow { color: #7d8a7e; }
 
   .orbit-page-title {
     font-family: var(--font-heading);
     font-weight: 800;
     letter-spacing: -0.04em;
-    color: #202b31;
+    color: hsl(var(--foreground));
   }
-  .dark .orbit-page-title { color: #eef4ea; }
   .orbit-page-sub {
-    color: #8a9598;
+    color: hsl(var(--muted-foreground));
     line-height: 1.5;
   }
 
   .orbit-agent-card {
-    background: #fff;
-    border: 1px solid #e8eeea;
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
     border-radius: 16px;
     transition: box-shadow 0.2s, border-color 0.2s;
   }
   .orbit-agent-card:hover {
-    border-color: #dce8d8;
-    box-shadow: 0 13px 33px rgba(34, 49, 40, 0.07);
-  }
-  .dark .orbit-agent-card {
-    background: hsl(var(--card));
-    border-color: hsl(var(--border));
+    border-color: hsl(var(--ring) / 0.45);
+    box-shadow: 0 13px 33px hsl(var(--foreground) / 0.07);
   }
   .orbit-agent-card .orbit-agent-name {
     font-family: var(--font-heading);
     font-weight: 800;
-    color: #26313a;
+    color: hsl(var(--foreground));
   }
-  .dark .orbit-agent-card .orbit-agent-name { color: hsl(var(--foreground)); }
   .orbit-agent-card .orbit-agent-role {
-    color: #9aa5a4;
+    color: hsl(var(--muted-foreground));
   }
 
   .orbit-btn-dark {
-    background: #192337;
-    color: #fff;
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
     border-radius: 11px;
     font-weight: 700;
   }
-  .orbit-btn-dark:hover { background: #232f47; }
+  .orbit-btn-dark:hover { background: hsl(var(--primary) / 0.9); }
 
   .orbit-pill-lime {
-    background: #ebf5e1;
-    color: #557643;
-  }
-  .dark .orbit-pill-lime {
-    background: hsl(110 25% 16%);
-    color: hsl(84 60% 70%);
+    background: hsl(var(--secondary));
+    color: hsl(var(--secondary-foreground));
   }
 }
 

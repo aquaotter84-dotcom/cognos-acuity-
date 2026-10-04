@@ -40,6 +40,10 @@ module.exports = {
   				DEFAULT: 'hsl(var(--destructive))',
   				foreground: 'hsl(var(--destructive-foreground))'
   			},
+  			/* v52 — semantic status tokens: success and warning that read
+  			   correctly on both faces. */
+  			ok: 'hsl(var(--ok))',
+  			warn: 'hsl(var(--warn))',
   			border: 'hsl(var(--border))',
   			input: 'hsl(var(--input))',
   			ring: 'hsl(var(--ring))',

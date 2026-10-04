@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { Folder, FolderPlus, Menu, MessageSquare, Plus, ShieldAlert, Trash2, FileText, Image as ImageIcon, Link as LinkIcon, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
+import { Btn, Card, Meta, EmptyState, TextInput, TextArea } from '@/components/ui/CognosUi';
 
 const KIND_ICON = {
   document: <FileText className="w-3.5 h-3.5 text-primary" />,
@@ -28,7 +29,7 @@ function EvidenceRow({ source }) {
           </p>
           {source.final_url && <p className="text-[10px] text-muted-foreground/70 truncate">{source.final_url}</p>}
           {risks.length > 0 && (
-            <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1 mt-0.5">
+            <p className="text-[10px] text-warn flex items-center gap-1 mt-0.5">
               <ShieldAlert className="w-3 h-3" /> Untrusted instructions detected
             </p>
           )}
@@ -133,12 +134,9 @@ export default function Projects() {
         <Folder className="w-4 h-4 text-primary" />
         <h2 className="text-sm font-medium">Projects</h2>
         <span className="text-[10px] text-muted-foreground">research folders — conversations, evidence, runs</span>
-        <button
-          onClick={() => setCreating(v => !v)}
-          className="ml-auto flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium"
-        >
+        <Btn variant="primary" size="sm" onClick={() => setCreating(v => !v)} className="ml-auto">
           {creating ? <X className="w-3.5 h-3.5" /> : <FolderPlus className="w-3.5 h-3.5" />} {creating ? 'Cancel' : 'New project'}
-        </button>
+        </Btn>
       </header>
 
       <div className="flex-1 overflow-y-auto scrollbar-thin px-3 md:px-4 py-4 min-h-0">
@@ -146,32 +144,32 @@ export default function Projects() {
           {error && <p className="text-xs text-destructive">{error}</p>}
 
           {creating && (
-            <form onSubmit={handleCreate} className="rounded-xl border border-border bg-card p-3 space-y-2">
-              <p className="text-xs text-muted-foreground">Projects survive across sessions: conversations, immutable evidence, agent runs, decisions and approvals stay grouped until you remove them.</p>
-              <input
-                autoFocus
-                value={name}
-                onChange={e => setName(e.target.value)}
-                placeholder="Project name — e.g. Property purchase"
-                className="w-full bg-background border border-border rounded-lg px-2.5 py-2 text-xs outline-none focus:border-primary/60"
-              />
-              <textarea
-                value={objective}
-                onChange={e => setObjective(e.target.value)}
-                placeholder="What are you investigating? (optional — shared with the council)"
-                rows={2}
-                className="w-full bg-background border border-border rounded-lg px-2.5 py-2 text-xs outline-none focus:border-primary/60 resize-none"
-              />
-              <button type="submit" disabled={busy || !name.trim()} className="rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs disabled:opacity-40">Create project</button>
+            <form onSubmit={handleCreate}>
+              <Card className="p-3 space-y-2">
+                <p className="text-xs text-muted-foreground">Projects survive across sessions: conversations, immutable evidence, agent runs, decisions and approvals stay grouped until you remove them.</p>
+                <TextInput
+                  autoFocus
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  placeholder="Project name — e.g. Property purchase"
+                />
+                <TextArea
+                  value={objective}
+                  onChange={e => setObjective(e.target.value)}
+                  placeholder="What are you investigating? (optional — shared with the council)"
+                  rows={2}
+                />
+                <Btn type="submit" size="sm" disabled={busy || !name.trim()}>Create project</Btn>
+              </Card>
             </form>
           )}
 
           {sorted.length === 0 && !creating && (
-            <div className="rounded-xl border border-dashed border-border p-8 text-center">
-              <Folder className="w-8 h-8 mx-auto text-muted-foreground/50 mb-2" />
-              <p className="text-sm text-muted-foreground">No research projects yet.</p>
-              <p className="text-xs text-muted-foreground/70 mt-1">Group a property purchase, a vendor comparison, or any investigation with its own chats and evidence.</p>
-            </div>
+            <EmptyState
+              icon={Folder}
+              title="No research projects yet."
+              body="Group a property purchase, a vendor comparison, or any investigation with its own chats and evidence."
+            />
           )}
 
           {sorted.map(project => (
@@ -191,23 +189,16 @@ export default function Projects() {
               {expandedId === project.id && detail && (
                 <div className="border-t border-border px-4 py-3 space-y-3">
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => startChat(project.id)}
-                      className="flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-2.5 py-1.5 text-xs"
-                    >
+                    <Btn variant="primary" size="sm" onClick={() => startChat(project.id)}>
                       <Plus className="w-3.5 h-3.5" /> New chat
-                    </button>
-                    <button
-                      onClick={() => handleDelete(project)}
-                      disabled={busy}
-                      className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-destructive hover:border-destructive/50 disabled:opacity-40"
-                    >
+                    </Btn>
+                    <Btn variant="secondary" size="sm" onClick={() => handleDelete(project)} disabled={busy}>
                       <Trash2 className="w-3.5 h-3.5" /> Detach project
-                    </button>
+                    </Btn>
                   </div>
 
                   <div>
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-1.5">Conversations</p>
+                    <Meta className="mb-1.5">Conversations</Meta>
                     {detail.conversations.length === 0
                       ? <p className="text-xs text-muted-foreground/70">None yet.</p>
                       : <div className="space-y-1">
@@ -222,7 +213,7 @@ export default function Projects() {
                   </div>
 
                   <div>
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-1.5">Immutable evidence</p>
+                    <Meta className="mb-1.5">Immutable evidence</Meta>
                     {detail.sources.length === 0
                       ? <p className="text-xs text-muted-foreground/70">Upload documents, images, or open links inside a project chat — they land here as hashed snapshots.</p>
                       : <div className="space-y-1">{detail.sources.map(s => <EvidenceRow key={s.id} source={s} />)}</div>}

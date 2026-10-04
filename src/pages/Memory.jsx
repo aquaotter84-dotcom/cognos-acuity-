@@ -7,35 +7,10 @@ import { useState, useEffect } from 'react';
 import { Brain, Search, Plus, Trash2, Edit2, Check, X, Menu, Star } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
-
-const typeColors = {
-  self: 'bg-violet-500/15 text-violet-400',
-  events: 'bg-amber-500/15 text-amber-400',
-  entities: 'bg-cyan-500/15 text-cyan-400',
-  knowledge: 'bg-primary/15 text-primary',
-  goals: 'bg-green-500/15 text-green-400',
-};
-
-const evidenceColors = {
-  direct: 'bg-green-500/15 text-green-400',
-  repeated: 'bg-primary/15 text-primary',
-  inferred: 'bg-amber-500/15 text-amber-400',
-  assumed: 'bg-red-500/15 text-red-400',
-};
-
-const volatilityColors = {
-  low: 'bg-green-500/15 text-green-400',
-  medium: 'bg-amber-500/15 text-amber-400',
-  high: 'bg-red-500/15 text-red-400',
-};
-
-const layerColors = {
-  self: 'bg-violet-500/15 text-violet-400',
-  events: 'bg-amber-500/15 text-amber-400',
-  entities: 'bg-cyan-500/15 text-cyan-400',
-  knowledge: 'bg-primary/15 text-primary',
-  goals: 'bg-green-500/15 text-green-400',
-};
+import {
+  Btn, IconBtn, Card, Badge, TextInput, TextArea, Select, Disclosure,
+  LAYER_TONES, EVIDENCE_TONES, VOLATILITY_TONES,
+} from '@/components/ui/CognosUi';
 
 export default function Memory() {
   const { openSidebar } = useCognos();
@@ -141,30 +116,28 @@ export default function Memory() {
           </div>
 
           {isAdding && (
-            <div className="rounded-xl border border-border bg-card p-3 space-y-2">
-              <textarea value={newContent} onChange={e => setNewContent(e.target.value)} rows={3}
-                placeholder="Something COGNOS should remember..."
-                className="w-full bg-transparent outline-none text-sm resize-none" />
+            <Card className="p-3 space-y-2">
+              <TextArea value={newContent} onChange={e => setNewContent(e.target.value)} rows={3}
+                placeholder="Something COGNOS should remember..." />
               <div className="grid sm:grid-cols-2 gap-2">
-                <select value={newLayer} onChange={e => setNewLayer(e.target.value)} className="bg-muted/40 border border-border rounded-lg px-2 py-1.5 text-xs outline-none">
+                <Select value={newLayer} onChange={e => setNewLayer(e.target.value)}>
                   <option value="events">events · things that happened (default)</option>
                   <option value="knowledge">knowledge · durable reference</option>
                   <option value="entities">entities · people, places, things</option>
                   <option value="goals">goals · goals and progress</option>
                   <option value="self">self · the assistant's own inner life</option>
-                </select>
-                <input value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="stable key (optional)"
-                  className="bg-muted/40 border border-border rounded-lg px-2 py-1.5 text-xs outline-none placeholder:text-muted-foreground/60" />
+                </Select>
+                <TextInput value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="stable key (optional)" />
               </div>
-              <textarea value={newValue} onChange={e => setNewValue(e.target.value)} rows={2}
+              <TextArea value={newValue} onChange={e => setNewValue(e.target.value)} rows={2}
                 placeholder='Structured value JSON (optional), e.g. {"value":"Python"}'
-                className="w-full bg-muted/40 border border-border rounded-lg p-2 outline-none text-xs resize-none font-mono" />
+                className="font-mono text-xs" />
               <p className="text-[10px] text-muted-foreground">The readable note stays visible; the bounded structured value helps COGNOS retrieve durable facts without treating them as instructions.</p>
               <div className="flex gap-2 justify-end">
-                <button onClick={() => { setIsAdding(false); setNewContent(''); setNewKey(''); setNewValue(''); }} className="text-xs px-3 py-1.5 rounded-lg hover:bg-muted">Cancel</button>
-                <button onClick={handleAdd} className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground">Save</button>
+                <Btn variant="ghost" size="sm" onClick={() => { setIsAdding(false); setNewContent(''); setNewKey(''); setNewValue(''); }}>Cancel</Btn>
+                <Btn variant="primary" size="sm" onClick={handleAdd}>Save</Btn>
               </div>
-            </div>
+            </Card>
           )}
 
           {filtered.length === 0 && (
@@ -174,43 +147,46 @@ export default function Memory() {
           )}
 
           {filtered.map(mem => (
-            <div key={mem.id} className={`rounded-xl border border-border bg-card p-3 ${mem.is_enabled ? '' : 'opacity-50'}`}>
+            <Card key={mem.id} className={`p-3 ${mem.is_enabled ? '' : 'opacity-50'}`}>
               {editingId === mem.id ? (
                 <div className="space-y-2">
-                  <textarea value={editContent} onChange={e => setEditContent(e.target.value)} rows={3}
-                    className="w-full bg-muted/40 rounded-lg p-2 outline-none text-sm resize-none" />
+                  <TextArea value={editContent} onChange={e => setEditContent(e.target.value)} rows={3} />
                   <div className="flex gap-2 justify-end">
-                    <button onClick={() => setEditingId(null)} className="p-1.5 rounded-lg hover:bg-muted"><X className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => handleSaveEdit(mem.id)} className="p-1.5 rounded-lg bg-primary text-primary-foreground"><Check className="w-3.5 h-3.5" /></button>
+                    <IconBtn onClick={() => setEditingId(null)} aria-label="Cancel edit"><X className="w-3.5 h-3.5" /></IconBtn>
+                    <Btn variant="primary" size="sm" onClick={() => handleSaveEdit(mem.id)} aria-label="Save edit"><Check className="w-3.5 h-3.5" /></Btn>
                   </div>
                 </div>
               ) : (
                 <>
                   <p className="text-sm leading-relaxed mb-2">{mem.content}</p>
-                  {mem.memory_value && <p className="text-[10px] text-muted-foreground/70 font-mono truncate mb-2" title={typeof mem.memory_value === 'string' ? mem.memory_value : JSON.stringify(mem.memory_value)}>
-                    value {typeof mem.memory_value === 'string' ? mem.memory_value : JSON.stringify(mem.memory_value)}
-                  </p>}
+                  {mem.memory_value && (
+                    <Disclosure summary="Structured value" className="mb-2">
+                      <p className="text-[10px] text-muted-foreground/70 font-mono break-all">
+                        {typeof mem.memory_value === 'string' ? mem.memory_value : JSON.stringify(mem.memory_value)}
+                      </p>
+                    </Disclosure>
+                  )}
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${typeColors[mem.memory_type] || 'bg-muted'}`}>{mem.memory_type}</span>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${layerColors[mem.memory_layer || mem.memory_type] || 'bg-muted'}`}>{mem.memory_layer || mem.memory_type || 'events'} layer</span>
+                    <Badge tone="custom" className={LAYER_TONES[mem.memory_type] || ''}>{mem.memory_type}</Badge>
+                    <Badge tone="custom" className={LAYER_TONES[mem.memory_layer || mem.memory_type] || ''}>{mem.memory_layer || mem.memory_type || 'events'} layer</Badge>
                     {mem.memory_key && <span className="px-1.5 py-0.5 rounded text-[10px] font-mono text-muted-foreground bg-muted/60">{mem.memory_key}</span>}
-                    {mem.evidence_level && <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${evidenceColors[mem.evidence_level] || 'bg-muted'}`}>{mem.evidence_level}</span>}
-                    {mem.volatility && <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${volatilityColors[mem.volatility] || 'bg-muted'}`}>{mem.volatility}</span>}
+                    {mem.evidence_level && <Badge tone="custom" className={EVIDENCE_TONES[mem.evidence_level] || ''}>{mem.evidence_level}</Badge>}
+                    {mem.volatility && <Badge tone="custom" className={VOLATILITY_TONES[mem.volatility] || ''}>{mem.volatility}</Badge>}
                     <span className="text-[10px] text-muted-foreground">importance {mem.importance}</span>
                     <div className="ml-auto flex items-center gap-1">
-                      <button onClick={() => handleFavorite(mem)} title={mem.is_favorite ? "Unfavorite (removes its shield)" : "Favorite (shields it from pruning and fading)"} className={`p-1.5 rounded-lg hover:bg-muted ${mem.is_favorite ? "text-amber-400" : "text-muted-foreground"}`}>
-                        <Star className={`w-3.5 h-3.5 ${mem.is_favorite ? "fill-amber-400" : ""}`} />
-                      </button>
+                      <IconBtn onClick={() => handleFavorite(mem)} title={mem.is_favorite ? "Unfavorite (removes its shield)" : "Favorite (shields it from pruning and fading)"} aria-label={mem.is_favorite ? 'Unfavorite' : 'Favorite'} className={mem.is_favorite ? "text-warn" : ""}>
+                        <Star className={`w-3.5 h-3.5 ${mem.is_favorite ? "fill-warn" : ""}`} />
+                      </IconBtn>
                       <button onClick={() => handleToggle(mem)} className="text-[10px] px-2 py-1 rounded-lg hover:bg-muted text-muted-foreground">
                         {mem.is_enabled ? 'Disable' : 'Enable'}
                       </button>
-                      <button onClick={() => { setEditingId(mem.id); setEditContent(mem.content); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><Edit2 className="w-3.5 h-3.5" /></button>
-                      <button onClick={() => handleDelete(mem.id)} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
+                      <IconBtn onClick={() => { setEditingId(mem.id); setEditContent(mem.content); }} aria-label="Edit memory"><Edit2 className="w-3.5 h-3.5" /></IconBtn>
+                      <IconBtn onClick={() => handleDelete(mem.id)} aria-label="Delete memory" className="hover:text-destructive"><Trash2 className="w-3.5 h-3.5" /></IconBtn>
                     </div>
                   </div>
                 </>
               )}
-            </div>
+            </Card>
           ))}
         </div>
       </div>

@@ -9,6 +9,7 @@ import {
   FileText, Sparkles, CircleCheck
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { Btn, EmptyState } from '@/components/ui/CognosUi';
 
 /** Evidence kind -> small icon. */
 const EVIDENCE_ICON = {
@@ -28,7 +29,7 @@ function IdeaCard({ idea, busy, onAccept, onDismiss }) {
     <div className="rounded-xl border border-amber-200/70 bg-amber-50/50 dark:border-amber-900/40 dark:bg-amber-950/20 overflow-hidden">
       <div className="px-4 py-3">
         <div className="flex items-start gap-2.5">
-          <Lightbulb className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+          <Lightbulb className="w-4 h-4 text-warn shrink-0 mt-0.5" />
           <div className="min-w-0 flex-1">
             <h4 className="text-sm font-semibold leading-snug">{idea.title}</h4>
             {idea.reason && (
@@ -55,22 +56,22 @@ function IdeaCard({ idea, busy, onAccept, onDismiss }) {
         </div>
       </div>
       <div className="flex items-center gap-2 px-4 py-2.5 border-t border-amber-200/60 dark:border-amber-900/40 bg-card/60">
-        <button
+        <Btn
+          variant="warm" size="sm"
           onClick={() => onAccept(idea.id)}
           disabled={busy}
-          className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-600 disabled:opacity-50 transition-colors"
           title="Turn this idea into a real task"
         >
           <Check className="w-3.5 h-3.5" /> Accept
-        </button>
-        <button
+        </Btn>
+        <Btn
+          variant="secondary" size="sm"
           onClick={() => onDismiss(idea.id)}
           disabled={busy}
-          className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-50"
           title="No thanks — put this one away"
         >
           <X className="w-3.5 h-3.5" /> Dismiss
-        </button>
+        </Btn>
         {idea.prompt && (
           <details className="ml-auto text-[10px] text-muted-foreground">
             <summary className="cursor-pointer hover:text-foreground">See the plan</summary>
@@ -154,22 +155,22 @@ export default function IdeasTab() {
     <div className="space-y-3">
       <div className="rounded-xl border border-border bg-card overflow-hidden">
         <header className="flex items-center gap-2 px-4 py-2.5 border-b border-border/60">
-          <Lightbulb className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+          <Lightbulb className="w-3.5 h-3.5 text-warn shrink-0" />
           <div className="flex-1 min-w-0">
             <h3 className="text-xs font-semibold">Ideas</h3>
             <p className="text-[10px] text-muted-foreground/70 leading-snug">
               Gentle suggestions from the loop — goals without a plan, residents without a job. Take one or leave it.
             </p>
           </div>
-          <button
+          <Btn
+            variant="secondary" size="sm"
             onClick={refresh}
             disabled={refreshing}
-            className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-50"
             title="Look for new ideas"
           >
             <RefreshCw className={`w-3 h-3 ${refreshing ? 'animate-spin' : ''}`} />
             {refreshing ? 'Looking…' : 'Check for ideas'}
-          </button>
+          </Btn>
         </header>
       </div>
 
@@ -178,20 +179,18 @@ export default function IdeasTab() {
       )}
       {lastNote && !error && (
         <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground px-1">
-          <CircleCheck className="w-3.5 h-3.5 text-green-500" /> {lastNote}
+          <CircleCheck className="w-3.5 h-3.5 text-ok" /> {lastNote}
         </p>
       )}
 
       {loading ? (
         <p className="text-xs text-muted-foreground py-6 text-center">Gathering ideas…</p>
       ) : ideas.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center">
-          <Sparkles className="w-5 h-5 text-amber-400 mx-auto" />
-          <p className="text-sm font-medium mt-2">All caught up</p>
-          <p className="text-[11px] text-muted-foreground mt-1 max-w-sm mx-auto">
-            Every goal has a plan and every resident has something to do. When that changes, an idea will show up here.
-          </p>
-        </div>
+        <EmptyState
+          icon={Sparkles}
+          title="All caught up"
+          body="Every goal has a plan and every resident has something to do. When that changes, an idea will show up here."
+        />
       ) : (
         <div className="space-y-2.5">
           {ideas.map(idea => (

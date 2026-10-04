@@ -3,6 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import { RefreshCw, Download, Check } from 'lucide-react';
 import { checkForUpdate } from '@/lib/appUpdates';
 import { getInstalledBuild, downloadAndInstallApk } from '@/lib/updaterNative';
+import { Btn, SectionCard } from '@/components/ui/CognosUi';
 
 const FRIENDLY_ERRORS = {
   network: 'Could not reach GitHub. Check your connection and try again.',
@@ -71,9 +72,7 @@ export default function AppUpdatesSection() {
   }, [release]);
 
   return (
-    <section className="space-y-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">App updates</h3>
-      <div className="rounded-xl border border-border bg-card p-3 text-xs space-y-2.5">
+    <SectionCard title="App updates" bodyClassName="text-xs space-y-2.5">
         {!isNative ? (
           <p className="text-muted-foreground leading-relaxed">
             One-tap updates are available in the Android app. This build is running on the web.
@@ -85,7 +84,7 @@ export default function AppUpdatesSection() {
             </p>
             {state === 'current' && (
               <p className="flex items-center gap-1.5 text-foreground/90">
-                <Check className="w-3.5 h-3.5 text-green-500" /> You are on the latest build.
+                <Check className="w-3.5 h-3.5 text-ok" /> You are on the latest build.
               </p>
             )}
             {state === 'available' && release && (
@@ -104,23 +103,23 @@ export default function AppUpdatesSection() {
               <p className="text-destructive leading-relaxed">{error}</p>
             )}
             <div className="flex flex-wrap items-center gap-2">
-              <button
+              <Btn
+                variant="secondary" size="sm"
                 type="button"
                 onClick={check}
                 disabled={state === 'checking' || state === 'downloading'}
-                className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${state === 'checking' ? 'animate-spin' : ''}`} />
                 {state === 'checking' ? 'Checking…' : 'Check for updates'}
-              </button>
+              </Btn>
               {state === 'available' && (
-                <button
+                <Btn
+                  variant="primary" size="sm"
                   type="button"
                   onClick={install}
-                  className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground"
                 >
                   <Download className="w-3.5 h-3.5" /> Download &amp; install
-                </button>
+                </Btn>
               )}
               {state === 'downloading' && (
                 <p className="text-muted-foreground">Downloading… watch the system notification for progress.</p>
@@ -128,7 +127,6 @@ export default function AppUpdatesSection() {
             </div>
           </>
         )}
-      </div>
-    </section>
+    </SectionCard>
   );
 }
