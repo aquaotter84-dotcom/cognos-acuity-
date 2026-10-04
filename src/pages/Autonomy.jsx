@@ -19,6 +19,12 @@
 //     each row jumping to the tab that resolves it;
 //   * plain-language labels, with the machine vocabulary demoted into a
 //     "Technical details" disclosure rather than deleted (see lib/autonomyLabels.js).
+//
+// v50 moves "Needs your attention" out of Overview and into its own landing
+// tab — the default, under a "Start here" group — and gathers the rest of
+// the tabs into labeled groups (The loop, The team, The work, Your
+// decisions). Still no new decision: every row of the aggregate is a link to
+// a barrier that already existed.
 // The designer drawer is the one place here that talks to a model, and it
 // creates nothing: it drafts rows and hands you an explicit Create button.
 
@@ -45,6 +51,7 @@ import {
 } from '@/lib/autonomyLabels';
 
 const TABS = [
+  { id: 'attention', label: 'Needs your attention', icon: Bell },
   { id: 'overview', label: 'Overview', icon: Gauge },
   { id: 'residents', label: 'Residents', icon: Bot },
   { id: 'tools', label: 'Tools', icon: Wrench },
@@ -56,6 +63,24 @@ const TABS = [
   { id: 'promotions', label: 'Promotions', icon: Sprout },
   { id: 'cleanup', label: 'Cleanup', icon: Sparkles },
 ];
+
+/**
+ * v50 — the ten Studio tabs, gathered into a smaller set of labeled groups,
+ * plus the "Needs your attention" landing that opens first. The landing
+ * aggregates everything waiting on Jeremy (approvals, unread notices,
+ * cleanup review, promotions, goals awaiting authorization); every group in
+ * the aggregate jumps straight to the tab that resolves it, so no approval
+ * or safety control is ever more than one tap away.
+ */
+const TAB_GROUPS = [
+  { heading: 'Start here', tabs: ['attention'] },
+  { heading: 'The loop', tabs: ['overview', 'activity'] },
+  { heading: 'The team', tabs: ['residents', 'tools'] },
+  { heading: 'The work', tabs: ['goals', 'ideas'] },
+  { heading: 'Your decisions', tabs: ['notices', 'outbox', 'promotions', 'cleanup'] },
+];
+
+const TAB_BY_ID = Object.fromEntries(TABS.map(t => [t.id, t]));
 
 /** Status -> pill tone. Parked and refused are the interesting ones. */
 const GOAL_TONE = {
@@ -2144,7 +2169,7 @@ function Outbox({ status, onChanged }) {
  */
 
 function Overview({ status, residents, goals, onTick, ticking, onToggle, toggling, bannerError,
-  attention, attentionLoading, onJump, onDesign, onSeedArchivist, seedingArchivist,
+  onDesign, onSeedArchivist, seedingArchivist,
   onAutoAuthorize, autoAuthBusy }) {
   const ceilings = status?.ceilings || {};
   const counts = status?.counts || {};
@@ -2251,8 +2276,9 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
         </p>
       </Section>
 
-      {/* What is waiting on you, above the numbers. The numbers are context; this is the question. */}
-      <AttentionPanel data={attention} onJump={onJump} loading={attentionLoading} />
+      {/* v50 — "Needs your attention" lives on its own landing tab now (the
+          default), so it appears exactly once. The numbers below are context;
+          the question is one tap up. */}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
@@ -2401,7 +2427,7 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
 // --------------------------------------------------------------------- page
 export default function Autonomy() {
   const { openSidebar } = useCognos() || {};
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useState('attention');
   const [status, setStatus] = useState(null);
   const [residents, setResidents] = useState([]);
   const [goals, setGoals] = useState([]);
@@ -2585,18 +2611,30 @@ export default function Autonomy() {
         </button>
       </header>
 
-      <div className="flex items-center gap-1 px-3 md:px-4 py-2 border-b border-border overflow-x-auto shrink-0">
-        {TABS.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs whitespace-nowrap transition-colors ${
-              tab === id ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-            }`}
-          >
-            <Icon className="w-3.5 h-3.5" /> {label}
-          </button>
-        ))}
+      <div className="px-3 md:px-4 py-2 border-b border-border overflow-x-auto shrink-0">
+        <div className="flex items-start gap-4 min-w-max">
+          {TAB_GROUPS.map(group => (
+            <div key={group.heading} className="shrink-0">
+              <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">{group.heading}</p>
+              <div className="flex items-center gap-1">
+                {group.tabs.map(id => {
+                  const { label, icon: Icon } = TAB_BY_ID[id];
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => setTab(id)}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs whitespace-nowrap transition-colors ${
+                        tab === id ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                      }`}
+                    >
+                      <Icon className="w-3.5 h-3.5" /> {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto scrollbar-thin px-3 md:px-4 py-4 min-h-0">
@@ -2605,14 +2643,22 @@ export default function Autonomy() {
 
           {!status ? (
             <p className="text-xs text-muted-foreground py-6 text-center">Loading autonomy status…</p>
+          ) : tab === 'attention' ? (
+            <div className="space-y-3">
+              <div className="px-1 pt-1">
+                <p className="orbit-eyebrow">Start here</p>
+                <h2 className="orbit-page-title text-xl mt-1">Needs your attention.</h2>
+                <p className="orbit-page-sub text-sm mt-1">Everything waiting on you, in one place. Nothing here happens until you decide.</p>
+              </div>
+              <AttentionPanel data={attention} onJump={setTab} loading={attentionLoading} />
+            </div>
           ) : tab === 'overview' ? (
             <Overview
               status={status} residents={residents} goals={goals}
               onTick={runTick} ticking={ticking}
               onToggle={handleToggle} toggling={toggling}
               bannerError={bannerError}
-              attention={attention} attentionLoading={attentionLoading}
-              onJump={setTab} onDesign={() => setDesignerOpen(true)}
+              onDesign={() => setDesignerOpen(true)}
               onSeedArchivist={seedArchivist} seedingArchivist={seedingArchivist}
               onAutoAuthorize={handleAutoAuthorize} autoAuthBusy={autoAuthBusy}
             />

@@ -110,13 +110,17 @@ export default function Sidebar({ onNavigate }) {
     }
   };
 
-  const navLink = (to, Icon, label, accent) => (
+  const navLink = (to, Icon, label, accent, sub) => (
     <Link
       to={to}
       onClick={onNavigate}
       className={`flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-muted/50 text-sm transition-colors ${location.pathname === to ? 'bg-muted/60' : ''}`}
     >
-      <Icon className={`w-4 h-4 ${accent || 'text-primary'}`} /> {label}
+      <Icon className={`w-4 h-4 shrink-0 ${accent || 'text-primary'}`} />
+      <span className="min-w-0">
+        <span className="block leading-tight">{label}</span>
+        {sub && <span className="block text-[10px] text-muted-foreground leading-tight">{sub}</span>}
+      </span>
     </Link>
   );
 
@@ -218,12 +222,18 @@ export default function Sidebar({ onNavigate }) {
         )}
       </div>
 
+      {/* v50 — navigation restructure. The everyday destinations sit on top;
+          the advanced ones live under a clearly-labeled "More" group. System
+          is framed as what it is: the diagnostic window (ledger, telemetry,
+          laws), not a peer of everyday tasks. Nothing is removed — every
+          route is still one click away. */}
       <div className="p-2 border-t border-border space-y-0.5">
         {navLink('/projects', Folder, 'Projects', 'text-accent')}
         {navLink('/autonomy', Bot, 'Studio', 'text-accent')}
         {navLink('/memory', Brain, 'Memory', 'text-accent')}
+        <p className="px-3 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">More</p>
         {navLink('/activity', ActivityIcon, 'Activity')}
-        {navLink('/system', Network, 'System')}
+        {navLink('/system', Network, 'System · diagnostics', null, 'Ledger, telemetry, and laws')}
         {navLink('/about', Cpu, 'About COGNOS', 'text-primary')}
         {navLink('/settings', SettingsIcon, 'Settings', 'text-muted-foreground')}
       </div>
