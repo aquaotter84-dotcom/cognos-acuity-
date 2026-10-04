@@ -3,17 +3,24 @@
 // approval barrier: approving consents (per-step, by scope hash) to the exact
 // public URLs the plan proposes; declining executes nothing. After either
 // decision the run is finished — the next message continues from its evidence.
+//
+// v51 — calmer on a phone: long step lists collapse to the first four with a
+// "show all" toggle; the consent language stays exact and explicit.
 
 import { useState } from 'react';
-import { AlertTriangle, Check, ClipboardCheck, ExternalLink, ShieldCheck, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ClipboardCheck, ExternalLink, ShieldCheck, ThumbsDown, ThumbsUp } from 'lucide-react';
+
+const COLLAPSED_STEPS = 4;
 
 export default function ResearchDecisionCard({ runId, steps, busy, error, onApprove, onDecline }) {
   const [reason, setReason] = useState('');
   const [declining, setDeclining] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const pending = (steps || []).filter(s => s.status === 'awaiting_approval' || s.status === 'approved');
   const urls = pending.map(s => (s.input || {}).url).filter(Boolean);
   const approvedCount = (steps || []).filter(s => s.requires_approval && s.status !== 'declined').length;
+  const visibleSteps = expanded ? (steps || []) : (steps || []).slice(0, COLLAPSED_STEPS);
 
   return (
     <div className="max-w-3xl mx-auto rounded-2xl border border-accent/40 bg-card shadow-lg overflow-hidden">
@@ -31,7 +38,7 @@ export default function ResearchDecisionCard({ runId, steps, busy, error, onAppr
       </div>
 
       <div className="px-4 py-2 space-y-1.5 max-h-56 overflow-y-auto">
-        {(steps || []).map(step => {
+        {visibleSteps.map(step => {
           const input = step.input || {};
           const url = input.url || '';
           return (
@@ -50,6 +57,17 @@ export default function ResearchDecisionCard({ runId, steps, busy, error, onAppr
           );
         })}
         {!steps?.length && <p className="text-xs text-muted-foreground py-2">No steps were proposed.</p>}
+        {(steps || []).length > COLLAPSED_STEPS && (
+          <button
+            type="button"
+            onClick={() => setExpanded(e => !e)}
+            className="w-full flex items-center justify-center gap-1 text-[11px] text-muted-foreground hover:text-foreground py-1.5 rounded-lg hover:bg-muted/40 transition-colors"
+            aria-expanded={expanded}
+          >
+            {expanded ? 'Show fewer steps' : `Show all ${steps.length} steps`}
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} aria-hidden />
+          </button>
+        )}
       </div>
 
       <div className="px-4 py-3 border-t border-border bg-muted/20">
@@ -61,8 +79,8 @@ export default function ResearchDecisionCard({ runId, steps, busy, error, onAppr
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex-1 min-w-0 basis-32">
             {declining ? (
               <input
                 autoFocus
@@ -76,7 +94,7 @@ export default function ResearchDecisionCard({ runId, steps, busy, error, onAppr
           <button
             onClick={() => { if (declining) { onDecline(reason.trim() || 'No reason given'); return; } setDeclining(true); }}
             disabled={busy}
-            className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-muted-foreground/40 disabled:opacity-40"
+            className="shrink-0 flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-muted-foreground/40 disabled:opacity-40"
           >
             {declining ? <Check className="w-3.5 h-3.5" /> : <ThumbsDown className="w-3.5 h-3.5" />}
             {declining ? 'Confirm decline' : 'Decline'}
@@ -84,7 +102,7 @@ export default function ResearchDecisionCard({ runId, steps, busy, error, onAppr
           <button
             onClick={() => { setDeclining(false); setReason(''); onApprove(); }}
             disabled={busy || !steps?.length}
-            className="flex items-center gap-1.5 rounded-lg bg-accent text-accent-foreground px-3 py-1.5 text-xs font-medium disabled:opacity-40"
+            className="shrink-0 flex items-center gap-1.5 rounded-lg bg-accent text-accent-foreground px-3 py-1.5 text-xs font-medium disabled:opacity-40"
             title={busy ? 'Working…' : 'Approve the plan and run the listed steps'}
           >
             {busy ? (

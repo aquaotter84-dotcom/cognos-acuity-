@@ -302,7 +302,9 @@ export function registerChatRoute(app, { wrap, db, logger }) {
           conversation_id: conversationId,
           workspace_id: workspace.id,
           role: "assistant",
-          content: `⚠️ **The council could not answer.**\n\n${error.message || "Unknown error"}`,
+          // v51 — the client renders failed turns as a calm error card with its own
+          // warm title, so the stored content is just the detail.
+          content: error.message || "Unknown error",
           processing_status: "error"
         });
         if (ledgerEnabled()) {

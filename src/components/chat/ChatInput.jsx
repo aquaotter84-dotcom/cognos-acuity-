@@ -164,10 +164,12 @@ export default function ChatInput({
   sources = [],
   onSourcesChange = () => {},
   agentMode = 'research',
-  onAgentModeChange = () => {},
   // Phase 37c — the follow-up queue (ConversationQueue instance) and the
   // resume-and-drain callback. `disabled` now means "no workspace"; the
   // composer itself stays live and editable while a reply streams.
+  // v51 — agentMode still rides along with every send, but the selector UI
+  // moved to the consolidated "How COGNOS answers" sheet; the composer row
+  // keeps only the message itself, attachments, dictation, and send.
   queue = null,
   onQueueResume = () => {},
 }) {
@@ -238,8 +240,6 @@ export default function ChatInput({
             disabled={disabled}
             sources={sources}
             onSourcesChange={onSourcesChange}
-            agentMode={agentMode}
-            onAgentModeChange={onAgentModeChange}
           />
           {micSupported && (
             <button

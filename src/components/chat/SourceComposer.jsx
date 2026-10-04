@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bot, FileText, Image as ImageIcon, Link as LinkIcon, Loader2, Paperclip, ShieldAlert, X } from 'lucide-react';
+import { FileText, Image as ImageIcon, Link as LinkIcon, Loader2, Paperclip, ShieldAlert, X } from 'lucide-react';
 import { api } from '@/lib/api';
 
 const MAX_FILE_BYTES = 6_000_000; // base64 JSON must stay under the 10 MB body limit
@@ -50,14 +50,15 @@ function SourceRow({ source, selected, onToggle }) {
   );
 }
 
+// v51 — this popover is now only about attaching evidence. The agent-mode
+// selector moved to the consolidated "How COGNOS answers" sheet on the Chat
+// page, so the composer row stays about the message itself.
 export default function SourceComposer({
   conversationId,
   projectId,
   disabled,
   sources,
-  onSourcesChange,
-  agentMode,
-  onAgentModeChange
+  onSourcesChange
 }) {
   const [open, setOpen] = useState(false);
   const [recent, setRecent] = useState([]);
@@ -149,22 +150,6 @@ export default function SourceComposer({
         <Paperclip className="w-4 h-4" />
       </button>
 
-      <div className="flex items-center gap-1 rounded-lg border border-border bg-muted/30 px-1.5 py-1" title="Bounded agent mode">
-        <Bot className="w-3.5 h-3.5 text-muted-foreground" />
-        <select
-          value={agentMode}
-          onChange={event => onAgentModeChange(event.target.value)}
-          disabled={disabled}
-          aria-label="Agent mode"
-          className="bg-transparent text-[11px] outline-none max-w-[88px]"
-        >
-          <option value="off">Agent off</option>
-          <option value="observe">Observe</option>
-          <option value="read_only">Read only</option>
-          <option value="research">Research</option>
-        </select>
-      </div>
-
       {open && (
         <div className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 bg-card border border-border rounded-2xl shadow-xl p-3 max-h-[65vh] overflow-y-auto">
           <div className="flex items-center justify-between mb-2">
@@ -224,10 +209,8 @@ export default function SourceComposer({
             )) : <p className="text-xs text-muted-foreground py-3 text-center">No sources yet.</p>}
           </div>
 
-          <div className="mt-3 pt-3 border-t border-border text-[10px] text-muted-foreground space-y-1">
-            <p><strong>Observe:</strong> records the read plan but opens no URLs automatically.</p>
-            <p><strong>Read only:</strong> may safely open explicit URLs in your message. It cannot write memory or release an answer.</p>
-            <p><strong>Research:</strong> inspects the project's evidence, proposes a finite plan, and opens approved links only after you approve each step. It never answers on its own.</p>
+          <div className="mt-3 pt-3 border-t border-border text-[10px] text-muted-foreground">
+            <p>Attached sources are immutable snapshots — COGNOS reads them as they are.</p>
           </div>
         </div>
       )}

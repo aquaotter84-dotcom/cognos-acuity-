@@ -19,7 +19,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Bot, Folder, Menu, Globe, Volume2, VolumeX } from 'lucide-react';
+import { Bot, Folder, Menu, Volume2, VolumeX } from 'lucide-react';
 import { api, sendMessage } from '@/lib/api';
 import { ConversationQueue } from '@/lib/conversationQueue';
 import { useCognos } from '@/lib/cognosContext';
@@ -29,6 +29,10 @@ import ChatInput from '@/components/chat/ChatInput';
 import WelcomeScreen from '@/components/chat/WelcomeScreen';
 import ResearchDecisionCard from '@/components/chat/ResearchDecisionCard';
 import GoalCard from '@/components/chat/GoalCard';
+// v51 — Chat as the front door: persona, answer style, web lookup, and
+// research help live in one consolidated control set (a chip strip of active
+// choices + a single sheet), instead of crowding the header and the composer.
+import { ChatControlSheet, ActiveChoiceChips, STYLE_OPTIONS } from '@/components/chat/ChatControls';
 // Phase 25 — the resident designer is reachable from chat as well as from the
 // Autonomy page, and it is the same component: describing a resident is a
 // conversation, and this is where conversations already happen. It creates
@@ -36,7 +40,7 @@ import GoalCard from '@/components/chat/GoalCard';
 import DesignerDrawer from '@/components/autonomy/DesignerDrawer';
 import HeartbeatCard from '@/components/chat/HeartbeatCard';
 
-const STYLES = ['balanced', 'casual', 'technical', 'strategic'];
+const STYLE_VALUES = STYLE_OPTIONS.map((o) => o.value);
 
 // Offline outbox: messages typed with no connection are persisted locally and
 // sent in order when the connection returns.
@@ -65,12 +69,32 @@ export default function Chat() {
   const [messages, setMessages] = useState([]);
   const [councilTraces, setCouncilTraces] = useState({});
   const [conversationSummary, setConversationSummary] = useState(null);
-  const [style, setStyle] = useState('balanced');
+  // v51 — answer style persists on this device like the agent mode does, so
+  // the "How COGNOS answers" choices survive a reload.
+  const [style, setStyleState] = useState(() => {
+    try {
+      const saved = localStorage.getItem('cognos.chatStyle');
+      return STYLE_VALUES.includes(saved) ? saved : 'balanced';
+    } catch { return 'balanced'; }
+  });
+  const setStyle = (s) => {
+    const next = STYLE_VALUES.includes(s) ? s : 'balanced';
+    setStyleState(next);
+    try { localStorage.setItem('cognos.chatStyle', next); } catch { /* private mode */ }
+  };
   // Phase 32 — personas: the active voice/style bundle. Switching changes how
   // COGNOS talks on the next turn, never the conversation history or state.
   const [personas, setPersonas] = useState([]);
   const [activePersonaId, setActivePersonaId] = useState(null);
-  const [webSearch, setWebSearch] = useState(false);
+  const [webSearch, setWebSearchState] = useState(() => {
+    try { return localStorage.getItem('cognos.webSearch') === '1'; }
+    catch { return false; }
+  });
+  const setWebSearch = (v) => {
+    const next = Boolean(v);
+    setWebSearchState(next);
+    try { localStorage.setItem('cognos.webSearch', next ? '1' : '0'); } catch { /* private mode */ }
+  };
   const [selectedSources, setSelectedSources] = useState([]);
   // The agent-mode default is Research (Jeremy's standing choice); an explicit
   // pick persists in localStorage and wins over the default on every load.
@@ -101,6 +125,13 @@ export default function Chat() {
   const [goalBusy, setGoalBusy] = useState(false);
   const [goalError, setGoalError] = useState('');
   const [carried, setCarried] = useState(null);
+  // v51 — the consolidated "How COGNOS answers" sheet, the calm loading state
+  // shown while a conversation's messages are being fetched, and the error
+  // state when that fetch fails (with a retry).
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [loadingConversation, setLoadingConversation] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
 
   // Phase 31 — the morning greeting: one fetch per app session, against the
   // device clock. The server dedupes per day, so this is naturally once-daily.
@@ -217,9 +248,13 @@ export default function Chat() {
       setMessages([]);
       setCouncilTraces({});
       setConversationSummary(null);
+      setLoadingConversation(false);
+      setLoadError(false);
       return;
     }
     let cancelled = false;
+    setLoadingConversation(true);
+    setLoadError(false);
     api.getConversation(conversationId)
       .then(({ conversation, messages }) => {
         if (cancelled) return;
@@ -232,10 +267,11 @@ export default function Chat() {
         const traces = {};
         for (const m of messages) if (m.council) traces[m.id] = m.council;
         setCouncilTraces(traces);
+        setLoadingConversation(false);
       })
-      .catch(() => { if (!cancelled) setMessages([]); });
+      .catch(() => { if (!cancelled) { setMessages([]); setLoadingConversation(false); setLoadError(true); } });
     return () => { cancelled = true; };
-  }, [conversationId]);
+  }, [conversationId, reloadToken]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -383,11 +419,15 @@ export default function Chat() {
             refreshConversations();
           },
           error: (data) => {
-            if (data.message) setMessages(prev => [...prev, data.message]);
+            // v51 — failed turns become a calm error card with a retry, not a
+            // raw markdown bubble. The card renders the warm title; the stored
+            // content is just the detail, plus the text to retry with.
+            if (data.message) setMessages(prev => [...prev, { ...data.message, retryText: text }]);
             else setMessages(prev => [...prev, {
               id: `err_${Date.now()}`, role: 'assistant',
-              content: `⚠️ **The council could not answer.**\n\n${data.error}`,
-              processing_status: 'error'
+              content: data.error || 'Something went wrong on the way to an answer.',
+              processing_status: 'error',
+              retryText: text
             }]);
           }
         },
@@ -397,8 +437,9 @@ export default function Chat() {
       if (err.name !== 'AbortError') {
         setMessages(prev => [...prev, {
           id: `err_${Date.now()}`, role: 'assistant',
-          content: `⚠️ **The council could not answer.**\n\n${err.message}`,
-          processing_status: 'error'
+          content: err.message || 'Something went wrong on the way to an answer.',
+          processing_status: 'error',
+          retryText: text
         }]);
       }
     } finally {
@@ -558,30 +599,19 @@ export default function Chat() {
         >
           {voiceSettings.enabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
         </button>
-        <button
-          onClick={() => setWebSearch(v => !v)}
-          className={`p-1.5 rounded-lg transition-colors ${webSearch ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-foreground'}`}
-          title={webSearch ? 'Web search on' : 'Web search off'}
-        >
-          <Globe className="w-4 h-4" />
-        </button>
-        <select
-          value={activePersonaId || ''}
-          onChange={e => switchPersona(e.target.value)}
-          className="bg-muted/50 border border-border rounded-lg text-xs px-2 py-1.5 outline-none max-w-[7rem]"
-          title="Persona — the voice COGNOS talks in. Changes how it speaks, never what it may do."
-          aria-label="Active persona"
-        >
-          {personas.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-        <select
-          value={style}
-          onChange={e => setStyle(e.target.value)}
-          className="bg-muted/50 border border-border rounded-lg text-xs px-2 py-1.5 outline-none"
-        >
-          {STYLES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
       </header>
+
+      {/* v51 — the consolidated control set: active choices as chips, one
+          sheet behind them. The header keeps only the conversation's name;
+          the composer and the conversation stay the focus. */}
+      <ActiveChoiceChips
+        style={style}
+        webSearch={webSearch}
+        personas={personas}
+        activePersonaId={activePersonaId}
+        agentMode={agentMode}
+        onOpen={() => setSheetOpen(true)}
+      />
 
       <div className="flex-1 overflow-y-auto scrollbar-thin min-h-0">
         {heartbeat && (
@@ -593,12 +623,44 @@ export default function Chat() {
             />
           </div>
         )}
-        {messages.length === 0 && !draft ? (
+        {/* v51 — calm loading state while a conversation's messages arrive;
+            a failed load gets its own honest error (with retry) instead of
+            falling through to the welcome screen; the welcome screen only
+            shows for a genuinely empty thread. */}
+        {conversationId && loadError && messages.length === 0 && !draft && !loadingConversation ? (
+          <div className="max-w-3xl mx-auto px-3 md:px-4 py-12 text-center" role="alert">
+            <p className="text-sm font-medium">Couldn't open this conversation.</p>
+            <p className="text-xs text-muted-foreground mt-1">Check your connection and try again.</p>
+            <button
+              type="button"
+              onClick={() => setReloadToken((t) => t + 1)}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-primary/10 text-primary px-3 py-1.5 text-xs font-medium hover:bg-primary/20 active:bg-primary/25 transition-colors"
+            >
+              Try again
+            </button>
+          </div>
+        ) : conversationId && loadingConversation && messages.length === 0 && !draft ? (
+          <div className="max-w-3xl mx-auto px-3 md:px-4 py-6 space-y-4" role="status" aria-label="Opening conversation">
+            <div className="flex justify-end">
+              <div className="h-10 w-2/3 rounded-2xl rounded-br-md bg-muted/60 animate-pulse" />
+            </div>
+            <div className="h-24 w-11/12 rounded-2xl rounded-tl-md bg-muted/60 animate-pulse" />
+            <div className="flex justify-end">
+              <div className="h-10 w-1/2 rounded-2xl rounded-br-md bg-muted/60 animate-pulse" />
+            </div>
+            <p className="text-center text-xs text-muted-foreground pt-2">Opening conversation…</p>
+          </div>
+        ) : messages.length === 0 && !draft ? (
           <WelcomeScreen onSuggestion={(t) => sendOrQueue(t)} />
         ) : (
           <div className="max-w-3xl mx-auto px-3 md:px-4 py-4 space-y-4">
             {messages.map(m => (
-              <ChatMessage key={m.id} message={m} council={councilTraces[m.id]} />
+              <ChatMessage
+                key={m.id}
+                message={m}
+                council={councilTraces[m.id]}
+                onRetry={(t) => sendOrQueue(t, { sources: selectedSources, agentMode })}
+              />
             ))}
             {draft && (
               <ChatMessage
@@ -698,9 +760,22 @@ export default function Chat() {
         sources={selectedSources}
         onSourcesChange={setSelectedSources}
         agentMode={agentMode}
-        onAgentModeChange={handleAgentModeChange}
         queue={queueRef.current}
         onQueueResume={resumeQueue}
+      />
+
+      <ChatControlSheet
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        style={style}
+        onStyleChange={setStyle}
+        webSearch={webSearch}
+        onWebSearchChange={setWebSearch}
+        personas={personas}
+        activePersonaId={activePersonaId}
+        onPersonaChange={switchPersona}
+        agentMode={agentMode}
+        onAgentModeChange={handleAgentModeChange}
       />
 
       <DesignerDrawer open={designerOpen} onClose={() => setDesignerOpen(false)} />
