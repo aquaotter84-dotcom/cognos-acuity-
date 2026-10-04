@@ -358,7 +358,8 @@ export async function stalledGoalLine({ db, workspaceId, nowMs = Date.now() } = 
   const touchedMs = new Date(row.touched).getTime();
   if (!Number.isFinite(touchedMs)) return null;
   const days = Math.floor((nowMs - touchedMs) / 86400_000);
-  if (days < 4) return null;
+  // The threshold lives in STALL_MS above — change it there, not here.
+  if (nowMs - touchedMs < STALL_MS) return null;
   const title = String(row.title).slice(0, 60);
   return `"${title}" has been quiet for ${days} days. No rush — it's still here when you want it.`;
 }

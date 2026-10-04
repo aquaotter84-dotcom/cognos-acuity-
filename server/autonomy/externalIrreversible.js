@@ -17,11 +17,7 @@
 //     names it — the loop stages and judges, and only the human decides whether
 //     the publish actually happens.
 
-import { stageEffect, decideEffect } from "./outbox.js";
-
-function rulesOf(verdict) {
-  return (verdict?.failed || []).map(f => f.rule).filter(Boolean).join(", ") || "refused";
-}
+import { stageEffect, decideEffect, rulesOf } from "./outbox.js";
 
 /**
  * Stage, judge, and — only on a live verdict that a human approval released —
@@ -95,6 +91,12 @@ export async function requestIrreversible({
       effects.shadowed += 1;
       return { ok: true, effectId: row.id, effects, replayed: true, shadow: true,
         output: { shadow: true, note: "shadow mode: judged, recorded, not published" } };
+    }
+    if (status === "reverted") {
+      // Undone is not refused: the operator reversed this effect, so it must
+      // not run again — and must not be counted as a refusal either.
+      return { ok: false, error: "publish reverted on replay: the effect was undone and will not run again",
+        effectId: row.id, effects };
     }
     effects.refused += 1;
     return { ok: false, error: `publish refused on replay: ${rulesOf(decision.verdict)}`, effectId: row.id, effects };

@@ -42,7 +42,10 @@ export function startHeartbeat({ db, logger = createLogger("autonomy.heartbeat")
       if (config.enabled !== true) { lastResult = { frozen: true }; return; }
       lastResult = await runTick({ db, config, workerId: `heartbeat:${process.pid}` });
       ticks++;
-      if (lastResult.goalsClaimed || lastResult.effectsRefused) {
+      // runTick always returns a summary object, but the guard is cheap and a
+      // null result must not throw a spurious "tick failed" for a tick that
+      // may have succeeded.
+      if (lastResult && (lastResult.goalsClaimed || lastResult.effectsRefused)) {
         logger.info("autonomy tick", {
           goals: lastResult.goalsClaimed,
           steps: lastResult.stepsExecuted,

@@ -5,7 +5,8 @@
 // or `dry_run` records the verdict and performs nothing.
 //
 //   staging is not acting        (pin.effect_staged)
-//   reversal is a new row        (pin.ledger_append_only)
+//   reversal is a recorded transition on the row, with the full history kept
+//     in the append-only outbox event log   (pin.ledger_append_only)
 //   refusals are rows, not throws
 
 import { createHash } from "node:crypto";
@@ -319,7 +320,8 @@ function splitExecutorResult(settled) {
  * The release event names what was recorded without duplicating it into a
  * second row: ids and counts, never the receipt's full body.
  */
-function minimizeReceipt(receipt) {
+/** Kept exported for the v40 regression suite: the event stream must not lose the rule. */
+export function minimizeReceipt(receipt) {
   if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) return receipt ?? null;
   if (receipt.noticeId) return { noticeId: receipt.noticeId };
   if (receipt.sourceId) {
@@ -338,6 +340,17 @@ function minimizeReceipt(receipt) {
       ...(receipt.signed !== undefined ? { signed: receipt.signed } : {})
     };
   }
+  // A failed delivery receipt keeps the part an operator acts on: the rule id
+  // (TIMEOUT, UNSAFE_URL, ...), plus attempts and redirects. The full receipt
+  // stays on the row; the event stream keeps what triages it.
+  if (receipt.failed === true) {
+    return {
+      failed: true,
+      ...(receipt.rule !== undefined ? { rule: receipt.rule } : {}),
+      ...(typeof receipt.attempts === "number" ? { attempts: receipt.attempts } : {}),
+      ...(typeof receipt.redirects === "number" ? { redirects: receipt.redirects } : {})
+    };
+  }
   return { keys: Object.keys(receipt).sort() };
 }
 
@@ -351,6 +364,13 @@ export async function decideEffect({ db, effectId, goal, authorization = null, c
   // Replay safety: an effect that already reached a terminal state returns its
   // prior verdict instead of running again. One delivery, not two.
   if (["released", "would_release", "refused", "reverted"].includes(effect.status)) {
+    // The verdict column may come back from the DB as a JSON string rather
+    // than an object — normalize before reading it, or the T5 check below
+    // silently takes the wrong branch.
+    let verdictOf = effect.verdict;
+    if (typeof verdictOf === "string") {
+      try { verdictOf = JSON.parse(verdictOf); } catch { verdictOf = null; }
+    }
     // The one exception is T5. A T5 effect refused for want of a human approval
     // is not terminal in the way a refused T4 is: the tier's whole point is
     // that the approval arrives AFTER the loop's shadow refusal and re-opens
@@ -359,15 +379,15 @@ export async function decideEffect({ db, effectId, goal, authorization = null, c
     // row, if one now names it; without one, it refuses again for the same
     // named reason.
     const awaitingApproval = effect.status === "refused" && effect.tier === "T5"
-      && Array.isArray(effect.verdict?.failed)
-      && effect.verdict.failed.length > 0
-      && effect.verdict.failed.every(f => f?.rule === "T5_NEEDS_HUMAN");
+      && Array.isArray(verdictOf?.failed)
+      && verdictOf.failed.length > 0
+      && verdictOf.failed.every(f => f?.rule === "T5_NEEDS_HUMAN");
     if (!awaitingApproval) {
       return {
         ok: true,
         replayed: true,
         row: effect,
-        verdict: effect.verdict || { decision: "replay", failed: [], passed: [] }
+        verdict: verdictOf || { decision: "replay", failed: [], passed: [] }
       };
     }
   }
@@ -413,7 +433,8 @@ export async function decideEffect({ db, effectId, goal, authorization = null, c
       status: "would_release",
       verdict,
       receipt,
-      releasedMs: nowMs
+      // No releasedMs here: nothing was performed. The stamp belongs to
+      // releases, and a shadow row wearing one lies about what happened.
     });
     await db.OutboxEvent.append({
       outbox_id: effect.id,
@@ -479,6 +500,19 @@ export async function decideEffect({ db, effectId, goal, authorization = null, c
     await goalEvent(db, effect, "effect_failed", row, { error: message });
     return { ok: true, row, verdict, executed: false, error: message };
   }
+}
+
+/**
+ * The rule ids that fired, as a list. The tick reads this to tell a ceiling
+ * (park now) from an obstacle (retry, then park on the failure brake).
+ */
+export function rulesList(verdict) {
+  return (verdict?.failed || []).map(f => f.rule).filter(Boolean);
+}
+
+/** The rule ids that fired, as a human-readable comma string. */
+export function rulesOf(verdict) {
+  return rulesList(verdict).join(", ") || "refused";
 }
 
 /**
@@ -553,8 +587,12 @@ export async function refuseEffect({ db, effectId, reason = null, decidedBy = "o
 }
 
 /**
- * Reversal is a NEW ROW. The original is never edited or deleted, so the
- * record keeps both the attempt and the reversal.
+ * Reversal is a RECORDED TRANSITION, not a new row and not an edit that hides
+ * history. The effect row keeps its identity (one row per staged effect), the
+ * status moves to `reverted`, the receipt keeps both the original outcome and
+ * the reversal note — and the append-only outbox event log records the
+ * transition as its own row. The record keeps the attempt and the reversal;
+ * nothing is edited away.
  *
  * And reversal is honest about what it can undo. A staged, shadowed or refused
  * effect is undone by the transition — nothing ever happened. A RELEASED

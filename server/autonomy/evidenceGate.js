@@ -28,7 +28,7 @@ import { createHash } from "node:crypto";
 import { SECRET_PATTERNS } from "../meta/policy.js";
 import { getSkill } from "../skills/index.js";
 import { canonicalize } from "./authorize.js";
-import { destinationsForScope } from "./scopeUrl.js";
+import { destinationsForScope, urlAllowedByScope } from "./scopeUrl.js";
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 
@@ -127,7 +127,11 @@ export function auditRelease(row, { goal = null, approvals = null } = {}) {
       const granted = destinationsForScope(parse(goal.scope, {}), {
         effectType: row.effect_type, skillId
       });
-      const covered = granted.some(entry => url === entry || url.startsWith(entry.replace(/\/$/, "")));
+      // The audit judges with the SAME matcher the Governor judges with.
+      // A naive string-prefix check here would pass destinations the live
+      // matcher refuses (a /docs grant covering /docs2-evil), so the audit
+      // could miss exactly the false releases it exists to catch.
+      const covered = urlAllowedByScope(url, granted).allowed;
       if (!covered) reasons.push(`the destination is not in the goal's granted destinations (${granted.length} granted)`);
     }
   }

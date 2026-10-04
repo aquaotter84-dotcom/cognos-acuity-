@@ -38,7 +38,7 @@ import AuthorizeConsent from '@/components/autonomy/AuthorizeConsent';
 import { ARCHIVIST } from '@/lib/archivist';
 import {
   GLOSSARY, TIER_LABEL, effectStatusLabel, goalStatusLabel,
-  humanInterval, parkReasonLabel, tierLabel,
+  humanInterval, outboxModeLabel, parkReasonLabel, tierLabel,
 } from '@/lib/autonomyLabels';
 
 const TABS = [
@@ -394,7 +394,7 @@ function StatusBanner({ status, busy, onToggle, onError }) {
           {canToggle && <EnableToggle status={status} busy={busy} onToggle={onToggle} />}
           {!canToggle && (
             <div className="flex flex-col items-end gap-1">
-              <Pill tone="muted">outbox: {status?.outboxMode || 'shadow'}</Pill>
+              <Pill tone="muted">outbox: {outboxModeLabel(status?.outboxMode || 'shadow')}</Pill>
               <Pill tone="muted">{(status?.builtTiers || []).length} tiers built</Pill>
             </div>
           )}
@@ -1620,7 +1620,7 @@ function Outbox({ status, onChanged }) {
               </p>
             );
           })()}
-          <Pill tone={writes.deliversNow ? 'bad' : 'info'}>outbox {status?.outboxMode || 'shadow'}</Pill>
+          <Pill tone={writes.deliversNow ? 'bad' : 'info'}>outbox {outboxModeLabel(status?.outboxMode || 'shadow')}</Pill>
           {/* Two facts, because they are two facts. `deliversNow` answers "does
               the LOOP perform a release verdict?" — and an operator's Approve on
               a staged row is a live decision whatever the loop's mode is, so a

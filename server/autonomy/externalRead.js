@@ -23,21 +23,9 @@
 // `shadow: true`, and no socket opens. That is the corpus Rung 4 will be
 // judged on.
 
-import { stageEffect, decideEffect } from "./outbox.js";
+import { stageEffect, decideEffect, rulesOf, rulesList } from "./outbox.js";
 
 const EXCERPT_CHARS = 4000;
-
-function rulesOf(verdict) {
-  return rulesList(verdict).join(", ") || "refused";
-}
-
-/**
- * The rule ids that fired, as a list. The tick reads this to tell a ceiling
- * (park now) from an obstacle (retry, then park on the failure brake).
- */
-function rulesList(verdict) {
-  return (verdict?.failed || []).map(f => f.rule).filter(Boolean);
-}
 
 /**
  * Stage, judge, and (on a live release) perform one external read.
@@ -96,6 +84,20 @@ export async function requestExternalRead({
       effects.shadowed += 1;
       return { ok: true, effectId: row.id, effects, replayed: true,
         output: { shadow: true, note: "shadow mode: judged, recorded, not performed" } };
+    }
+    if (status === "released" && payload.op === "search") {
+      // A search's result is never stored (it is keyed per step and meant to
+      // be re-judgeable), so a replay cannot re-read a snapshot the way a
+      // fetch can. The success stands; it is reported as a replay, not a
+      // refusal — a genuine success must never be counted as one.
+      return { ok: true, effectId: row.id, effects, replayed: true,
+        output: { note: "the search already ran; its result was not stored and is not fetched again" } };
+    }
+    if (status === "reverted") {
+      // Undone is not refused: the operator reversed this effect, so it must
+      // not run again — and must not be counted as a refusal either.
+      return { ok: false, error: "read reverted on replay: the effect was undone and will not run again",
+        effectId: row.id, effects };
     }
     effects.refused += 1;
     return { ok: false, error: `read refused on replay: ${rulesOf(decision.verdict)}`,

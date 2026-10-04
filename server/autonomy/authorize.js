@@ -39,7 +39,11 @@ export function authorizationCovers(authorization, { goalId, scope, budget, nowM
     && current.budgetSha256 === authorization.budget_sha256;
 }
 
-/** A budget may only be tightened, never raised, without a new authorization. */
+/**
+ * A budget may only be tightened, never raised — and never have a cap removed
+ * — without a new authorization. Dropping a key deletes the cap, which is the
+ * opposite of tightening it.
+ */
 export function isTightening(current = {}, proposed = {}) {
   for (const [key, value] of Object.entries(proposed)) {
     if (typeof value !== "number" || !Number.isFinite(value)) continue;
@@ -47,6 +51,10 @@ export function isTightening(current = {}, proposed = {}) {
     if (existing !== undefined && Number.isFinite(Number(existing)) && value > Number(existing)) {
       return false;
     }
+  }
+  for (const [key, value] of Object.entries(current)) {
+    if (typeof value !== "number" || !Number.isFinite(value)) continue;
+    if (proposed[key] === undefined) return false;
   }
   return true;
 }

@@ -349,8 +349,17 @@ export function pinnedTransport({ url, headers, body, records, timeoutMs, signal
         encoding
       }));
       // The safe reader asked for identity encoding; anything else is a body we
-      // cannot bound or digest honestly, so the socket closes instead.
-      if (!["", "identity"].includes(encoding)) response.destroy();
+      // cannot bound or digest honestly, so the delivery is refused outright.
+      // This must REJECT the promise: a bare response.destroy() emits neither
+      // 'error' nor 'end', which would leave the promise unsettled forever and
+      // wedge the tick waiting on it.
+      if (!["", "identity"].includes(encoding)) {
+        response.destroy();
+        finish(reject, Object.assign(
+          new Error(`the receiver answered with content-encoding '${encoding}', which the safe reader cannot bound; the delivery is refused`),
+          { rule: "UNSAFE_ENCODING" }));
+        return;
+      }
     });
 
     req.setTimeout(timeoutMs, () => req.destroy(

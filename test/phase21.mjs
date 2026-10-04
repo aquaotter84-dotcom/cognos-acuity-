@@ -27,7 +27,7 @@ import {
   deliverWebhook, signBody, isAllowedHeaderName, FORBIDDEN_HEADERS
 } from "../server/autonomy/webhookPost.js";
 import { destinationsForScope, urlAllowedByScope } from "../server/autonomy/scopeUrl.js";
-import { autonomyConfig, insideQuietHours, tierAllowed } from "../server/autonomy/config.js";
+import { autonomyConfig, insideQuietHours, hourInTimeZone, tierAllowed } from "../server/autonomy/config.js";
 import { judgeEffect } from "../server/autonomy/actionGovernor.js";
 import { auditCorpus, auditRelease, metricsDigest } from "../server/autonomy/evidenceGate.js";
 import { scopeHashes } from "../server/autonomy/authorize.js";
@@ -429,7 +429,8 @@ await test("the Action Governor judges a T4 write harder than a read of the same
   assert.ok((await refused(fxPayload({ headers: { Authorization: `Bearer ${SECRET_VALUE}` } }))).includes("HEADER_NOT_ALLOWED"));
   assert.ok((await refused(fxPayload({ headers: { "x-cognos-signature": "sha256=spoof" } }))).includes("HEADER_NOT_ALLOWED"),
     "provenance headers cannot be supplied by the model");
-  assert.ok((await refused(fxPayload({ body: "" }))).includes("BODY_TOO_LARGE"));
+  assert.ok((await refused(fxPayload({ body: "" }))).includes("BODY_REQUIRED"),
+    "a missing body is a presence violation, not a size violation");
   assert.ok((await refused(fxPayload({ body: "é".repeat(17_000) }))).includes("BODY_TOO_LARGE"),
     "the body cap is bytes, and the character schema does not imply it");
   const overCap = await judge(fxPayload({ body: "é".repeat(17_000) }));
@@ -486,8 +487,10 @@ await test("the Action Governor judges a T4 write harder than a read of the same
   assert.ok(rulesOf(spentOut).includes("GOAL_BUDGET_EXHAUSTED"), JSON.stringify(spentOut.failed));
 
   // --- quiet hours ------------------------------------------------------------
-  const now = new Date();
-  const qh = { enabled: true, misconfigured: false, startHour: now.getHours(), endHour: (now.getHours() + 1) % 24 };
+  // The Governor reads the window in the config's user timezone (the human's
+  // day), so the probe window is built in that same zone — not the server's.
+  const tzHour = hourInTimeZone(Date.now(), cfgT4({}).userTimeZone);
+  const qh = { enabled: true, misconfigured: false, startHour: tzHour, endHour: (tzHour + 1) % 24 };
   const quiet = await judge(fx(), { config: cfgT4({ quietHours: qh }) });
   assert.ok(rulesOf(quiet).includes("QUIET_HOURS"), JSON.stringify(quiet.failed));
   // A notice is how an operator learns a goal parked, so the same window must
@@ -1541,7 +1544,9 @@ await test("quiet hours refuse a delivery at the Governor, and the same window d
   const goalRow = await db.AutonomyGoal.get(made.id);
   sink.seen.length = 0;
 
-  const hour = new Date().getHours();
+  // The Governor reads the window in the config's user timezone, so the probe
+  // window is built there too.
+  const hour = hourInTimeZone(Date.now(), autonomyConfig().userTimeZone);
   const prev = process.env.COGNOS_AUTONOMY_QUIET_HOURS;
   process.env.COGNOS_AUTONOMY_QUIET_HOURS = `${hour}-${(hour + 1) % 24}`;
   try {

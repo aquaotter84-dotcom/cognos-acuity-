@@ -87,6 +87,18 @@ export function effectStatusLabel(status) {
   return EFFECT_STATUS_LABEL[key] || key.replace(/_/g, ' ') || '—';
 }
 
+/** Outbox modes, as the pills show them. */
+export const OUTBOX_MODE_LABEL = {
+  shadow: 'Shadow (practice)',
+  dry_run: 'Dry run',
+  live: 'Live',
+};
+
+export function outboxModeLabel(mode) {
+  const key = String(mode || '');
+  return OUTBOX_MODE_LABEL[key] || key.replace(/_/g, ' ') || '—';
+}
+
 /** "Every 15m" / "Once a day" — an interval a person can picture. */
 export function humanInterval(ms) {
   const n = Number(ms);

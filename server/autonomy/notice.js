@@ -23,7 +23,43 @@ const oneOf = (value, allowed, fallback) =>
 /**
  * Every template: the fields it accepts, and the renderer.
  * Field values are primitives only — never nested prose, never arrays of text.
+ *
+ * WORDING. These sentences are the ones Jeremy actually reads, so they are
+ * written the way a thoughtful assistant would say them: plain everyday
+ * language, no jargon, no raw internal state. The discipline doesn't change —
+ * a template id plus bounded fields, no model prose — only the words do.
  */
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+/** Park reasons in words, mirroring the client-side labels (autonomyLabels.js). */
+const PARK_REASON_PHRASE = Object.freeze({
+  awaiting_approval: "it's waiting on your approval",
+  budget_exhausted: "it ran out of budget",
+  blocked_on_evidence: "it's blocked on evidence it hasn't earned yet",
+  error_backoff: "it kept hitting errors, so it backed off",
+  paused_by_user: "you paused it",
+  kill_switch: "a kill switch stopped it",
+  scope_expired: "its permission ran out"
+});
+
+/** Budget lines in words, mirroring the client-side labels (autonomyLabels.js). */
+const BUDGET_LINE_WORD = Object.freeze({
+  maxSteps: "steps",
+  maxModelCalls: "model calls",
+  maxTokensIn: "input tokens",
+  maxTokensOut: "output tokens",
+  maxCostUsd: "spend",
+  maxWallClockMs: "run time",
+  maxNoticesPerDay: "daily notices",
+  maxExternalEffects: "outside actions",
+  maxEffectsPerDay: "daily outside actions"
+});
+
+const budgetLineWord = (key) =>
+  BUDGET_LINE_WORD[key]
+  || String(key || "").replace(/^max/, "").replace(/([A-Z])/g, " $1").trim().toLowerCase()
+  || "budget";
+
 export const NOTICE_TEMPLATES = Object.freeze({
   goal_parked: Object.freeze({
     fields: Object.freeze({
@@ -39,9 +75,11 @@ export const NOTICE_TEMPLATES = Object.freeze({
         "error_backoff", "paused_by_user", "kill_switch", "scope_expired"]
     }),
     severity: "warning",
-    render: (f) => `Goal parked: "${f.goalTitle}" — ${f.parkReason.replace(/_/g, " ")}.`
-      + ` ${f.stepsExecuted} step(s) run, ${f.findings} finding(s) recorded.`
-      + (f.effectsAwaitingApproval ? ` ${f.effectsAwaitingApproval} effect(s) awaiting approval.` : "")
+    render: (f) => `"${f.goalTitle}" is on pause — ${PARK_REASON_PHRASE[f.parkReason] || "it stopped"}.`
+      + ` ${plural(f.stepsExecuted, "step", "steps")} done, ${plural(f.findings, "finding", "findings")} saved.`
+      + (f.effectsAwaitingApproval
+        ? ` ${f.effectsAwaitingApproval === 1 ? "One thing is" : `${f.effectsAwaitingApproval} things are`} waiting on your word.`
+        : "")
   }),
 
   goal_completed: Object.freeze({
@@ -53,8 +91,8 @@ export const NOTICE_TEMPLATES = Object.freeze({
     }),
     enums: Object.freeze({}),
     severity: "info",
-    render: (f) => `Goal complete: "${f.goalTitle}".`
-      + ` ${f.stepsExecuted} step(s), ${f.findings} finding(s). Ask COGNOS about it to turn findings into an answer.`
+    render: (f) => `"${f.goalTitle}" is done — ${plural(f.stepsExecuted, "step", "steps")},`
+      + ` ${plural(f.findings, "finding", "findings")} saved. Ask me about it and I'll give you the rundown.`
   }),
 
   finding_ready: Object.freeze({
@@ -66,8 +104,9 @@ export const NOTICE_TEMPLATES = Object.freeze({
     }),
     enums: Object.freeze({}),
     severity: "info",
-    render: (f) => `${f.agentName || "A resident"} recorded ${f.findings} new finding(s) on "${f.goalTitle}"`
-      + (f.sourcesProduced ? ` and produced ${f.sourcesProduced} evidence snapshot(s).` : ".")
+    render: (f) => `${f.agentName || "One of your residents"} found ${plural(f.findings, "new finding", "new findings")}`
+      + ` on "${f.goalTitle}"`
+      + (f.sourcesProduced ? `, with ${plural(f.sourcesProduced, "saved copy", "saved copies")} to back it up.` : ".")
   }),
 
   budget_warning: Object.freeze({
@@ -80,7 +119,12 @@ export const NOTICE_TEMPLATES = Object.freeze({
     }),
     enums: Object.freeze({}),
     severity: "warning",
-    render: (f) => `Budget warning on "${f.goalTitle}": ${f.budgetLine} at ${f.spent} of ${f.limit}.`
+    render: (f) => {
+      const money = f.budgetLine === "maxCostUsd";
+      const fmt = (n) => money ? `$${Number(n).toFixed(2)}` : String(n);
+      return `Heads up — "${f.goalTitle}" is getting close to its ${budgetLineWord(f.budgetLine)} limit:`
+        + ` ${fmt(f.spent)} of ${fmt(f.limit)} used.`;
+    }
   })
 });
 
@@ -160,7 +204,9 @@ export function buildNoticeFields(templateId, values = {}) {
       const allowed = template.enums?.[key] || [];
       out[key] = allowed.includes(raw) ? raw : (allowed[0] ?? "unknown");
     } else {
-      out[key] = String(raw ?? "").slice(0, MAX_STRING);
+      // Same hygiene as validateNoticeFields: control characters out, even on
+      // the system-filled path. Same templates, same cleaning.
+      out[key] = bounded(raw ?? "", MAX_STRING);
     }
   }
   return out;

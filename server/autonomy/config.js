@@ -266,6 +266,10 @@ export function autonomyConfig() {
     toggleRefusal: settings.refusal,
     settings,
 
+    // The human day for every "per day" promise (budget lines, rate limits,
+    // quiet hours, notice cap). See dayStartMs/hourInTimeZone.
+    userTimeZone: process.env.COGNOS_USER_TZ || DEFAULT_USER_TZ,
+
     // Rung switches. Each rung needs its own explicit sign-off AND its evidence.
     //
     // Phase 29 — these are RESOLVED values now, not raw environment reads. The
@@ -411,16 +415,70 @@ export function tierAllowed(tier, config) {
 }
 
 /**
+ * The human day, not the server's day. Budget lines, rate limits, quiet
+ * hours and the notice cap are all "per day" promises made to a person, so
+ * the day boundary is drawn in THEIR timezone — otherwise a UTC host hands
+ * Jeremy a fresh budget at 8 PM his time. Overridable with COGNOS_USER_TZ;
+ * an unknown zone falls back to the server's local day rather than throwing.
+ */
+export const DEFAULT_USER_TZ = "America/New_York";
+
+function tzOffsetMs(timeZone, nowMs) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone, hour12: false, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit"
+  });
+  const parts = Object.fromEntries(
+    dtf.formatToParts(new Date(nowMs)).map(p => [p.type, p.value]));
+  const asUTC = Date.UTC(
+    Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+    Number(parts.hour) % 24, Number(parts.minute), Number(parts.second));
+  return asUTC - Number(nowMs);
+}
+
+/** Midnight that starts the human's current day, as a UTC millisecond stamp. */
+export function dayStartMs(nowMs, timeZone = null) {
+  // No timezone: the server's local day, matching the old behavior. Callers
+  // that know the human's timezone pass it (config.userTimeZone).
+  if (!timeZone) {
+    const d = new Date(nowMs);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+  try {
+    const off = tzOffsetMs(timeZone, nowMs);
+    return Math.floor((Number(nowMs) + off) / 86400_000) * 86400_000 - off;
+  } catch {
+    const d = new Date(nowMs);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+}
+
+/** The wall-clock hour in the human's timezone — what quiet hours are set in. */
+export function hourInTimeZone(nowMs, timeZone) {
+  try {
+    return new Date(Number(nowMs) + tzOffsetMs(timeZone || DEFAULT_USER_TZ, nowMs)).getUTCHours();
+  } catch {
+    return new Date(nowMs).getHours();
+  }
+}
+
+/**
  * Inside the deployment's quiet hours? Applies to external deliveries only.
  * A window that wraps midnight (22-7) is the common case, so the comparison is
  * explicit about it rather than assuming start < end. An unconfigured or
  * misconfigured window is never active: quiet hours are a brake an operator
  * asks for, not one the system invents.
  */
-export function insideQuietHours(quietHours, nowMs = Date.now()) {
+export function insideQuietHours(quietHours, nowMs = Date.now(), timeZone = null) {
   const qh = quietHours ?? {};
   if (qh.enabled !== true || qh.misconfigured === true) return false;
-  const hour = new Date(nowMs).getHours();
+  // No timezone passed: the deployment's local hour, which is what a window an
+  // operator types means on the machine they typed it on. Callers that know
+  // the human's timezone (the Governor, via config.userTimeZone) pass it so a
+  // UTC host doesn't shift the window away from the operator's night.
+  const hour = timeZone ? hourInTimeZone(nowMs, timeZone) : new Date(nowMs).getHours();
   const start = Number(qh.startHour);
   const end = Number(qh.endHour);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return false;

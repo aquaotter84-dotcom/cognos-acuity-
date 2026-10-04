@@ -110,44 +110,47 @@ export async function describeLiveReadiness({ db, workspaceId, config = null, no
   const cond = (id, label, met, unmet) => ({ id, label, met: met === true,
     sentence: met === true ? "" : (typeof unmet === "function" ? unmet() : String(unmet || "")) });
 
+  // The LABELS are plain language for the person reading the Outbox tab; the
+  // ids stay machine-stable and the note below keeps the precise explanation.
+  // Jargon is demoted, not removed — same discipline as autonomyLabels.js.
   const conditions = [
-    cond("delegated", "the mode switch is delegated to this API",
+    cond("delegated", "You can flip this switch from here",
       cfg.settings?.canSetOutboxMode === true,
-      () => `Set ${OUTBOX_UI_CONTROL_ENV}=true and restart. Until then the outbox mode is controlled only by ${OUTBOX_MODE_ENV}.`),
+      () => `To hand this switch to the API, set ${OUTBOX_UI_CONTROL_ENV}=true and restart. Until then the outbox mode is controlled only by ${OUTBOX_MODE_ENV}.`),
 
-    cond("not_pinned_down", "no operator pin holds the outbox below live",
+    cond("not_pinned_down", "No pin is holding the outbox back",
       env === null || !isWideningOutboxMode(env, "live"),
       () => `${OUTBOX_MODE_ENV}=${env} pins the outbox down and a pin outranks the API. Remove it and restart to make live reachable.`),
 
-    cond("autonomy_on", "autonomy is running",
+    cond("autonomy_on", "Autonomy is switched on",
       cfg.enabled === true,
       "Autonomy is off, so the loop wakes for nothing and stages nothing. Turn it on first — a live mode with a frozen loop is a switch that means nothing."),
 
-    cond("rung_flag", "Rung 4 (external writes) is switched on",
+    cond("rung_flag", "Sending outside messages is switched on",
       cfg.rung?.externalWrites === true,
-      () => `Rung 4 is off. Set ${EXTERNAL_WRITES_ENV}=true and restart. Building a rung is not enabling one (phase19.autonomy_default_off).`),
+      () => `Outside messages are switched off. Set ${EXTERNAL_WRITES_ENV}=true and restart — building the switch and flipping it are two separate steps on purpose.`),
 
-    cond("destination_approved", "exactly one live destination is approved",
+    cond("destination_approved", "One approved place to send to",
       dest.configured === true,
       () => (dest.misconfigured === true
-        ? `${LIVE_DESTINATION_ENV} is set but the adapter would refuse it: ${dest.reason}. Fix the value and restart — a malformed brake is not a brake.`
-        : `Name exactly one endpoint with ${LIVE_DESTINATION_ENV}=https://host/path and restart. A live delivery with no approved destination has nowhere it is allowed to go.`)),
+        ? `${LIVE_DESTINATION_ENV} is set but the adapter would refuse it: ${dest.reason}. Fix the value and restart — a broken brake is no brake.`
+        : `Name exactly one endpoint with ${LIVE_DESTINATION_ENV}=https://host/path and restart. A live send with no approved destination has nowhere it is allowed to go.`)),
 
-    cond("evidence_recorded", "a justified evidence row exists for the rung",
+    cond("evidence_recorded", "Practice runs have proved it out",
       Boolean(evidence) || bypassEarning,
-      () => `No recorded evidence row exists for Rung 4. Measure the shadow corpus first on the Outbox tab or with POST /api/autonomy/rungs/${rung.rung}/evidence.`),
+      () => `Nothing has proved this out yet. Run it in shadow mode first — the Outbox tab can measure the practice runs, or POST /api/autonomy/rungs/${rung.rung}/evidence.`),
 
-    cond("evidence_current", "the corpus still satisfies the gate as configured now",
+    cond("evidence_current", "Those practice runs still count under today's settings",
       status?.justifiedNow === true || bypassEarning,
       () => (measurementReasons.length
         ? `The evidence row ${evidence?.id || ""} no longer satisfies the gate: ${measurementReasons.join("; ")}.`
         : "The recorded evidence row no longer satisfies the gate.")),
 
-    cond("corpus_aimed", "the earned corpus was aimed at the approved destination",
+    cond("corpus_aimed", "The practice runs were aimed at that same place",
       aimed > 0 || bypassEarning,
       () => (dest.configured
-        ? `The earned corpus has ${metrics.samples ?? 0} sample(s), but 0 were aimed at ${dest.hostname} (${elsewhere} were aimed elsewhere). A corpus about one endpoint is not evidence about another. Aim attempts at ${dest.hostname} in shadow mode first.`
-        : "No approved destination is configured, so no corpus sample can be aimed at it."))
+        ? `The practice runs went somewhere else: ${metrics.samples ?? 0} total, 0 aimed at ${dest.hostname} (${elsewhere} aimed elsewhere). Practice at one address proves nothing about another — aim attempts at ${dest.hostname} in shadow mode first.`
+        : "No approved destination is configured, so no practice run can be aimed at it."))
   ];
 
   const unmet = conditions.filter(c => !c.met);
@@ -204,15 +207,15 @@ export async function describeLiveReadiness({ db, workspaceId, config = null, no
     destination: describeLiveDestination(dest),
     rungFlag: cfg.rung?.externalWrites === true,
     killSwitch: rung.killSwitch,
-    note: "A rung flag says an operator switched it on. An evidence row says the shadow corpus justified it. An approved destination says where a live delivery may go. A live release needs all three, and the Action Governor still judges every individual effect."
+    note: "Three things have to be true before anything goes out live: outside messages are switched on, the practice runs proved it out, and exactly one destination is approved. Even then, every single send is judged on its own — the Action Governor never bulk-approves."
   };
 }
 
 /** The notes a flip returns, exported so a surface can quote the same words. */
 export const OUTBOX_MODE_NOTES = Object.freeze({
-  live: "Live. A release verdict is now PERFORMED rather than recorded — to the one approved destination, and only for effects the Action Governor judges individually. Flip back to shadow at any time; narrowing needs no evidence.",
-  shadow: "Shadow. The loop plans, stages and judges; nothing is performed. This is the resting state, and it is the corpus that earns the next flip.",
-  dry_run: "Dry run. The exact request is built and recorded, and still nothing is sent."
+  live: "Live. From here on, an approved send is PERFORMED for real — it actually goes out, to the one approved destination, and only after it's judged on its own. Flip back to shadow any time; turning it back down needs no proof.",
+  shadow: "Shadow. The loop plans, stages, and judges — but nothing goes out. This is the resting state, and these practice runs are what earn the flip to live.",
+  dry_run: "Dry run. The exact message is built and written down, and still nothing is sent."
 });
 
 /**

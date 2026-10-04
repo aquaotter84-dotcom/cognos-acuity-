@@ -19,7 +19,7 @@ import { callLLM } from "../llm.js";
 import { createRunRecorder } from "../meta/telemetry.js";
 import { getSkill, validateArgs, isSkillEnabled } from "../skills/index.js";
 import { stageEffect, decideEffect } from "./outbox.js";
-import { autonomyConfig, budgetLineExhausted } from "./config.js";
+import { autonomyConfig, budgetLineExhausted, dayStartMs } from "./config.js";
 import { destinationsForScope } from "./scopeUrl.js";
 import { buildNoticeFields } from "./notice.js";
 import { redactSecrets } from "../meta/policy.js";
@@ -66,8 +66,6 @@ const STEP_SCHEMA = {
 const ALLOWED_NOTE_KINDS = new Set(["finding", "question", "dead_end", "decision",
   "plan_change", "evidence_ref", "blocker"]);
 
-const dayKey = (ms) => new Date(ms).toISOString().slice(0, 10);
-
 // Rung names to the env flag that earns them. Named here so a rung-gate
 // refusal tells the operator exactly which switch to consider.
 const RUNG_FLAGS = Object.freeze({
@@ -108,7 +106,6 @@ function scopePromptLines(goal) {
   return lines;
 }
 
-/** Notices already emitted for this goal today. */
 /**
  * How many notices this goal has had JUDGED today.
  *
@@ -119,10 +116,11 @@ function scopePromptLines(goal) {
  * anybody actually runs. Same defect, same family as the effect ceilings Phase
  * 21 fixed: a guard that cannot fire is not a guard. A shadowed notice is a
  * decision to notify, and the cap bounds decisions.
+ *
+ * "Today" is the human's day (config.userTimeZone), not the server's.
  */
-async function noticesToday(db, goalId, nowMs) {
-  const start = new Date(nowMs);
-  start.setHours(0, 0, 0, 0);
+async function noticesToday(db, goalId, nowMs, timeZone) {
+  const start = new Date(dayStartMs(nowMs, timeZone));
   const rows = await db.query(
     `SELECT COUNT(*)::int AS n FROM autonomy_outbox
       WHERE goal_id = $1 AND effect_type = 'notify'
@@ -162,6 +160,7 @@ export async function runTick({
     effectsStaged: 0,
     effectsReleased: 0,
     effectsRefused: 0,
+    effectsShadowed: 0,
     modelCalls: 0,
     tokensTotal: 0,
     costUsd: 0,
@@ -221,6 +220,7 @@ export async function runTick({
     summary.effectsStaged += result.effectsStaged;
     summary.effectsReleased += result.effectsReleased;
     summary.effectsRefused += result.effectsRefused;
+    summary.effectsShadowed += result.effectsShadowed || 0;
     summary.modelCalls += result.modelCalls;
     summary.tokensTotal += result.tokensTotal;
     summary.costUsd += result.costUsd;
@@ -236,6 +236,7 @@ export async function runTick({
     effects_staged: summary.effectsStaged,
     effects_released: summary.effectsReleased,
     effects_refused: summary.effectsRefused,
+    effects_shadowed: summary.effectsShadowed,
     model_calls: summary.modelCalls,
     tokens_total: summary.tokensTotal,
     cost_usd: summary.costUsd,
@@ -254,6 +255,7 @@ async function advanceGoal({ db, cfg, goal, workspaceId, workerId, deadline, tic
     effectsStaged: 0,
     effectsReleased: 0,
     effectsRefused: 0,
+    effectsShadowed: 0,
     modelCalls: 0,
     tokensTotal: 0,
     costUsd: 0,
@@ -268,15 +270,17 @@ async function advanceGoal({ db, cfg, goal, workspaceId, workerId, deadline, tic
   // A goal with no unexpired authorization does no work. This is not a park —
   // it is a refusal to start, and it is recorded as one.
   if (!authorization) {
-    await park(db, goal, "awaiting_approval", tickId, result, nowMs, cfg);
+    await park(db, goal, "awaiting_approval", tickId, result, nowMs, cfg, undefined, logger);
     return result;
   }
 
   // --- budget gate, before any model call -----------------------------------
-  const exhausted = budgetLineExhausted({ ...spent, startedMs: Number(goal.started_ms || 0) }, budget, nowMs);
+  // Wall-clock is read fresh here, not from the tick-entry timestamp: a long
+  // slice must not delay exhaustion detection by the whole elapsed slice.
+  const exhausted = budgetLineExhausted({ ...spent, startedMs: Number(goal.started_ms || 0) }, budget, Date.now());
   if (exhausted) {
     await park(db, goal, "budget_exhausted", tickId, result, nowMs, cfg,
-      { budgetLine: exhausted.key, spendKey: exhausted.spendKey, used: exhausted.used, limit: exhausted.limit });
+      { budgetLine: exhausted.key, spendKey: exhausted.spendKey, used: exhausted.used, limit: exhausted.limit }, logger);
     return result;
   }
 
@@ -302,10 +306,10 @@ async function advanceGoal({ db, cfg, goal, workspaceId, workerId, deadline, tic
     current = await db.AutonomyGoal.get(goal.id) || current;
     const stepSpent = current.spent || {};
 
-    const again = budgetLineExhausted({ ...stepSpent, startedMs: Number(current.started_ms || 0) }, budget, nowMs);
+    const again = budgetLineExhausted({ ...stepSpent, startedMs: Number(current.started_ms || 0) }, budget, Date.now());
     if (again) {
       await park(db, current, "budget_exhausted", tickId, result, nowMs, cfg,
-        { budgetLine: again.key, spendKey: again.spendKey, used: again.used, limit: again.limit });
+        { budgetLine: again.key, spendKey: again.spendKey, used: again.used, limit: again.limit }, logger);
       return result;
     }
 
@@ -325,6 +329,7 @@ async function advanceGoal({ db, cfg, goal, workspaceId, workerId, deadline, tic
     result.effectsStaged += stepOutcome.effectsStaged;
     result.effectsReleased += stepOutcome.effectsReleased;
     result.effectsRefused += stepOutcome.effectsRefused;
+    result.effectsShadowed += stepOutcome.shadowed || 0;
 
     if (stepOutcome.failed) {
       // A ceiling is not a transient obstacle. Park now, with the rule that
@@ -333,14 +338,19 @@ async function advanceGoal({ db, cfg, goal, workspaceId, workerId, deadline, tic
       const stopping = (stepOutcome.rules || []).find(rule => PARKING_RULES.includes(rule));
       if (stopping) {
         await park(db, current, "budget_exhausted", tickId, result, nowMs, cfg,
-          { rule: stopping, error: stepOutcome.error });
+          { rule: stopping, error: stepOutcome.error }, logger);
         return result;
       }
+      // Refusals DO feed the backoff brake, deliberately: a planner that keeps
+      // proposing a disallowed skill is an escalation attempt, and the brake
+      // is what stops it retrying forever (the refusal reason itself is
+      // preserved on the step row and in the park detail — the park_reason is
+      // the coarse category, not the whole story).
       consecutiveFailures++;
       current = await setFailures(current, consecutiveFailures);
       if (consecutiveFailures >= cfg.tick.maxConsecutiveFailures) {
         await park(db, current, "error_backoff", tickId, result, nowMs, cfg,
-          { error: stepOutcome.error, consecutiveFailures });
+          { error: stepOutcome.error, consecutiveFailures }, logger);
         return result;
       }
       continue;
@@ -358,12 +368,12 @@ async function advanceGoal({ db, cfg, goal, workspaceId, workerId, deadline, tic
         detail: { steps: Number((await db.AutonomyGoal.get(current.id)).spent?.steps || 0) }
       });
       result.outcome = "completed";
-      await tryNotice(db, cfg, current, agent, workspaceId, tickId, "goal_completed", nowMs);
+      await tryNotice(db, cfg, current, agent, workspaceId, tickId, "goal_completed", nowMs, {}, logger);
       return result;
     }
     if (stepOutcome.blocked) {
       await park(db, current, "blocked_on_evidence", tickId, result, nowMs, cfg,
-        { blocked: stepOutcome.blocked });
+        { blocked: stepOutcome.blocked }, logger);
       return result;
     }
   }
@@ -438,7 +448,8 @@ async function runStep(args) {
       // exhausts. Both can now fire.
       ...(out.executed ? { steps: 1 } : {}),
       modelCalls: Number(out.modelCalls) || 0,
-      tokensIn: Number(out.tokensTotal) || 0,
+      tokensIn: Number(out.tokensIn) || 0,
+      tokensOut: Number(out.tokensOut) || 0,
       costUsd: Number(out.costUsd) || 0,
       // A delivery DECISION is spend, performed or not (see runStepInner).
       ...(out.effectsDecided ? { effects: out.effectsDecided } : {}),
@@ -458,7 +469,7 @@ async function runStepInner({ db, cfg, goal, agent, authorization, workspaceId, 
   const out = {
     executed: false, failed: false, done: false, blocked: null, error: null,
     rules: null, shadowed: 0, spendExtra: null,
-    modelCalls: 0, tokensTotal: 0, costUsd: 0,
+    modelCalls: 0, tokensTotal: 0, tokensIn: 0, tokensOut: 0, costUsd: 0,
     effectsStaged: 0, effectsReleased: 0, effectsRefused: 0,
     effectsDecided: 0, externalEffectsDecided: 0
   };
@@ -519,6 +530,12 @@ async function runStepInner({ db, cfg, goal, agent, authorization, workspaceId, 
   out.modelCalls = 1;
   const summary = recorder.snapshot ? recorder.snapshot() : null;
   out.tokensTotal = Number(summary?.tokens_total || 0);
+  // The budget lines are split (maxTokensIn / maxTokensOut), so the spend
+  // accounting splits too: prompt tokens against the input line, completion
+  // tokens against the output line. Counting the whole call as input left
+  // maxTokensOut a guard that could never fire.
+  out.tokensIn = Number(summary?.tokens_prompt || 0);
+  out.tokensOut = Number(summary?.tokens_completion || 0);
   out.costUsd = Number(summary?.cost_usd || 0);
 
   if (planError) {
@@ -588,7 +605,7 @@ async function runStepInner({ db, cfg, goal, agent, authorization, workspaceId, 
   // Per-day notice cap. A goal that emits more than its budget of notices is
   // narrating, not reporting.
   if (skillId === "notice.emit") {
-    const today = await noticesToday(db, goal.id, Date.now());
+    const today = await noticesToday(db, goal.id, Date.now(), cfg?.userTimeZone);
     const cap = Number(goal.budget?.maxNoticesPerDay || cfg.goalBudget.maxNoticesPerDay);
     if (today >= cap) return await refusal(`notice limit reached today (${today}/${cap})`);
   }
@@ -627,11 +644,19 @@ async function runStepInner({ db, cfg, goal, agent, authorization, workspaceId, 
   // rate limits and the shadow corpus are read against. Staged and refused join
   // the tick counters; shadowed joins nothing — a shadowed effect performed
   // nothing, and counting it as released would lie about what acted.
+  //
+  // One source of truth per step: a skill either self-reports its effects or
+  // returns stages for the loop below to judge — never both. When the stages
+  // loop runs, the self-report is ignored so the same effect can't be counted
+  // twice against the budgets and rate limits.
   const fx = skillResult?.effects && typeof skillResult.effects === "object" ? skillResult.effects : {};
-  out.effectsStaged += Number(fx.staged) > 0 ? Math.floor(Number(fx.staged)) : 0;
-  out.effectsReleased += Number(fx.released) > 0 ? Math.floor(Number(fx.released)) : 0;
-  out.effectsRefused += Number(fx.refused) > 0 ? Math.floor(Number(fx.refused)) : 0;
-  out.shadowed += Number(fx.shadowed) > 0 ? Math.floor(Number(fx.shadowed)) : 0;
+  const stagesJudgedHere = Array.isArray(skillResult.stages) && skillResult.stages.length > 0;
+  if (!stagesJudgedHere) {
+    out.effectsStaged += Number(fx.staged) > 0 ? Math.floor(Number(fx.staged)) : 0;
+    out.effectsReleased += Number(fx.released) > 0 ? Math.floor(Number(fx.released)) : 0;
+    out.effectsRefused += Number(fx.refused) > 0 ? Math.floor(Number(fx.refused)) : 0;
+    out.shadowed += Number(fx.shadowed) > 0 ? Math.floor(Number(fx.shadowed)) : 0;
+  }
   // A delivery DECISION is spend, performed or not. `spent.effects` and
   // `spent.externalEffects` were declared as budget lines in Phase 19 and
   // nothing incremented them, so both ceilings were inert — the same shape as
@@ -701,7 +726,7 @@ async function runStepInner({ db, cfg, goal, agent, authorization, workspaceId, 
     });
     if (decision.executed) out.effectsReleased++;
     else if (decision.row?.status === "refused") out.effectsRefused++;
-    else if (decision.wouldRelease) out.effectsReleased += 0;   // shadow: recorded, not performed
+    // Shadow is recorded, not performed: nothing to count as released.
   }
 
   await db.GoalStep.update(stepRow.id, {
@@ -726,7 +751,7 @@ async function runStepInner({ db, cfg, goal, agent, authorization, workspaceId, 
 
 
 /** Park with a reason. Never a silent stop: the reason is a row and a notice. */
-async function park(db, goal, parkReason, tickId, result, nowMs, cfg, detail = {}) {
+async function park(db, goal, parkReason, tickId, result, nowMs, cfg, detail = {}, logger = null) {
   await db.AutonomyGoal.setStatus(goal.id, { status: "parked", parkReason });
   await db.GoalEvent.append({
     goal_id: goal.id, tick_id: tickId,
@@ -741,7 +766,7 @@ async function park(db, goal, parkReason, tickId, result, nowMs, cfg, detail = {
     stepsExecuted: Number(goal.spent?.steps || 0),
     findings: await countFindings(db, goal.id),
     effectsAwaitingApproval: await countStaged(db, goal.id)
-  });
+  }, logger);
   return result;
 }
 
@@ -763,7 +788,7 @@ async function countStaged(db, goalId) {
  * Emit a templated notice through the outbox so it is judged like any other
  * effect. Fields are stored record values only — never prose.
  */
-async function tryNotice(db, cfg, goal, agent, workspaceId, tickId, templateId, nowMs, extra = {}) {
+async function tryNotice(db, cfg, goal, agent, workspaceId, tickId, templateId, nowMs, extra = {}, logger = null) {
   // cfg.notices is an object ({ mode, enabled, ... }); testing it for `false`
   // never matched, so this gate could never close.
   const notices = cfg.notices ?? {};
@@ -794,10 +819,15 @@ async function tryNotice(db, cfg, goal, agent, workspaceId, tickId, templateId, 
     if (!row) return null;
     return decideEffect({
       db, effectId: row.id, goal: await db.AutonomyGoal.get(goal.id),
-      authorization: await db.GoalAuthorization.current(goal.id, nowMs),
-      config: cfg, nowMs
+      // Fresh clock: an authorization expiring mid-slice must be read as
+      // expired, not as it was when the tick began.
+      authorization: await db.GoalAuthorization.current(goal.id, Date.now()),
+      config: cfg, nowMs: Date.now()
     });
-  } catch {
-    return null;   // a notice that cannot be emitted must never break the loop
+  } catch (error) {
+    // A notice that cannot be emitted must never break the loop — but the
+    // file header promises nothing fails silently, so the failure is logged.
+    logger?.warn?.("notice emit failed", { goalId: goal.id, templateId, error: String(error) });
+    return null;
   }
 }

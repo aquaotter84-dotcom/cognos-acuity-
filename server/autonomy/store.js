@@ -310,8 +310,10 @@ export function createAutonomyStore(run) {
       const current = parse(rows[0]?.spent, {}) || {};
       const next = { ...current };
       for (const [key, value] of Object.entries(deltas)) {
-        const add = num(value, 0);
-        if (add === null) continue;
+        // Monotonic: a negative delta would un-count spend, so it clamps to
+        // zero rather than subtracting. (num() with a 0 fallback can never
+        // return null, so there is no null case to skip.)
+        const add = Math.max(num(value, 0), 0);
         next[key] = Math.max(num(current[key], 0), 0) + add;
       }
       const updated = await run(
@@ -878,10 +880,6 @@ export function createAutonomyStore(run) {
     },
 
     /**
-     * Upsert the delegated value. `updated_ms` comes from the caller so the row
-     * lines up with the workspace_audit row written for the same flip.
-     */
-    /**
      * Upsert ONLY the delegated outbox mode — Phase 22 (autonomy row).
      *
      * Separate from `set` on purpose. Flipping the mode must not touch
@@ -996,6 +994,10 @@ export function createAutonomyStore(run) {
       return rows[0] || null;
     },
 
+    /**
+     * Upsert the delegated value. `updated_ms` comes from the caller so the row
+     * lines up with the workspace_audit row written for the same flip.
+     */
     async set({ workspace_id, enabled, source = "ui", updated_by = null, updated_ms = null }) {
       const atMs = Number(updated_ms) || Date.now();
       const rows = await run(

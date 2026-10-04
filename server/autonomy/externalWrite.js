@@ -20,11 +20,7 @@
 //     The bytes left; the row says `released`; the step says failed. Both are
 //     true and neither is allowed to hide the other.
 
-import { stageEffect, decideEffect } from "./outbox.js";
-
-function rulesOf(verdict) {
-  return (verdict?.failed || []).map(f => f.rule).filter(Boolean).join(", ") || "refused";
-}
+import { stageEffect, decideEffect, rulesOf } from "./outbox.js";
 
 /**
  * Stage, judge, and — only on a live verdict that has earned it — perform one
@@ -101,6 +97,12 @@ export async function requestExternalWrite({
       effects.shadowed += 1;
       return { ok: true, effectId: row.id, effects, replayed: true, shadow: true,
         output: { shadow: true, note: "shadow mode: judged, recorded, not delivered" } };
+    }
+    if (status === "reverted") {
+      // Undone is not refused: the operator reversed this effect, so it must
+      // not run again — and must not be counted as a refusal either.
+      return { ok: false, error: "write reverted on replay: the effect was undone and will not run again",
+        effectId: row.id, effects };
     }
     effects.refused += 1;
     return { ok: false, error: `write refused on replay: ${rulesOf(decision.verdict)}`, effectId: row.id, effects };

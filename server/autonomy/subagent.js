@@ -182,7 +182,8 @@ export async function runSubagent({
     await db.GoalEvent.append({
       goal_id: goal.id, agent_id: agent?.id || null, tick_id: tickId,
       event_type: status === "completed" ? "subagent_completed"
-        : status === "refused" ? "subagent_refused" : "subagent_failed",
+        : status === "refused" ? "subagent_refused"
+        : status === "blocked" ? "subagent_blocked" : "subagent_failed",
       detail: {
         subAgentId: row.id, parentStepId, status,
         skills: subset, spent: { ...spent }, findingsWritten,
@@ -279,7 +280,9 @@ export async function runSubagent({
     }
 
     if (plan?.blocked) {
-      return await finish("completed", { output: { blocked: String(plan.blocked).slice(0, 300) } });
+      // Blocked is its own outcome, not a success: the event log must be able
+      // to tell a worker that finished from one that gave up waiting.
+      return await finish("blocked", { output: { blocked: String(plan.blocked).slice(0, 300) } });
     }
     if (plan?.done === true) return await finish("completed");
     if (plan?.done === false && (!plan.skill || plan.skill === "none")) continue;

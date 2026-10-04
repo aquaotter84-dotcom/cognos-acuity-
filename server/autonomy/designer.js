@@ -103,8 +103,12 @@ function isBlockedProposalHost(hostname) {
   if (host === "::1") return true;
   const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4) {
-    const a = Number(ipv4[1]);
-    const b = Number(ipv4[2]);
+    const octets = ipv4.slice(1).map(Number);
+    // A malformed literal (any octet above 255) is blocked, not trusted:
+    // proposal time is not the place to guess what it meant.
+    if (octets.some(n => n > 255)) return true;
+    const a = octets[0];
+    const b = octets[1];
     if (a === 0 || a === 10 || a === 127) return true;
     if (a === 169 && b === 254) return true;
     if (a === 192 && b === 168) return true;

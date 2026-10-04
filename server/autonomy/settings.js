@@ -412,7 +412,9 @@ export function resetSettingsCache() {
 
 /** A copy of the cache. Cheap, and callers cannot mutate the module's state. */
 export function settingsSnapshot() {
-  return { ...cache };
+  // Deep enough to be safe: `rungs` was shared by reference, so a caller
+  // mutating snapshot.rungs mutated module state.
+  return { ...cache, rungs: { ...(cache.rungs || {}) } };
 }
 
 /**
@@ -928,22 +930,49 @@ export async function setRung(db, { rung, enabled, workspaceId = null, updatedBy
   return { ok: true, refusal: null, previous, settings: describeSettings(), atMs };
 }
 
-/** The flips recorded for this workspace, newest first. Bounded. */
+/**
+ * The flips recorded for this workspace, newest first. Bounded.
+ *
+ * Every switch the operator can flip is here — not just the master enable:
+ * auto-authorize, the earned-corpus bypass, each rung, and the outbox mode.
+ * (The outbox-mode action string is literal here rather than imported from
+ * liveOutbox.js, which imports this module — a cycle for a constant.)
+ */
 export async function listSettingFlips(db, { workspaceId = null, limit = 20 } = {}) {
+  // Literal: liveOutbox.js's OUTBOX_MODE_AUDIT_ACTION ("autonomy.outbox_mode").
+  const ACTIONS = ["autonomy.enabled", "autonomy.auto_authorize", "autonomy.bypass_earning",
+    "autonomy.rung", "autonomy.outbox_mode"];
   try {
     const wsId = workspaceId || (await db.Workspace.ensureDefault()).id;
-    const rows = await db.WorkspaceAudit.list({
-      workspaceId: wsId, action: "autonomy.enabled",
-      limit: Math.max(1, Math.min(100, Number(limit) || 20))
+    const perAction = Math.max(1, Math.min(100, Number(limit) || 20));
+    const lists = await Promise.all(ACTIONS.map(action =>
+      db.WorkspaceAudit.list({ workspaceId: wsId, action, limit: perAction }).catch(() => [])));
+    const rows = lists.flat()
+      .sort((a, b) => Number(b.ts_ms || 0) - Number(a.ts_ms || 0))
+      .slice(0, perAction);
+    return rows.map(row => {
+      let detail = row.detail;
+      if (typeof detail === "string") {
+        try { detail = JSON.parse(detail); } catch { detail = {}; }
+      }
+      if (!detail || typeof detail !== "object") detail = {};
+      // A readable subject: what was flipped. Rung flips name the rung.
+      const subject = row.action === "autonomy.rung"
+        ? `rung:${detail.rung || row.resource_id || "?"}`
+        : row.action.replace(/^autonomy\./, "");
+      return {
+        id: row.id,
+        atMs: Number(row.ts_ms),
+        action: row.action,
+        subject,
+        from: detail.from ?? null,
+        to: detail.to ?? null,
+        // Kept for the master switch's old shape; other flips use from/to.
+        enabled: row.action === "autonomy.enabled" ? detail.to === true : undefined,
+        via: detail.via || "ui",
+        updatedBy: detail.updatedBy || row.user_id || null
+      };
     });
-    return rows.map(row => ({
-      id: row.id,
-      atMs: Number(row.ts_ms),
-      enabled: row.detail?.to === true,
-      from: row.detail?.from === true,
-      via: row.detail?.via || "ui",
-      updatedBy: row.detail?.updatedBy || row.user_id || null
-    }));
   } catch {
     return [];
   }
