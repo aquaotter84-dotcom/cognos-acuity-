@@ -125,6 +125,26 @@ export const NOTICE_TEMPLATES = Object.freeze({
       return `Heads up — "${f.goalTitle}" is getting close to its ${budgetLineWord(f.budgetLine)} limit:`
         + ` ${fmt(f.spent)} of ${fmt(f.limit)} used.`;
     }
+  }),
+
+  cleanup_report: Object.freeze({
+    fields: Object.freeze({
+      tidied: "number",
+      awaitingReview: "number"
+    }),
+    enums: Object.freeze({}),
+    severity: "info",
+    render: (f) => {
+      const bits = [];
+      if (f.tidied > 0) {
+        bits.push(`I did a little housekeeping and tidied up ${plural(f.tidied, "thing", "things")} — mostly duplicates and old clutter. Nothing you care about was touched.`);
+      }
+      if (f.awaitingReview > 0) {
+        bits.push(`${f.awaitingReview === 1 ? "One thing" : plural(f.awaitingReview, "thing", "things")}`
+          + ` ${f.awaitingReview === 1 ? "needs" : "need"} your call before I do anything with it — take a look when you have a minute.`);
+      }
+      return bits.length ? bits.join(" ") : "I did a housekeeping pass and everything already looks tidy.";
+    }
   })
 });
 

@@ -17,6 +17,7 @@
 import { runTick } from "./tick.js";
 import { autonomyConfig } from "./config.js";
 import { refreshSettings } from "./settings.js";
+import { cleanupDue, runCleanupAudit } from "./cleanup.js";
 import { createLogger } from "../shared/logging.js";
 
 export function startHeartbeat({ db, logger = createLogger("autonomy.heartbeat"), intervalMs = null } = {}) {
@@ -50,6 +51,20 @@ export function startHeartbeat({ db, logger = createLogger("autonomy.heartbeat")
           goals: lastResult.goalsClaimed,
           steps: lastResult.stepsExecuted,
           refused: lastResult.effectsRefused
+        });
+      }
+      // The cleanup audit rides the heartbeat, day-guarded, behind the same
+      // kill switch as the tick above: autonomy frozen means no audit runs.
+      // A failed audit never kills the beat — it logs and the next day's beat
+      // tries again.
+      try {
+        const ws = await db.Workspace.ensureDefault();
+        if (await cleanupDue(db, ws.id)) {
+          await runCleanupAudit({ db, workspaceId: ws.id, logger });
+        }
+      } catch (cleanupError) {
+        logger.warn("cleanup audit failed", {
+          error: String(cleanupError?.message || cleanupError).slice(0, 300)
         });
       }
     } catch (error) {

@@ -301,9 +301,121 @@ Deliberately **not** proposed: merging the repos, running two loops, or
 loosening any governance so the studio feels simpler. The studio is a window
 into the loop, not a second loop.
 
+## Design directive: "agents you can see and talk to, not switches to flip"
+
+Jeremy's follow-up directive (2026-10-03): the merger is **not** the Orbit
+studio bolted onto the existing maze of settings/toggles/switches — the
+studio **replaces** that maze. Today the autonomy layer exposes its machinery
+as configuration (heartbeat toggles, dream on/off, check-in settings, governor
+knobs). In the integrated future, Jeremy talks to agents instead of flipping
+switches. Simplicity is the acceptance criterion: as easy to use as Ara.
+
+That means every current toggle needs a verdict: which agent interaction
+replaces it, and which (if any) genuinely need to survive as settings.
+
+| Today's switch | Where it lives | Replaced by (agent interaction) | Survives as a switch? |
+|---|---|---|---|
+| Morning greeting on/off | Personality settings | Tell the greeter: "skip the mornings" / "say good morning again" | No — it's a conversation with the resident that greets you |
+| Dream journal on/off | Personality settings | "Stop writing dreams" / "start again" — the journal is an agent behavior, configured by talking to it | No |
+| Check-ins on/off | Personality settings | "Check in with me less" / "don't check in unless something's wrong" | No |
+| Agent mode (Off/Read/Write/Research) | Chat input dropdown | Already conversational-shaped (a mode picker, not a config page); the dropdown stays, default Research | Yes — a mode picker is a control, not a maze; keep it visible |
+| Outbox mode (shadow/dry_run/live) | Autonomy settings | Tell the resident: "practice in the background, don't touch anything yet" (= shadow); "show me before you act" (= live + approvals). The mode becomes *how you talk to it*, not a setting you set | No — expressed as instructions to the agent |
+| Rungs (earned capabilities) | Evidence gate | "What are you allowed to do yet?" — the resident answers from its own earned state. Earning stays automatic; the manual rung knobs go away | No — governance is presented, not configured |
+| Auto-authorize ("forgo goal authorization") | Autonomy settings | Per-goal: "you don't need to ask me for this one" — the existing authorization consent, conversational | No — it's a per-goal conversation, not a global toggle |
+| Bypass earning (evidence gate) | Env pin + UI delegation | Nothing. This was never a preference; in the studio world it has no user-facing surface at all (env pin for emergencies only) | No — removed from any UI |
+| **Autonomy on/off (kill switch)** | Autonomy settings | — | **Yes — the one switch that survives.** When Jeremy wants everything to stop, he must not have to negotiate with the thing he's stopping. A master stop is a control, not a conversation. |
+
+The principle: **preferences become conversations; governance becomes
+presentation; the kill switch stays a switch.** A preference ("greet me",
+"check in", "practice quietly") is something you'd naturally say to a
+resident — so the toggle is just a worse UI for a sentence. Governance
+(rungs, evidence, tiers) was never really configurable by Jeremy in a
+meaningful way — the knobs existed for the builders, not for him — so the
+studio shows it as "what I'm allowed to do and why," in the resident's own
+words. And the kill switch survives precisely because it is the opposite of
+a preference: it's the guarantee that the conversation can always be ended.
+
+Sharp edge this resolves: today's settings page mixes all three categories
+(preferences, governance internals, and the kill switch) in one undifferentiated
+list, which is why it reads as a maze. The studio sorts them by nature.
+
+### The cleanup agent is the first citizen of the studio
+
+The cleanup agent (Phase 33, ships v41 — see below) is the natural first
+resident of this studio shape: it already speaks in the warm plain-language
+voice ("I tidied up 12 things — 3 more want your call"), it already has a
+review queue shaped like Orbit's approvals inbox ("allow once / reject"),
+and its Cleanup tab is already a studio card rather than an operator
+console. When the studio lands, the cleanup agent doesn't need redesigning —
+it needs neighbors.
+
 ---
 
 # Changes made in v40 (cleanup + humanizing)
+
+> **v41 addendum** — after v40 shipped, Jeremy approved four features that
+> rode the next build:
+>
+> - **Dream recognition** — dreams render as a framed "your dreams" section:
+>   the assistant's own inner life, not generic episodic rows.
+> - **Sapphire memory-layer alignment** — new `self` layer,
+>   `distilled_from` provenance on dreams. Full write-up:
+>   [docs/memory-alignment.md](./memory-alignment.md), including the
+>   deliberate decision that dreams distill from the day's memories, never
+>   from previous dreams.
+> - **Cleanup agent (Phase 33)** — a daily housekeeping audit over every
+>   store COGNOS persists, with the per-store policy below. Exact duplicates
+>   tidy themselves (logged, reversible); everything else waits for
+>   Jeremy's call in a review queue shaped like the promotions UI.
+> - **Agent-mode default → Research** — the chat mode dropdown already
+>   existed (Off / Read / Write / Research); the default is now Research,
+>   and read-only web access in Research mode is pre-authorized. Writes,
+>   external actions, and irreversible acts still go through the
+>   actionGovernor — untouched.
+> - **About page + self-model refresh** (identity v1.12.0) — the About page
+>   (`/about`, rendered from the canonical manifest in `server/identity.js`)
+>   and the model's own self-description now tell the v41 truth: ten
+>   personas, heartbeat with personality (greetings, dream journal,
+>   check-ins), agent modes defaulting to Research with pre-authorized
+>   read-only web access, the cleanup agent, and the four memory layers
+>   including `self` (dreams as the assistant's own inner life). The stale
+>   "research plans await approval" lines are gone everywhere they appeared
+>   (manifest, prompt, turn flow, subsystem list, decision-route comment,
+>   phase18 tests).
+
+## The cleanup agent's per-store policy
+
+One audit, every store, three buckets. This is the policy the audit applies;
+the review queue is Jeremy's.
+
+| Store | Auto-tidy (safe, logged, reversible) | Review queue (Jeremy decides) | Hands-off (never touched) |
+|---|---|---|---|
+| Memories — all layers (working, episodic, semantic, self) | Exact duplicates (soft-disable via `is_enabled=false`, canonical = most important then newest); expired TTL rows | Near-duplicates (embedding similarity ≥ 0.92), redundant keys (one key, different content), subsumed rows, fragment merges, stale high-volatility entries untouched 30+ days | Dreams are never fragments and never auto-merged |
+| Knowledge graph | Duplicate edges (same `edge_sha256`, retired) | Orphaned nodes (7-day grace), dead-end subgraphs (all-untrusted, 30+ days old), contradictions flagged for review | — |
+| Telemetry (telemetry_runs, telemetry_model_calls) | Rows older than 90 days, hard-deleted (bloat control) | — | — |
+| Notices (autonomy_notices) | Acked notices older than 90 days, hard-deleted | — | Unread notices: never touched |
+| Autonomy stores (heartbeat_state, outbox, goal evidence) | — | Orphaned goal notes (parent goal gone) | The outbox itself, heartbeat_state, the audit trail (goal_events, outbox_events, note_promotions, cleanup_proposals, graph_snapshots, confidence_history, knowledge_events, improvement_ledger), beliefs, relationships, conversations/messages, sources and their chunks (Jeremy's research library) |
+
+Notes on the policy:
+
+- **Nothing irreplaceable is destroyed silently.** Auto-tidy is logged on
+  the `cleanup_runs` row and, where a ledger exists, as a ledger event
+  (`memory_disabled`, edge retired). The one hard delete that isn't
+  telemetry/notices is an `orphan_note` proposal Jeremy explicitly
+  approves — recorded on the proposal row, never the agent's own call.
+- **Dreams are protected from the audit's own logic**: excluded from
+  fragment detection, stale-volatile detection, and exact-duplicate
+  auto-merge keying is content-based (a repeated dream line would group,
+  but dreams distill once per day per key, so this is a non-issue in
+  practice).
+- **The audit is day-guarded in the heartbeat** (one pass per day), behind
+  the same kill switch as the tick: autonomy frozen means no audit. A
+  failed audit logs and retries the next day — it never kills the beat.
+- **Reporting is a notice**, in the warm voice:
+  "I did a little housekeeping and tidied up 12 things — mostly duplicates
+  and old clutter. Nothing you care about was touched. 3 things need your
+  call before I do anything with them — take a look when you have a minute."
+  (`cleanup_report` template in `notice.js`, deterministic like the rest).
 
 All items below are in the v40 tree. Governance keeps full authority —
 nothing was loosened; refusals still refuse, the evidence gate still gates,
@@ -407,3 +519,18 @@ minimized failure receipts, shared rulesOf/rulesList, notice wording +
 bounds + determinism, STALL_MS wiring, snapshot isolation, RULES stability.
 Two existing tests updated to the corrected behavior (`BODY_REQUIRED`;
 quiet-hours windows built in the config's timezone).
+
+New `test/dream-recognition.mjs` (11 tests): dream detection by key/source,
+newest-first ordering, the 5-entry cap, framing text, exclusion from ordinary
+episodic rendering, `self` layer on distilled dreams.
+
+New `test/agent-mode.mjs` (6 tests): Research is the default;
+`researchStepsPreauthorized` fails closed on unknown/non-read-only tools;
+the mode is visible in the model context.
+
+New `test/cleanup.mjs` (13 tests, this release): pure detection for every
+detector (exact dupes, canonical pick, near-dupe pairs in-layer only,
+redundant keys, subsumed pairs, fragments with dream exclusion, stale
+volatile, graph orphans/dupes/dead-ends/contradictions); proposal
+idempotency; approve-applies/refuse-stands against a fake db; fragment
+merge; `cleanupDue` day-guard; `cleanup_report` wording.

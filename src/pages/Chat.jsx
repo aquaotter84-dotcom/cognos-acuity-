@@ -66,7 +66,19 @@ export default function Chat() {
   const [activePersonaId, setActivePersonaId] = useState(null);
   const [webSearch, setWebSearch] = useState(false);
   const [selectedSources, setSelectedSources] = useState([]);
-  const [agentMode, setAgentMode] = useState('off');
+  // The agent-mode default is Research (Jeremy's standing choice); an explicit
+  // pick persists in localStorage and wins over the default on every load.
+  const [agentMode, setAgentMode] = useState(() => {
+    try {
+      const saved = localStorage.getItem('cognos.agentMode');
+      return ['off', 'observe', 'read_only', 'research'].includes(saved) ? saved : 'research';
+    } catch { return 'research'; }
+  });
+  const handleAgentModeChange = (mode) => {
+    const next = ['off', 'observe', 'read_only', 'research'].includes(mode) ? mode : 'research';
+    setAgentMode(next);
+    try { localStorage.setItem('cognos.agentMode', next); } catch { /* private mode */ }
+  };
   const [isProcessing, setIsProcessing] = useState(false);
   const [draft, setDraft] = useState(null);   // { text, live } — the in-flight assistant turn
   const [conversationProject, setConversationProject] = useState(null); // project id when this chat lives inside a project
@@ -262,7 +274,7 @@ export default function Chat() {
   const handleSend = useCallback(async (text, options = {}) => {
     if (!activeWorkspace || isProcessing) return;
     const turnSources = Array.isArray(options.sources) ? options.sources : [];
-    const turnAgentMode = options.agentMode || 'off';
+    const turnAgentMode = options.agentMode || 'research';
     // Phase 18 — after the user decides a research plan, the next message in the
     // conversation continues that executed run: approved pages were attached as
     // evidence server-side, and the council answers from them like any source.
@@ -634,7 +646,7 @@ export default function Chat() {
         sources={selectedSources}
         onSourcesChange={setSelectedSources}
         agentMode={agentMode}
-        onAgentModeChange={setAgentMode}
+        onAgentModeChange={handleAgentModeChange}
       />
 
       <DesignerDrawer open={designerOpen} onClose={() => setDesignerOpen(false)} />

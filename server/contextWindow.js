@@ -7,6 +7,9 @@
 // result is telemetry data, not a model instruction and not a new authority.
 
 import { formatStructuredMemory, memoryLayerLabel } from "./memory/structure.js";
+import {
+  isDreamMemory, sortDreamsNewestFirst, renderDreamSection, DREAM_SECTION_MAX
+} from "./memory/structure.js";
 
 const CHARS_PER_TOKEN = 4;
 const DEFAULTS = Object.freeze({
@@ -212,6 +215,16 @@ export function assembleContextWindow({
   const memoryBudget = take(Math.min(budget.memoryTokens, remaining), budget.memoryTokens);
   const memoryResult = selectMemories(memories, memoryBudget);
 
+  // Dream recognition: dream-keyed rows admitted above are partitioned into
+  // their own newest-first, capped "your dreams" view. They stay inside the
+  // same memory token budget — this is a re-framing of admitted rows, not new
+  // admission. `memories` keeps the full admitted list so the Governor's
+  // citation audit and the trace events see exactly what the budget allowed.
+  const dreamMemories = sortDreamsNewestFirst(
+    memoryResult.value.filter(isDreamMemory)
+  ).slice(0, DREAM_SECTION_MAX);
+  const dreamSection = renderDreamSection(dreamMemories);
+
   const sourceBudget = take(Math.min(budget.sourceTokens, remaining), budget.sourceTokens);
   const sourceResult = selectBlocks(sourceContext, sourceBudget);
 
@@ -242,6 +255,7 @@ export function assembleContextWindow({
     history: historyResult.value,
     conversationSummary: summary || null,
     memories: memoryResult.value,
+    dreamMemories,
     workspace: promptWorkspace,
     sourceContext: sourceResult.value || null,
     supplementalContext: supplemental || null,
@@ -257,6 +271,8 @@ export function assembleContextWindow({
       memoryRecords: memoryResult.value.length,
       memoryLayers: [...new Set(memoryResult.value.map(memoryLayerLabel))],
       memoryTokens: memoryResult.used,
+      dreamRecords: dreamMemories.length,
+      dreamTokens: estimateTokens(dreamSection),
       summaryTokens: estimateTokens(summary),
       sourceTokens: sourceResult.used,
       sourceBlocksOmitted: sourceResult.omitted,

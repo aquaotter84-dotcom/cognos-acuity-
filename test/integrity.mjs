@@ -50,9 +50,13 @@ try {
     // /api/heartbeat/greeting, GET/POST /api/heartbeat/settings).
     // Phase 32 added 6: the persona routes (GET/POST /api/personas,
     // GET/PUT/DELETE /api/personas/:id, POST /api/personas/:id/activate).
-    assert.equal(nonStatic.length, 157);
-    // +1 static route on top of the 157 API routes (was 152 = 151 + 1).
-    if (!process.env.VERCEL) assert.equal(routes.length, 158);
+    // Phase 33 added 4: the cleanup agent routes (GET
+    // /api/autonomy/cleanup/proposals, POST
+    // /api/autonomy/cleanup/:id/decide, GET /api/autonomy/cleanup/last-run,
+    // POST /api/autonomy/cleanup/run).
+    assert.equal(nonStatic.length, 161);
+    // +1 static route on top of the 161 API routes (was 157 = 156 + 1).
+    if (!process.env.VERCEL) assert.equal(routes.length, 162);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",

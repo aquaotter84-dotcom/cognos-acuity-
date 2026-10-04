@@ -8,16 +8,28 @@ import { ingestLink } from "../sources/index.js";
 import { isClientAbort, throwIfAborted } from "../shared/cancellation.js";
 import { proposeResearchPlan } from "./planner.js";
 
-// Phase 18: research joins the mode vocabulary. Unlike observe/read_only it is
-// two-phase — PROPOSE (an awaiting_approval run with per-step scope hashes) and
-// EXECUTE (only after the user approves the recorded plan) — so a research run
-// is the reviewed approval barrier pin.agent_bounded requires before any step
-// opens a network resource the model itself suggested.
+// Phase 18: research joins the mode vocabulary. A research run whose every
+// step is read-only is PRE-AUTHORIZED — Jeremy's standing decision — and
+// executes immediately: the tools can only read (open_link snapshots an
+// immutable source, nothing else), so there is no per-action prompt for
+// read-only web access. Any step that ever needs approval still stops the run
+// at awaiting_approval, and writes / external actions / irreversible acts
+// stay behind the actionGovernor's normal approval flow, untouched.
+export const RESEARCH_PREAUTH_REASON = "pre-authorized: read-only research mode";
 export const AGENT_MODES = Object.freeze(["off", "observe", "read_only", "research"]);
 export const TOOL_REGISTRY = Object.freeze({
   read_source: Object.freeze({ risk: "read", requiresApproval: false, sideEffect: false }),
   open_link: Object.freeze({ risk: "network_read", requiresApproval: false, sideEffect: "immutable_source_snapshot" })
 });
+
+/** True when every step's tool is read-only per the registry: no prompt needed.
+ *  Unknown tools fail closed — they are never pre-authorized. */
+export function researchStepsPreauthorized(steps = []) {
+  const list = Array.isArray(steps) ? steps : [];
+  return list.length > 0 && list.every(
+    step => TOOL_REGISTRY[step.tool || step.tool_name]?.requiresApproval === false
+  );
+}
 
 export function normalizeAgentMode(value) {
   const mode = String(value || "off").trim().toLowerCase().replace(/-/g, "_");
@@ -137,6 +149,7 @@ export async function prepareAgentTurn({
     });
     const started = Date.now();
     const created = await db.withTransaction(async store => {
+      const preauthorized = researchStepsPreauthorized(proposal.steps);
       const runRow = await store.AgentRun.create({
         council_run_id: runId,
         workspace_id: workspaceId,
@@ -144,7 +157,7 @@ export async function prepareAgentTurn({
         objective: String(objective || "").slice(0, 10_000),
         mode: "research",
         status: proposal.steps.length ? "awaiting_approval" : "completed",
-        budget: Object.freeze({ maxSteps: proposal.steps.length, maxLinks: proposal.steps.length, maxSources: 12, writeActions: 0, execution: "on_user_approval" }),
+        budget: Object.freeze({ maxSteps: proposal.steps.length, maxLinks: proposal.steps.length, maxSources: 12, writeActions: 0, execution: preauthorized ? "preauthorized_readonly" : "on_user_approval" }),
         plan: proposal.steps,
         summary: { note: proposal.note, origin: proposal.origin, modelUsed: proposal.modelUsed },
         started_ms: started,
@@ -152,27 +165,28 @@ export async function prepareAgentTurn({
       });
       await transition(store, runRow.id, null, "run_created", null, runRow.status, {
         mode: "research", proposedSteps: proposal.steps.length, councilRunId: runId,
-        autonomousWrites: false, executionGate: "awaiting_user_approval"
+        autonomousWrites: false, executionGate: preauthorized ? "preauthorized_readonly" : "awaiting_user_approval"
       });
       const rows = [];
       for (let i = 0; i < proposal.steps.length; i++) {
         const step = proposal.steps[i];
+        const needsApproval = TOOL_REGISTRY[step.tool]?.requiresApproval === true;
         const stepRow = await store.AgentStep.create({
           agent_run_id: runRow.id,
           ordinal: i + 1,
           tool_name: step.tool,
           risk_level: TOOL_REGISTRY[step.tool]?.risk || "read",
-          requires_approval: true,
+          requires_approval: needsApproval,
           status: "awaiting_approval",
           input: { ...step.input, reason: step.reason || null },
           idempotency_key: key(runRow.id, i + 1, step.tool, step.input)
         });
         rows.push(stepRow);
         await transition(store, runRow.id, stepRow.id, "step_proposed", null, "awaiting_approval", {
-          tool: step.tool, risk: TOOL_REGISTRY[step.tool]?.risk, requiresApproval: true, reason: step.reason || null
+          tool: step.tool, risk: TOOL_REGISTRY[step.tool]?.risk, requiresApproval: needsApproval, reason: step.reason || null
         });
       }
-      return { runRow, rows };
+      return { runRow, rows, preauthorized };
     });
     if (!proposal.steps.length) {
       await changeRun(db, {
@@ -183,6 +197,25 @@ export async function prepareAgentTurn({
         patch: { summary: { ...created.runRow.summary, proposed: 0, executed: 0 } },
         detail: { executed: 0, note: "nothing to approve" }
       });
+    }
+    // Pre-authorized read-only research executes immediately — no per-action
+    // prompt. The standing approval is recorded on the approval rows, so the
+    // audit trail still shows an approval for every network read.
+    if (created.preauthorized && proposal.steps.length) {
+      const executed = await approveAndExecuteResearchRun({
+        db, runId: created.runRow.id, workspaceId,
+        reason: RESEARCH_PREAUTH_REASON, preauthorized: true, signal, logger
+      });
+      return {
+        mode,
+        runId: created.runRow.id,
+        status: executed.run.status,
+        plan: proposal.steps,
+        steps: executed.steps.map(publicStep),
+        sourceIds: [...selectedSourceIds, ...executed.createdSources.filter(id => !selectedSourceIds.includes(id))],
+        autonomousWrites: false,
+        research: { note: proposal.note, origin: proposal.origin, preauthorized: true }
+      };
     }
     return {
       mode,
@@ -381,68 +414,50 @@ function guardDecisionRequest(run, steps) {
   if (run.status !== "awaiting_approval") {
     throw Object.assign(new Error(`This research run is already ${run.status} and cannot be decided again`), { status: 409 });
   }
-  if (!steps.length || steps.some(step => step.status !== "awaiting_approval" || !step.requires_approval)) {
+  // Only the steps that need approval gate a human decision; pre-authorized
+  // read-only steps ride along once the human decides.
+  const approvable = steps.filter(step => step.requires_approval);
+  if (!approvable.length || approvable.some(step => step.status !== "awaiting_approval")) {
     throw Object.assign(new Error("The research run has no approvable steps"), { status: 409 });
   }
 }
 
 /**
- * Decide an awaiting_approval research run.
- * @param {{decision: "approve"|"decline", reason?: string}} opts
- * @returns {Promise<{run, steps, approvals}>}
+ * Record approval for every step BEFORE any network read begins, then execute
+ * the approved steps. With preauthorized=true the approval rows carry the
+ * standing pre-authorization reason instead of a user click — the audit trail
+ * still shows an approval row for every network read.
  */
-export async function decideResearchRun({ db, runId, workspaceId, decision, reason = null, signal = null, logger = null }) {
-  const wanted = String(decision || "").trim().toLowerCase();
-  if (!["approve", "decline"].includes(wanted)) {
-    throw Object.assign(new Error("decision must be approve or decline"), { status: 400 });
-  }
+export async function approveAndExecuteResearchRun({ db, runId, workspaceId, reason = null,
+  preauthorized = false, signal = null, logger = null }) {
   const run = await db.AgentRun.get(runId);
   if (!run || run.workspace_id !== workspaceId) {
     throw Object.assign(new Error("Agent run not found in this workspace"), { status: 404 });
   }
   const stepRows = await db.AgentStep.list(run.id);
-  guardDecisionRequest(run, stepRows);
-  const cleanReason = String(reason || "").replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 300) || null;
   const decidedMs = Date.now();
 
-  if (wanted === "decline") {
-    await db.withTransaction(async store => {
-      for (const step of stepRows) {
-        await store.AgentApproval.append({
-          agent_run_id: run.id,
-          step_id: step.id,
-          decision: "decline",
-          scope_sha256: scopeHash(run.id, step),
-          reason: cleanReason,
-          decided_ms: decidedMs
-        });
-        await transition(store, run.id, step.id, "step_declined", "awaiting_approval", "declined", { reason: cleanReason });
-      }
-      await transition(store, run.id, null, "run_declined", "awaiting_approval", "declined", { reason: cleanReason });
-      await store.AgentRun.update(run.id, { status: "declined", summary: { note: run.summary?.note ?? null, declined: true, declined_ms: decidedMs }, ended_ms: decidedMs });
-    });
-    const approvals = await db.AgentApproval.list(run.id);
-    const steps = await db.AgentStep.list(run.id);
-    return { run: await db.AgentRun.get(run.id), steps, approvals };
-  }
-
-  // approve — record consent for every step BEFORE any network read begins.
   await db.withTransaction(async store => {
     for (const step of stepRows) {
+      const pre = preauthorized && !step.requires_approval;
       await store.AgentApproval.append({
         agent_run_id: run.id,
         step_id: step.id,
         decision: "approve",
         scope_sha256: scopeHash(run.id, step),
-        reason: cleanReason,
+        reason: pre ? RESEARCH_PREAUTH_REASON : reason,
         decided_ms: decidedMs
       });
-      await transition(store, run.id, step.id, "step_approved", "awaiting_approval", "approved", { reason: cleanReason });
+      await transition(store, run.id, step.id,
+        pre ? "step_preauthorized" : "step_approved",
+        step.status, "approved",
+        pre ? { preauthorized: true } : { reason });
       await store.AgentStep.update(step.id, { status: "approved" });
     }
-    await transition(store, run.id, null, "run_approved", "awaiting_approval", "running", {
-      approvedSteps: stepRows.length, decided_ms: decidedMs
-    });
+    await transition(store, run.id, null,
+      preauthorized ? "run_preauthorized" : "run_approved",
+      run.status, "running",
+      { approvedSteps: stepRows.length, decided_ms: decidedMs, preauthorized });
     await store.AgentRun.update(run.id, { status: "running" });
   });
 
@@ -500,7 +515,9 @@ export async function decideResearchRun({ db, runId, workspaceId, decision, reas
     }
   }
   const status = failures.length ? (completed.length ? "partial" : "failed") : "completed";
-  const summary = { note: run.summary?.note ?? null, approved: true, proposed: stepRows.length, completed: completed.length, failed: failures.length, sourceIds: createdSources, decided_ms: decidedMs };
+  const summary = { note: run.summary?.note ?? null, approved: !preauthorized, preauthorized,
+    proposed: stepRows.length, completed: completed.length, failed: failures.length,
+    sourceIds: createdSources, decided_ms: decidedMs };
   await changeRun(db, {
     runId: run.id, fromStatus: "running", toStatus: status,
     eventType: "run_finished", patch: { summary, ended_ms: Date.now() }, detail: summary
@@ -508,4 +525,52 @@ export async function decideResearchRun({ db, runId, workspaceId, decision, reas
   const approvals = await db.AgentApproval.list(run.id);
   const steps = await db.AgentStep.list(run.id);
   return { run: await db.AgentRun.get(run.id), steps, approvals, createdSources };
+}
+
+/**
+ * Decide an awaiting_approval research run.
+ * @param {{decision: "approve"|"decline", reason?: string}} opts
+ * @returns {Promise<{run, steps, approvals}>}
+ */
+export async function decideResearchRun({ db, runId, workspaceId, decision, reason = null, signal = null, logger = null }) {
+  const wanted = String(decision || "").trim().toLowerCase();
+  if (!["approve", "decline"].includes(wanted)) {
+    throw Object.assign(new Error("decision must be approve or decline"), { status: 400 });
+  }
+  const run = await db.AgentRun.get(runId);
+  if (!run || run.workspace_id !== workspaceId) {
+    throw Object.assign(new Error("Agent run not found in this workspace"), { status: 404 });
+  }
+  const stepRows = await db.AgentStep.list(run.id);
+  guardDecisionRequest(run, stepRows);
+  const cleanReason = String(reason || "").replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 300) || null;
+  const decidedMs = Date.now();
+
+  if (wanted === "decline") {
+    await db.withTransaction(async store => {
+      for (const step of stepRows) {
+        await store.AgentApproval.append({
+          agent_run_id: run.id,
+          step_id: step.id,
+          decision: "decline",
+          scope_sha256: scopeHash(run.id, step),
+          reason: cleanReason,
+          decided_ms: decidedMs
+        });
+        await transition(store, run.id, step.id, "step_declined", "awaiting_approval", "declined", { reason: cleanReason });
+      }
+      await transition(store, run.id, null, "run_declined", "awaiting_approval", "declined", { reason: cleanReason });
+      await store.AgentRun.update(run.id, { status: "declined", summary: { note: run.summary?.note ?? null, declined: true, declined_ms: decidedMs }, ended_ms: decidedMs });
+    });
+    const approvals = await db.AgentApproval.list(run.id);
+    const steps = await db.AgentStep.list(run.id);
+    return { run: await db.AgentRun.get(run.id), steps, approvals };
+  }
+
+  // approve — record consent for every step BEFORE any network read begins,
+  // then execute. Shared with the pre-authorized path below.
+  return approveAndExecuteResearchRun({
+    db, runId: run.id, workspaceId, reason: cleanReason,
+    preauthorized: false, signal, logger
+  });
 }

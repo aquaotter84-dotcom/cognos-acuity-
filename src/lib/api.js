@@ -169,6 +169,17 @@ export const api = {
   /** approve (and apply) | refuse. Only 'requested' rows can be decided. */
   decidePromotion: (id, body) => req(`/api/autonomy/promotions/${id}/decide`, { method: "POST", body }),
 
+  // --- Phase 33: the cleanup agent -------------------------------------------
+  // The housekeeping review queue. Listing is always visible; deciding applies
+  // the merge or disable the moment it lands, so it needs autonomy on.
+  listCleanupProposals: (params = {}) => req(`/api/autonomy/cleanup/proposals${qs(params)}`),
+  /** approve (and apply) | refuse. Only 'requested' rows can be decided. */
+  decideCleanupProposal: (id, body) => req(`/api/autonomy/cleanup/${id}/decide`, { method: "POST", body }),
+  /** { run, due, openProposals } — the last audit pass and what's waiting. */
+  getLastCleanupRun: () => req("/api/autonomy/cleanup/last-run"),
+  /** Run the audit now, on demand. */
+  runCleanupAudit: (body = {}) => req("/api/autonomy/cleanup/run", { method: "POST", body }),
+
   listTicks: (params = {}) => req(`/api/autonomy/ticks${qs(params)}`),
   /** Run one bounded slice now. No-op (frozen) when autonomy is disabled. */
   runTick: (body = {}) => req("/api/autonomy/tick", { method: "POST", body }),

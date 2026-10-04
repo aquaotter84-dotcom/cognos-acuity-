@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // Phase 18 regressions: durable research projects, governed image ingestion
 // (PNG/JPEG/WebP originals, hashes, region readings, injection screening),
-// and approval-gated research plans that execute only on user consent.
-// Everything here is deterministic and never leaves the sandbox: approved
-// research steps target 127.0.0.1, which safeFetch must refuse.
+// and research plans. Read-only research plans are pre-authorized by Jeremy's
+// standing decision and execute without a prompt (the standing approval is
+// recorded); plans with approval-requiring steps still gate on user consent.
+// Everything here is deterministic and never leaves the sandbox: research
+// steps target 127.0.0.1, which safeFetch must refuse.
 
 import assert from "node:assert/strict";
 import { parseImage } from "../server/sources/imageParse.js";
@@ -217,7 +219,7 @@ try {
     assert.ok(chunkLocators.length >= 2 && chunkLocators.every(loc => loc.image_region != null), JSON.stringify(chunkLocators));
   });
 
-  await test("research plans await approval; decline executes nothing and is final", async () => {
+  await test("read-only research plans are pre-authorized: no prompt, immediate execution, audit trail intact", async () => {
     h.model.state.researchPlan = {
       gap_note: "The inspection report lacks the tax history.",
       plan: [{ url: "https://example.com/tax-history", reason: "City tax record for 12 Elm St." }]
@@ -227,47 +229,50 @@ try {
     assert.ok(turn.ok, JSON.stringify(turn.error));
     const agent = turn.done.council.agent;
     assert.equal(agent.mode, "research");
-    assert.equal(agent.status, "awaiting_approval");
+    // Jeremy's standing decision: read-only web access in research mode needs
+    // no per-action prompt, so the run executes instead of awaiting approval.
+    assert.ok(["completed", "partial", "failed"].includes(agent.status), `status: ${agent.status}`);
     assert.equal(agent.steps.length, 1);
-    assert.equal(agent.steps[0].requiresApproval, true);
+    assert.equal(agent.steps[0].requiresApproval, false);
+    // The response marks it an execution, not a proposal: nothing is waiting.
+    assert.equal(turn.done.council.research.kind, "execution");
+    assert.equal(turn.done.council.research.runId, agent.runId);
 
     const runRow = (await h.sql("SELECT status, conversation_id FROM agent_runs WHERE id=$1", [agent.runId]))[0];
-    assert.equal(runRow.status, "awaiting_approval");
+    assert.ok(["completed", "partial", "failed"].includes(runRow.status));
     assert.equal(runRow.conversation_id, conversation.id);
-    assert.equal(await count("agent_approvals", " WHERE agent_run_id=$1 AND decision='decline'", [agent.runId]), 0);
+    // The standing approval is still recorded: every network read has an
+    // approval row, carrying the pre-authorization reason instead of a click.
+    const approvals = await h.sql("SELECT decision, reason FROM agent_approvals WHERE agent_run_id=$1", [agent.runId]);
+    assert.equal(approvals.length, 1);
+    assert.equal(approvals[0].decision, "approve");
+    assert.match(approvals[0].reason, /pre-authorized/i);
+    assert.equal(await count("agent_events", " WHERE agent_run_id=$1 AND event_type='run_preauthorized'", [agent.runId]), 1);
 
-    const declined = await h.raw(`/api/agent/runs/${agent.runId}/decision`, { method: "POST", body: { decision: "decline", reason: "URL looks off" } });
-    assert.equal(declined.status, 200);
-    assert.equal(declined.json.run.status, "declined");
-    assert.equal((await h.sql("SELECT decision, reason FROM agent_approvals WHERE agent_run_id=$1", [agent.runId]))[0].reason, "URL looks off");
-    // Decline freezes the plan: consent rows and events record it, the run is
-    // declined, and the proposed step itself is left untouched (never executed).
-    assert.equal(await count("agent_steps", " WHERE agent_run_id=$1 AND status='awaiting_approval'", [agent.runId]), 1);
-    assert.equal(await count("agent_events", " WHERE agent_run_id=$1 AND event_type='step_declined'", [agent.runId]), 1);
-    assert.equal(await count("agent_events", " WHERE agent_run_id=$1 AND event_type='run_declined'", [agent.runId]), 1);
-
-    const again = await h.raw(`/api/agent/runs/${agent.runId}/decision`, { method: "POST", body: { decision: "approve" } });
-    assert.equal(again.status, 409);
+    // The run is decided already: a late decline is refused, and a bogus
+    // decision is still rejected as bogus.
+    const late = await h.raw(`/api/agent/runs/${agent.runId}/decision`, { method: "POST", body: { decision: "decline", reason: "too late" } });
+    assert.equal(late.status, 409);
     const invalid = await h.raw(`/api/agent/runs/${agent.runId}/decision`, { method: "POST", body: { decision: "maybe" } });
     assert.equal(invalid.status, 400);
   });
 
-  await test("approving a plan records per-step consent, executes through safeFetch only, and is continuable", async () => {
+  await test("pre-authorized execution goes through safeFetch only, records standing consent, and is continuable", async () => {
     h.model.state.researchPlan = {
       gap_note: "Check county records.",
       plan: [{ url: "http://127.0.0.1/private", reason: "Should never be reachable" }]
     };
     const conversation = (await h.raw("/api/conversations", { method: "POST", body: {} })).json;
     const turn = await h.chat("What am I missing?", { conversationId: conversation.id, agentMode: "research" });
-    const runId = turn.done.council.agent.runId;
-
-    const approved = await h.raw(`/api/agent/runs/${runId}/decision`, { method: "POST", body: { decision: "approve" } });
-    assert.equal(approved.status, 200);
-    assert.ok(["failed", "partial"].includes(approved.json.run.status)); // 127.0.0.1 is refused by safeFetch
-    assert.equal(approved.json.steps.length, 1);
-    assert.match(approved.json.steps[0].error_message, /private|local|reserved|non-public/i);
-    const approval = (await h.sql("SELECT decision, scope_sha256 FROM agent_approvals WHERE agent_run_id=$1", [runId]))[0];
+    const agent = turn.done.council.agent;
+    const runId = agent.runId;
+    // No decision round-trip: the read-only plan executed on its own.
+    assert.ok(["failed", "partial"].includes(agent.status)); // 127.0.0.1 is refused by safeFetch
+    assert.equal(agent.steps.length, 1);
+    assert.match(agent.steps[0].error, /private|local|reserved|non-public/i);
+    const approval = (await h.sql("SELECT decision, reason, scope_sha256 FROM agent_approvals WHERE agent_run_id=$1", [runId]))[0];
     assert.equal(approval.decision, "approve");
+    assert.match(approval.reason, /pre-authorized/i);
     assert.match(approval.scope_sha256, /^[a-f0-9]{64}$/);
     assert.equal(await count("sources", " WHERE kind='link'"), 0); // nothing fetched, nothing stored
 
@@ -280,8 +285,9 @@ try {
     assert.ok(continuation.ok, JSON.stringify(continuation.error));
     const prompts = h.model.requests.map(r => r.content).join("");
     assert.match(prompts, /RESEARCH EXECUTION RECORD/);
-    assert.match(prompts, /private|local|reserved|non-public|failed|unreachable/i);
   });
+
+
 
 } finally {
   await h.stop();

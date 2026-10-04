@@ -31,6 +31,7 @@ const layerColors = {
   working: 'bg-cyan-500/15 text-cyan-400',
   episodic: 'bg-accent/15 text-accent',
   semantic: 'bg-primary/15 text-primary',
+  self: 'bg-violet-500/15 text-violet-400',
 };
 
 export default function Memory() {
@@ -133,6 +134,7 @@ export default function Memory() {
                   <option value="semantic">semantic · durable fact</option>
                   <option value="episodic">episodic · conversation event</option>
                   <option value="working">working · short-lived context</option>
+                  <option value="self">self · the assistant's own inner life</option>
                 </select>
                 <input value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="stable key (optional)"
                   className="bg-muted/40 border border-border rounded-lg px-2 py-1.5 text-xs outline-none placeholder:text-muted-foreground/60" />

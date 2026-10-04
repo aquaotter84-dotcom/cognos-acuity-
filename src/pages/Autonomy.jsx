@@ -48,6 +48,7 @@ const TABS = [
   { id: 'notices', label: 'Notices', icon: Inbox },
   { id: 'outbox', label: 'Outbox', icon: ShieldCheck },
   { id: 'promotions', label: 'Promotions', icon: Sprout },
+  { id: 'cleanup', label: 'Cleanup', icon: Sparkles },
 ];
 
 /** Status -> pill tone. Parked and refused are the interesting ones. */
@@ -1360,6 +1361,160 @@ function Promotions({ frozen, onChanged }) {
   );
 }
 
+// ------------------------------------------------------------------ cleanup
+// Phase 33 — the cleanup agent's review queue. Exact duplicates tidy
+// themselves (logged); everything here is a merge or a retirement that only
+// Jeremy's approval can apply. Approving applies synchronously; refusing
+// records the decision and stands.
+const CLEANUP_KIND_LABEL = {
+  near_duplicate: "Near-duplicates",
+  redundant_key: "Same key, different content",
+  subsumed: "Absorbed by a longer memory",
+  fragment_merge: "Fragments to merge",
+  stale_volatile: "Gone quiet",
+  orphan_node: "Unconnected graph node",
+  dead_end: "Dead-end graph corner",
+  contradiction: "Graph contradiction",
+  orphan_note: "Orphaned goal note"
+};
+
+function CleanupRow({ proposal: p, busy, onDecide }) {
+  const decided = p.status !== 'requested';
+  const detail = p.detail || {};
+  const previewEntries = Object.entries(detail.previews || {});
+  const labelEntries = Object.entries(detail.labels || {});
+  return (
+    <div className="rounded-lg border border-border px-3 py-2.5">
+      <p className="text-xs">
+        <span className="font-medium">{CLEANUP_KIND_LABEL[p.kind] || p.kind}</span>
+        {' '}· <span className="text-muted-foreground">{p.title}</span>{' '}
+        <Pill tone={p.status === 'applied' ? 'ok' : p.status === 'refused' ? 'bad' : 'muted'}>{p.status}</Pill>
+      </p>
+      {detail.similarity != null && (
+        <p className="text-[10px] text-muted-foreground mt-1">Similarity {Math.round(detail.similarity * 100)}% — same thing said two ways.</p>
+      )}
+      {previewEntries.length > 0 && (
+        <div className="mt-1.5 space-y-1">
+          {previewEntries.map(([id, text]) => (
+            <p key={id} className="text-[11px] text-foreground/80 border-l-2 border-border pl-2">
+              {id === detail.canonicalId ? <span className="font-medium">Keep: </span> : null}{text}
+            </p>
+          ))}
+        </div>
+      )}
+      {labelEntries.length > 0 && (
+        <div className="mt-1.5 space-y-1">
+          {labelEntries.map(([id, text]) => (
+            <p key={id} className="text-[11px] text-foreground/80 border-l-2 border-border pl-2">{text}</p>
+          ))}
+        </div>
+      )}
+      <p className="text-[10px] text-muted-foreground mt-1 font-mono">
+        {p.store}{p.reason ? ` — ${p.reason}` : ''} · {fmtTime(p.created_date)}
+      </p>
+      {!decided && (
+        <div className="flex items-center gap-2 mt-2">
+          <button onClick={() => onDecide(p.id, 'approve')} disabled={busy}
+            className="flex items-center gap-1 rounded-lg bg-accent text-accent-foreground px-2 py-1 text-[10px] font-medium disabled:opacity-40">
+            <Check className="w-3 h-3" /> Approve &amp; tidy up
+          </button>
+          <button onClick={() => onDecide(p.id, 'refuse')} disabled={busy}
+            className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40">
+            <X className="w-3 h-3" /> Leave it alone
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Cleanup({ frozen, onChanged }) {
+  const [rows, setRows] = useState([]);
+  const [filter, setFilter] = useState('requested');
+  const [lastRun, setLastRun] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const refresh = useCallback(async () => {
+    try {
+      const [proposals, summary] = await Promise.all([
+        api.listCleanupProposals(filter ? { status: filter } : {}),
+        api.getLastCleanupRun()
+      ]);
+      setRows(proposals || []);
+      setLastRun(summary || null);
+    }
+    catch (e) { setError(e.message || 'Could not load the cleanup queue'); }
+    onChanged?.();
+  }, [filter, onChanged]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const decide = async (id, decision) => {
+    setBusy(true); setError('');
+    try { await api.decideCleanupProposal(id, { decision }); await refresh(); }
+    catch (e) { setError(e.message || 'The decision failed'); }
+    finally { setBusy(false); }
+  };
+
+  const runNow = async () => {
+    setRunning(true); setError('');
+    try { await api.runCleanupAudit(); await refresh(); }
+    catch (e) { setError(e.message || 'The housekeeping pass failed'); }
+    finally { setRunning(false); }
+  };
+
+  const tidied = lastRun?.run?.tidied || {};
+  const tidiedCount = Object.values(tidied).reduce((n, v) => n + (Number(v) || 0), 0);
+
+  return (
+    <Section
+      title="Cleanup"
+      subtitle="Housekeeping for everything I remember — duplicates and clutter get tidied automatically; anything real needs your call"
+      icon={Sparkles}
+      action={
+        <div className="flex items-center gap-2">
+          <select
+            value={filter} onChange={e => setFilter(e.target.value)}
+            className="bg-background border border-border rounded-lg px-2 py-1.5 text-xs outline-none"
+          >
+            {['requested', 'applied', 'refused', ''].map(s => (
+              <option key={s} value={s}>
+                {s === 'requested' ? 'Waiting for you' : s === '' ? 'Any state' : s[0].toUpperCase() + s.slice(1)}
+              </option>
+            ))}
+          </select>
+          <button onClick={runNow} disabled={running || frozen}
+            className="rounded-lg border border-border px-2 py-1.5 text-xs hover:bg-muted/50 disabled:opacity-40">
+            {running ? 'Tidying…' : 'Run a pass now'}
+          </button>
+        </div>
+      }
+    >
+      <ErrorNote error={error} />
+      {frozen && <p className="text-[11px] text-muted-foreground mb-2">Autonomy is off — the queue is still visible, but running a pass or deciding one needs it on.</p>}
+      {lastRun?.run ? (
+        <p className="text-[11px] text-muted-foreground mb-3">
+          Last pass {fmtTime(lastRun.run.finishedMs)} — tidied up {tidiedCount} {tidiedCount === 1 ? 'thing' : 'things'}
+          {lastRun.openProposals ? `, ${lastRun.openProposals} waiting for your call` : ', everything else looks tidy'}.
+        </p>
+      ) : (
+        <p className="text-[11px] text-muted-foreground mb-3">No housekeeping pass has run yet. The first one happens on its own within a day of autonomy being on.</p>
+      )}
+      {rows.length === 0
+        ? <Empty>Nothing waiting for your call. Exact duplicates tidy themselves; merges and anything destructive show up here.</Empty>
+        : (
+          <div className="space-y-2">
+            {rows.map(p => (
+              <CleanupRow key={p.id} proposal={p} busy={busy || frozen} onDecide={decide} />
+            ))}
+          </div>
+        )}
+    </Section>
+  );
+}
+
 // ------------------------------------------------------------------ notices
 function Notices({ onChanged }) {
   const [rows, setRows] = useState([]);
@@ -2587,6 +2742,8 @@ export default function Autonomy() {
             <Notices onChanged={refreshAttention} />
           ) : tab === 'promotions' ? (
             <Promotions frozen={frozen} onChanged={refreshAttention} />
+          ) : tab === 'cleanup' ? (
+            <Cleanup frozen={frozen} onChanged={refreshAttention} />
           ) : (
             <Outbox status={status} onChanged={refreshAttention} />
           )}

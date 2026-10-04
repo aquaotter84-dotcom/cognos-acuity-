@@ -1306,8 +1306,52 @@ CREATE TABLE IF NOT EXISTS personas (
 );
 `;
 
-export const PHASE_SCHEMAS = [  { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },
-  { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
+// Phase 33 — the cleanup agent: a scheduled audit of everything COGNOS
+// persists. Two tables: the proposal review queue (nothing destructive
+// happens without Jeremy's decision) and the run log (Jeremy-visible).
+// ---------------------------------------------------------------------------
+export const PHASE33_SCHEMA = `
+-- 33.1 Cleanup proposals: the review queue. One row per finding group;
+-- idempotent by (workspace_id, proposal_key). Statuses: requested, approved,
+-- applied, refused. Refusals stand; approvals apply synchronously.
+CREATE TABLE IF NOT EXISTS cleanup_proposals (
+  id            TEXT PRIMARY KEY,
+  workspace_id  TEXT NOT NULL,
+  store         TEXT NOT NULL,
+  kind          TEXT NOT NULL,
+  title         TEXT NOT NULL,
+  detail        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  proposal_key  TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'requested',
+  reason        TEXT,
+  decided_by    TEXT,
+  decided_ms    BIGINT,
+  applied_ms    BIGINT,
+  created_date  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS cleanup_proposals_key_idx
+  ON cleanup_proposals (workspace_id, proposal_key);
+CREATE INDEX IF NOT EXISTS cleanup_proposals_ws_idx
+  ON cleanup_proposals (workspace_id, status, created_date DESC);
+
+-- 33.2 Cleanup runs: one row per audit. The Jeremy-visible log of what the
+-- agent found, what it tidied itself, and what it queued for review.
+CREATE TABLE IF NOT EXISTS cleanup_runs (
+  id            TEXT PRIMARY KEY,
+  workspace_id  TEXT NOT NULL,
+  started_ms    BIGINT NOT NULL,
+  finished_ms   BIGINT,
+  findings      JSONB NOT NULL DEFAULT '{}'::jsonb,
+  tidied        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  proposals     JSONB NOT NULL DEFAULT '{}'::jsonb,
+  error         TEXT,
+  created_date  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS cleanup_runs_ws_idx
+  ON cleanup_runs (workspace_id, finished_ms DESC);
+`;
+
+export const PHASE_SCHEMAS = [  { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },  { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
   { id: "0003", phase: 16, name: "phase16_latency_observability", sql: PHASE16_SCHEMA },
   { id: "0004", phase: 17, name: "phase17_sources_and_agents", sql: PHASE17_SCHEMA },
   { id: "0005", phase: 18, name: "phase18_research_projects_images", sql: PHASE18_SCHEMA },
@@ -1326,5 +1370,8 @@ export const PHASE_SCHEMAS = [  { id: "0001", phase: 14, name: "phase14_dynamic_
   { id: "0018", phase: 29, name: "phase29_rung_switches", sql: PHASE29_SCHEMA },
   { id: "0019", phase: 30, name: "phase30_memory_embeddings", sql: PHASE30_SCHEMA },
   { id: "0020", phase: 31, name: "phase31_heartbeat_personality", sql: PHASE31_SCHEMA },
-  { id: "0021", phase: 32, name: "phase32_personas", sql: PHASE32_SCHEMA }
+  { id: "0021", phase: 32, name: "phase32_personas", sql: PHASE32_SCHEMA },
+  { id: "0022", phase: 33, name: "phase33_cleanup_agent", sql: PHASE33_SCHEMA }
 ];
+
+// ---------------------------------------------------------------------------

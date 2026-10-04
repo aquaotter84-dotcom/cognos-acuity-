@@ -37,6 +37,7 @@ import { decideEffect, revertEffect, refuseEffect, shadowCorpus } from "../auton
 import { RUNGS, RUNG_IDS, recordRungEvidence, rungEvidenceStatus } from "../autonomy/evidenceGate.js";
 import { describeLiveReadiness, setOutboxMode, listOutboxModeFlips } from "../autonomy/liveOutbox.js";
 import { decidePromotion } from "../autonomy/promote.js";
+import { decideCleanupProposal, runCleanupAudit, cleanupDue } from "../autonomy/cleanup.js";
 import { describeSkills } from "../skills/index.js";
 import { publicNotice, NOTICE_TEMPLATE_IDS } from "../autonomy/notice.js";
 import { runTick } from "../autonomy/tick.js";
@@ -568,19 +569,21 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     // version set count = rows.length, which made `?limit=1` look like an empty
     // inbox.
     const [
-      awaiting, parked, staged, notices, promotions,
-      awaitingN, parkedN, stagedN, noticesN, promotionsN
+      awaiting, parked, staged, notices, promotions, cleanups,
+      awaitingN, parkedN, stagedN, noticesN, promotionsN, cleanupsN
     ] = await Promise.all([
       db.AutonomyGoal.list(ws.id, { status: "awaiting_authorization", limit: perKind }),
       db.AutonomyGoal.list(ws.id, { status: "parked", limit: perKind }),
       db.AutonomyOutbox.list(ws.id, { status: "staged", limit: perKind }),
       db.AutonomyNotice.listUnread(ws.id, perKind),
       db.NotePromotion.list(ws.id, { status: "requested", limit: perKind }),
+      db.CleanupProposal.list(ws.id, { status: "requested", limit: perKind }),
       db.query(`SELECT COUNT(*)::int AS n FROM autonomy_goals WHERE workspace_id=$1 AND status='awaiting_authorization'`, [ws.id]),
       db.query(`SELECT COUNT(*)::int AS n FROM autonomy_goals WHERE workspace_id=$1 AND status='parked'`, [ws.id]),
       db.query(`SELECT COUNT(*)::int AS n FROM autonomy_outbox WHERE workspace_id=$1 AND status='staged'`, [ws.id]),
       db.query(`SELECT COUNT(*)::int AS n FROM autonomy_notices WHERE workspace_id=$1 AND acked_ms IS NULL`, [ws.id]),
-      db.query(`SELECT COUNT(*)::int AS n FROM note_promotions WHERE workspace_id=$1 AND status='requested'`, [ws.id])
+      db.query(`SELECT COUNT(*)::int AS n FROM note_promotions WHERE workspace_id=$1 AND status='requested'`, [ws.id]),
+      db.query(`SELECT COUNT(*)::int AS n FROM cleanup_proposals WHERE workspace_id=$1 AND status='requested'`, [ws.id])
     ]);
 
     const groups = [
@@ -633,6 +636,16 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
           id: p.id, title: p.target || "promotion", detail: p.reason ? String(p.reason).slice(0, 160) : null,
           atMs: p.created_date ? Date.parse(p.created_date) : null
         }))
+      },
+      {
+        kind: "open_cleanup",
+        tab: "cleanup",
+        label: "Housekeeping wants your call",
+        hint: "The cleanup pass found things only you should decide — duplicates to merge, clutter to clear. Nothing is destroyed without you.",
+        rows: (cleanups || []).map(p => ({
+          id: p.id, title: p.title || "cleanup proposal", detail: null,
+          atMs: p.created_date ? Date.parse(p.created_date) : null
+        }))
       }
     ];
     const totals = [
@@ -640,7 +653,8 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       Number(stagedN[0]?.n || 0),
       Number(noticesN[0]?.n || 0),
       Number(parkedN[0]?.n || 0),
-      Number(promotionsN[0]?.n || 0)
+      Number(promotionsN[0]?.n || 0),
+      Number(cleanupsN[0]?.n || 0)
     ];
     groups.forEach((group, i) => {
       group.count = totals[i];
@@ -1440,6 +1454,70 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     });
     res.json({ promotion: await db.NotePromotion.get(row.id), status: outcome.status,
       memoryId: outcome.memoryId || null, beliefId: outcome.beliefId || null });
+  }));
+
+  // --- Cleanup agent (Phase 33): the housekeeping review queue --------------
+  // Listing is always visible; deciding needs autonomy on, because an approval
+  // applies a merge or a disable the moment it lands.
+  app.get("/api/autonomy/cleanup/proposals", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const status = typeof req.query?.status === "string" && req.query.status ? req.query.status : null;
+    const rows = await db.CleanupProposal.list(ws.id, { status, limit: 100 });
+    res.json((rows || []).map(r => ({
+      ...r,
+      detail: typeof r.detail === "string" ? (() => { try { return JSON.parse(r.detail); } catch { return {}; } })() : (r.detail || {})
+    })));
+  }));
+
+  app.post("/api/autonomy/cleanup/:id/decide", wrap(async (req, res) => {
+    if (config().enabled !== true) {
+      return res.status(409).json({ error: frozenError(), code: "autonomy_disabled" });
+    }
+    const ws = await db.Workspace.ensureDefault();
+    const row = await db.CleanupProposal.get(req.params.id);
+    if (!row || row.workspace_id !== ws.id) {
+      return res.status(404).json({ error: "Cleanup proposal not found in this workspace" });
+    }
+    const decision = String(req.body?.decision || "").trim().toLowerCase();
+    if (!["approve", "refuse"].includes(decision)) {
+      return res.status(400).json({ error: "decision must be approve or refuse" });
+    }
+    const outcome = await decideCleanupProposal({
+      db, proposalId: row.id, decision,
+      reason: safe(req.body?.reason, 300) || null, actor: "app"
+    });
+    if (!outcome.ok) {
+      return res.status(409).json({ error: outcome.error, status: outcome.status || row.status });
+    }
+    res.json({ proposal: await db.CleanupProposal.get(row.id), status: outcome.status });
+  }));
+
+  app.get("/api/autonomy/cleanup/last-run", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const run = await db.CleanupRun.last(ws.id).catch(() => null);
+    const openCount = await db.CleanupProposal.countOpen(ws.id).catch(() => 0);
+    res.json({
+      run: run ? {
+        id: run.id,
+        startedMs: Number(run.started_ms) || null,
+        finishedMs: Number(run.finished_ms) || null,
+        findings: typeof run.findings === "string" ? (() => { try { return JSON.parse(run.findings); } catch { return {}; } })() : (run.findings || {}),
+        tidied: typeof run.tidied === "string" ? (() => { try { return JSON.parse(run.tidied); } catch { return {}; } })() : (run.tidied || {}),
+        error: run.error || null
+      } : null,
+      due: await cleanupDue(db, ws.id).catch(() => false),
+      openProposals: openCount
+    });
+  }));
+
+  /** Run the audit now, on demand. Autonomy must be on — this is a write pass. */
+  app.post("/api/autonomy/cleanup/run", wrap(async (req, res) => {
+    if (config().enabled !== true) {
+      return res.status(409).json({ error: frozenError(), code: "autonomy_disabled" });
+    }
+    const ws = await db.Workspace.ensureDefault();
+    const result = await runCleanupAudit({ db, workspaceId: ws.id, logger });
+    res.json(result);
   }));
 
   app.get("/api/autonomy/ticks", wrap(async (req, res) => {

@@ -114,7 +114,7 @@ export default function ChatInput({
   conversationId,
   sources = [],
   onSourcesChange = () => {},
-  agentMode = 'off',
+  agentMode = 'research',
   onAgentModeChange = () => {}
 }) {
   const [text, setText] = useState('');

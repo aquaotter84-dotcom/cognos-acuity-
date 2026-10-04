@@ -295,14 +295,24 @@ export async function distillDream({ db, workspaceId, dateStr, compose = null } 
   ).catch(() => []);
 
   if (!existing?.length) {
+    // Deliberate: a dream distills the day's memories, never previous dreams.
+    // A dream distilling a dream is second-order inference — the telephone
+    // game — compounding "inferred" on "inferred" until it drifts from what
+    // the day actually held. Continuity of inner life comes from READING past
+    // dreams at recall time (the "your dreams" context section), not from
+    // re-distilling them at write time. (See docs/memory-alignment.md.)
     const frags = await db.query(
-      `SELECT content FROM memories WHERE workspace_id = $1
+      `SELECT id, content FROM memories WHERE workspace_id = $1
          AND created_date >= ($2::date - interval '1 day') AND created_date < $2::date
          AND (memory_key NOT LIKE 'dream.%' OR memory_key IS NULL)
        ORDER BY created_date ASC LIMIT 12`,
       [workspaceId, day]
     ).catch(() => []);
-    const usable = (frags || []).map(r => String(r.content || "").trim()).filter(Boolean);
+    const rows = frags || [];
+    const usable = rows.map(r => String(r.content || "").trim()).filter(Boolean);
+    // Sapphire's derived_from, stored inline: the fragment ids this dream
+    // distilled, so the entry can always be traced back to its sources.
+    const sourceIds = rows.map(r => r && r.id).filter(Boolean);
     if (usable.length) {
       let text = null;
       if (compose) {
@@ -321,8 +331,17 @@ export async function distillDream({ db, workspaceId, dateStr, compose = null } 
         workspace_id: workspaceId,
         content: text,
         memory_type: "episodic",
-        memory_layer: "episodic",
+        // The assistant's own inner life lives on Sapphire's `self` layer;
+        // the type stays episodic (it distills the day's events). Historical
+        // rows were written as episodic/episodic and are still recognized by
+        // their `dream.<date>` key at recall time.
+        memory_layer: "self",
         memory_key: key,
+        memory_value: {
+          text,
+          distilled_from: sourceIds,
+          fragment_count: usable.length
+        },
         importance: 4,
         evidence_level: "inferred",
         source: "heartbeat.dream"

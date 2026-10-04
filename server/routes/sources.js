@@ -267,8 +267,11 @@ export function registerSourceRoutes(app, { wrap, db, logger }) {
   }));
 
   // Phase 18 — the user decides an awaiting_approval research plan. This is
-  // the recorded approval barrier; nothing about a research plan executes
-  // until this route records consent (per-step scope hashes) for it.
+  // the recorded approval barrier for plans that need it; read-only research
+  // plans are pre-authorized by Jeremy's standing decision and execute
+  // without a prompt, with the standing approval recorded on the approval
+  // rows. Nothing writes, reaches out, or acts irreversibly on this route's
+  // authority alone — the actionGovernor still owns those.
   app.post("/api/agent/runs/:id/decision", wrap(async (req, res) => {
     const workspace = await db.Workspace.ensureDefault();
     const requestAbort = requestAbortSignal(req, res);

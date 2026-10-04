@@ -1102,6 +1102,103 @@ export function createAutonomyStore(run) {
     }
   };
 
+  // -------------------------------------------------------------------------
+  // Cleanup agent: the proposal review queue and the run log. Proposals are
+  // idempotent by (workspace_id, proposal_key); refusals stand; approvals
+  // apply synchronously in cleanup.js.
+  // -------------------------------------------------------------------------
+  const CleanupProposal = {
+    async create(data) {
+      const id = data.id || newId("clnp");
+      const rows = await run(
+        `INSERT INTO cleanup_proposals
+          (id, workspace_id, store, kind, title, detail, proposal_key, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (workspace_id, proposal_key) DO NOTHING
+         RETURNING *`,
+        [id, data.workspace_id, data.store, data.kind, data.title,
+         json(data.detail, {}), data.proposal_key, data.status || "requested"]
+      );
+      return rows[0] || null;
+    },
+    async get(id) {
+      const rows = await run(`SELECT * FROM cleanup_proposals WHERE id=$1`, [id]);
+      return rows[0] || null;
+    },
+    async findByKey(workspaceId, proposalKey) {
+      const rows = await run(
+        `SELECT * FROM cleanup_proposals
+          WHERE workspace_id=$1 AND proposal_key=$2
+          ORDER BY created_date DESC LIMIT 1`,
+        [workspaceId, proposalKey]
+      );
+      return rows[0] || null;
+    },
+    async list(workspaceId, { status = null, limit = 50 } = {}) {
+      const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+      const where = ["workspace_id=$1"];
+      const params = [workspaceId];
+      if (status) { params.push(status); where.push(`status=$${params.length}`); }
+      params.push(safeLimit);
+      return run(
+        `SELECT * FROM cleanup_proposals WHERE ${where.join(" AND ")}
+         ORDER BY created_date DESC LIMIT $${params.length}`, params
+      );
+    },
+    async countOpen(workspaceId) {
+      const rows = await run(
+        `SELECT COUNT(*)::int AS n FROM cleanup_proposals
+          WHERE workspace_id=$1 AND status='requested'`, [workspaceId]
+      );
+      return Number(rows[0]?.n || 0);
+    },
+    async decide(id, { status, reason = null, decidedBy = null }) {
+      const rows = await run(
+        `UPDATE cleanup_proposals
+            SET status=$2, reason=$3, decided_by=$4, decided_ms=$5
+          WHERE id=$1 AND status IN ('requested','approved')
+         RETURNING *`,
+        [id, status, reason, decidedBy, Date.now()]
+      );
+      return rows[0] || null;
+    },
+    async markApplied(id) {
+      const rows = await run(
+        `UPDATE cleanup_proposals SET status='applied', applied_ms=$2 WHERE id=$1 RETURNING *`,
+        [id, Date.now()]
+      );
+      return rows[0] || null;
+    }
+  };
+
+  const CleanupRun = {
+    async start(workspaceId) {
+      const id = newId("clnr");
+      const rows = await run(
+        `INSERT INTO cleanup_runs (id, workspace_id, started_ms)
+         VALUES ($1,$2,$3) RETURNING *`,
+        [id, workspaceId, Date.now()]
+      );
+      return rows[0];
+    },
+    async finish(id, { findings = {}, tidied = {}, proposals = {}, error = null } = {}) {
+      const rows = await run(
+        `UPDATE cleanup_runs
+            SET finished_ms=$2, findings=$3, tidied=$4, proposals=$5, error=$6
+          WHERE id=$1 RETURNING *`,
+        [id, Date.now(), json(findings, {}), json(tidied, {}), json(proposals, {}), error]
+      );
+      return rows[0] || null;
+    },
+    async last(workspaceId) {
+      const rows = await run(
+        `SELECT * FROM cleanup_runs WHERE workspace_id=$1
+         ORDER BY finished_ms DESC NULLS LAST LIMIT 1`, [workspaceId]
+      );
+      return rows[0] || null;
+    }
+  };
+
   return {
     AutonomyAgent,
     AutonomyGoal,
@@ -1115,6 +1212,8 @@ export function createAutonomyStore(run) {
     AutonomyTick,
     GoalSubagent,
     NotePromotion,
+    CleanupProposal,
+    CleanupRun,
     RungEvidence,
     AutonomySettings,
     EffectApproval,

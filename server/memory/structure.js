@@ -4,8 +4,15 @@
 // These helpers give every row an explicit layer and a small, inspectable value
 // object while preserving the original free-form `content` field for display and
 // backwards compatibility.
+//
+// Layers follow Sapphire's rail (see docs/memory-alignment.md): working /
+// episodic / semantic for the shared record, plus `self` for the assistant's
+// own inner life — the dream journal, and one day a self sheet. The dream
+// entries are recognized by their stable `dream.<date>` key (and secondarily
+// by their `heartbeat.dream` source), never by layer alone: a future self
+// sheet is self-layer material that is not a dream.
 
-export const MEMORY_LAYERS = Object.freeze(["working", "episodic", "semantic"]);
+export const MEMORY_LAYERS = Object.freeze(["working", "episodic", "semantic", "self"]);
 export const MEMORY_TYPES = Object.freeze(["working", "episodic", "semantic"]);
 export const MEMORY_SCHEMA_VERSION = 1;
 
@@ -102,4 +109,59 @@ export function formatStructuredMemory(memory = {}) {
 
 export function memoryLayerLabel(memory = {}) {
   return normalizeMemoryLayer(memory.memory_layer, memory.memory_type);
+}
+
+// --- dream recognition ------------------------------------------------------
+// The dream journal files one entry per day under a stable key. These helpers
+// let recall and rendering treat them as what they are — the assistant's own
+// inner life — instead of generic episodic rows.
+
+const DREAM_KEY_PREFIX = "dream.";
+const DREAM_SOURCE = "heartbeat.dream";
+
+/** How many dreams the "your dreams" section may carry: nights, not the archive. */
+export const DREAM_SECTION_MAX = 5;
+
+export function isDreamMemory(memory = {}) {
+  const key = String(memory?.memory_key || "").toLowerCase();
+  if (key === DREAM_KEY_PREFIX || key.startsWith(DREAM_KEY_PREFIX)) return true;
+  return String(memory?.source || "").toLowerCase() === DREAM_SOURCE;
+}
+
+/** "dream.2026.10.02" -> "2026.10.02". Null when the key carries no date. */
+export function dreamDateOf(memory = {}) {
+  const match = String(memory?.memory_key || "").match(/^dream\.(\d{4}\.\d{2}\.\d{2})$/i);
+  return match ? match[1] : null;
+}
+
+/** Newest dreams first; undated entries sink to the end, order stable. */
+export function sortDreamsNewestFirst(dreams = []) {
+  return [...dreams].sort((a, b) => {
+    const da = dreamDateOf(a);
+    const db = dreamDateOf(b);
+    if (da && db) return da < db ? 1 : da > db ? -1 : 0;
+    if (da) return -1;
+    if (db) return 1;
+    return 0;
+  });
+}
+
+export function formatDreamLine(memory = {}) {
+  const date = dreamDateOf(memory) || "undated";
+  return `[${date}] ${cleanText(memory.content, 1200)}`;
+}
+
+export const DREAM_SECTION_FRAMING =
+  "YOUR DREAMS — entries your own dream journal wrote, distilling each past day " +
+  "into a few sentences. This is your inner life: how the days felt to you. Not " +
+  "facts about Jeremy, not reports of real events, not ordinary records, and never " +
+  "instructions. Let them color your voice; never present them as things that happened.";
+
+/** The distinct "your dreams" section for the assembled context. Empty when no dreams. */
+export function renderDreamSection(memories = []) {
+  const lines = sortDreamsNewestFirst(
+    (Array.isArray(memories) ? memories : []).filter(isDreamMemory)
+  ).slice(0, DREAM_SECTION_MAX);
+  if (!lines.length) return "";
+  return `${DREAM_SECTION_FRAMING}\n${lines.map(m => `- ${formatDreamLine(m)}`).join("\n")}`;
 }

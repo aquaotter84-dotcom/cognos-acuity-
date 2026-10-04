@@ -42,7 +42,7 @@ import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { newId, num } from "./db/util.js";
-import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA, PHASE24_SCHEMA, PHASE25_SCHEMA, PHASE22B_SCHEMA, PHASE22C_SCHEMA, PHASE26_SCHEMA, PHASE26B_SCHEMA, PHASE28_SCHEMA, PHASE29_SCHEMA, PHASE30_SCHEMA, PHASE31_SCHEMA, PHASE32_SCHEMA } from "./db/schema.js";
+import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA, PHASE24_SCHEMA, PHASE25_SCHEMA, PHASE22B_SCHEMA, PHASE22C_SCHEMA, PHASE26_SCHEMA, PHASE26B_SCHEMA, PHASE28_SCHEMA, PHASE29_SCHEMA, PHASE30_SCHEMA, PHASE31_SCHEMA, PHASE32_SCHEMA, PHASE33_SCHEMA } from "./db/schema.js";
 import { appendEvent, snapshot } from "./knowledge/events.js";
 import {
   createKnowledgeStore, TRACKED_FIELDS,
@@ -224,7 +224,11 @@ CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events (created_date DESC)
 // Phase 32 — the personas table (named prompt/voice/style bundles). One
 // table; inert by itself, read only by the persona routes and the chat
 // prompt assembly.
-+ PHASE32_SCHEMA;
++ PHASE32_SCHEMA
+// Phase 33 — the cleanup agent's review queue and run log. Two tables;
+// inert by themselves, written only by the cleanup audit and its decide
+// route, read by the Autonomy page's Cleanup tab.
++ PHASE33_SCHEMA;
 
 // Exported for the schema-boot regression test: every migration registered in
 // PHASE_SCHEMAS (server/db/schema.js) must be concatenated into SCHEMA above,
@@ -964,6 +968,9 @@ export const AutonomyTick = db.AutonomyTick;
 export const EffectApproval = db.EffectApproval;
 // Phase 21 — the evidence row that earns a rung (append-only).
 export const RungEvidence = db.RungEvidence;
+// Phase 33 — the cleanup agent's review queue and run log.
+export const CleanupProposal = db.CleanupProposal;
+export const CleanupRun = db.CleanupRun;
 // Phase 25 — the delegated on/off switch (inert without COGNOS_AUTONOMY_UI_CONTROL).
 export const AutonomySettings = db.AutonomySettings;
 // Phase 26 — the delegated council switches (Critic, Governor).

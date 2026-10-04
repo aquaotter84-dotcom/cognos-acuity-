@@ -5,8 +5,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   BookOpenCheck, Bot, Boxes, BrainCircuit, CheckCircle2, ChevronRight,
-  CircleSlash2, Cpu, FileSearch, Gauge, GitBranch, Menu, Mic2,
-  Network, RefreshCw, Scale, Search, ShieldCheck, Send, Volume2
+  CircleSlash2, Cpu, FileSearch, Gauge, GitBranch, Heart, Menu, Mic2,
+  Network, RefreshCw, Scale, Search, ShieldCheck, Send, Smile, Sparkles, Volume2
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
@@ -26,6 +26,9 @@ const capabilityIcons = {
   image_analysis: FileSearch,
   durable_autonomy: GitBranch,
   external_effects: Send,
+  personas: Smile,
+  heartbeat_personality: Heart,
+  cleanup_agent: Sparkles,
 };
 
 const subsystemIcons = {
@@ -89,6 +92,10 @@ function statusFor(capability, runtime) {
     case 'durable_autonomy':
       return runtime?.autonomy?.enabled
         ? { label: `enabled · outbox ${runtime.autonomy.outboxMode}`, tone: 'warn' }
+        : { label: 'off by default', tone: 'muted' };
+    case 'cleanup_agent':
+      return runtime?.autonomy?.enabled
+        ? { label: 'runs daily with autonomy', tone: 'ok' }
         : { label: 'off by default', tone: 'muted' };
     case 'external_effects': {
       const writes = runtime?.autonomy?.externalWrites || {};

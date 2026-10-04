@@ -31,7 +31,7 @@ export function registerChatRoute(app, { wrap, db, logger }) {
 
     const workspaceStep = await timed(() => db.Workspace.ensureDefault());
     const workspace = workspaceStep.value;
-    const agentMode = normalizeAgentMode(req.body?.agentMode || "off");
+    const agentMode = normalizeAgentMode(req.body?.agentMode || "research");
 
     let conversationId = req.body?.conversationId || null;
     let createdConversation = null;
