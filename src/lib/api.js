@@ -71,6 +71,13 @@ export const api = {
   setDatabaseUrl: (url) => req("/api/settings/database-url", { method: "POST", body: { url } }),
   clearDatabaseUrl: () => req("/api/settings/database-url", { method: "DELETE" }),
 
+  // --- Stored-data cleanup (Settings → Stored data) --------------------------
+  // Every category of stored data, with live counts. Clearing is destructive
+  // and always confirmed in the UI first; the server re-checks confirmation.
+  dataCleanupCounts: () => req("/api/data/cleanup/counts"),
+  clearDataCategory: (category) => req(`/api/data/cleanup/${category}`, { method: "POST", body: { confirm: true } }),
+  clearAllData: (phrase) => req("/api/data/cleanup/all", { method: "POST", body: { confirm: phrase } }),
+
   // --- Model selection (Settings): tap options, not variables ---------------
   // The live catalog (GET /v1/models on the configured provider) so new
   // models appear without another release. API keys and endpoint URLs stay

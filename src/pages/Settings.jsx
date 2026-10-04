@@ -12,6 +12,7 @@ import { useVoice } from '@/lib/voiceContext';
 import { diagnoseTtsNative } from '@/lib/ttsNative';
 import { getTheme, applyTheme } from '@/lib/theme';
 import AppUpdatesSection from '@/components/settings/AppUpdatesSection';
+import DataCleanupSection from '@/components/settings/DataCleanupSection';
 import {
   Btn, IconBtn, SectionCard, TextInput, TextArea, Select, Field, Disclosure,
 } from '@/components/ui/CognosUi';
@@ -825,6 +826,8 @@ export default function Settings() {
           <AppUpdatesSection />
 
           <DatabaseSection onChanged={() => api.health().then(setHealth).catch(() => {})} />
+
+          <DataCleanupSection />
 
           <SectionCard title="Appearance" bodyClassName="text-sm">
             <div className="grid grid-cols-2 gap-2">
