@@ -1183,20 +1183,9 @@ ALTER TABLE autonomy_settings ADD COLUMN IF NOT EXISTS auto_authorize_goals BOOL
 // ---------------------------------------------------------------------------
 // Phase 28 — the earned-corpus bypass, as a delegated operator switch.
 //
-// A live T4 release normally has to EARN its way past the shadow gate: a
-// recorded corpus of samples, zero false releases, aimed at the approved
-// destination. The bypass says an operator vouches for the destination and the
-// corpus is not required. It shipped env-only (COGNOS_AUTONOMY_BYPASS_EARNING /
-// _EVIDENCE), which meant the one off-ramp that unblocks a live release was
-// invisible on the very page that shows you the wall.
-//
-// One nullable column on autonomy_settings, the same shape as
-// auto_authorize_goals: null reads as off (the resting state), the row is inert
-// unless COGNOS_AUTONOMY_BYPASS_EARNING_UI_CONTROL delegates the switch, and an
-// explicit environment pin outranks it in both directions. It waives the
-// CORPUS and nothing else — the rung flag, the one approved destination,
-// autonomy being on, quiet hours and the per-effect Governor all still bind,
-// and T5 still releases only by a per-effect human approval.
+// Phase 34 removed the earned-corpus bypass along with the earned requirement
+// itself: there is no corpus to waive any more. The column stays (harmless,
+// unread) so existing databases don't need a migration for a dead switch.
 // ---------------------------------------------------------------------------
 export const PHASE28_SCHEMA = `
 ALTER TABLE autonomy_settings ADD COLUMN IF NOT EXISTS bypass_earning BOOLEAN;

@@ -54,9 +54,11 @@ try {
     // /api/autonomy/cleanup/proposals, POST
     // /api/autonomy/cleanup/:id/decide, GET /api/autonomy/cleanup/last-run,
     // POST /api/autonomy/cleanup/run).
-    assert.equal(nonStatic.length, 161);
-    // +1 static route on top of the 161 API routes (was 157 = 156 + 1).
-    if (!process.env.VERCEL) assert.equal(routes.length, 162);
+    // Phase 34 added 2: the studio feed (GET /api/autonomy/feed) and
+    // per-resident chat (POST /api/autonomy/agents/:id/chat).
+    assert.equal(nonStatic.length, 162);
+    // +1 static route on top of the 162 API routes (was 157 = 156 + 1).
+    if (!process.env.VERCEL) assert.equal(routes.length, 163);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",
@@ -89,7 +91,8 @@ try {
       "get:/api/autonomy/promotions",
       "post:/api/autonomy/promotions/:id/decide",
       "get:/api/autonomy/rungs",
-      "post:/api/autonomy/rungs/:rung/evidence",
+      "get:/api/autonomy/feed",
+      "post:/api/autonomy/agents/:id/chat",
       "get:/api/autonomy/settings",
       "post:/api/autonomy/settings",
       "get:/api/autonomy/attention",

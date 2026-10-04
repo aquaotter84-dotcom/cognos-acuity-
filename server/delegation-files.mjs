@@ -28,7 +28,6 @@ export const AUTONOMY_DELEGATION_FILES = Object.freeze([
   { name: "autonomy", env: "COGNOS_AUTONOMY_UI_CONTROL", file: "autonomy_ui_control.txt" },
   { name: "rungs", env: "COGNOS_AUTONOMY_RUNGS_UI_CONTROL", file: "autonomy_rungs_ui_control.txt" },
   { name: "auto_authorize", env: "COGNOS_AUTONOMY_AUTO_AUTHORIZE_UI_CONTROL", file: "autonomy_auto_authorize_ui_control.txt" },
-  { name: "bypass_earning", env: "COGNOS_AUTONOMY_BYPASS_EARNING_UI_CONTROL", file: "autonomy_bypass_earning_ui_control.txt" },
   { name: "outbox", env: "COGNOS_AUTONOMY_OUTBOX_UI_CONTROL", file: "autonomy_outbox_ui_control.txt" },
   // Phase 33b — the council switches (Critic, Governor) get the same handover
   // as the autonomy switches. The file hands over the toggles only; both seats

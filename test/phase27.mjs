@@ -1,12 +1,9 @@
 // Phase 27 — the key path: granting a webhook destination into a goal's scope.
 //
-// THE CLAIM UNDER TEST. The shadow corpus is earned only by attempts aimed at a
-// granted destination (`corpus_aimed`, and would_release verdicts the Governor
-// can only give a granted effect). Until now no goal could ever carry that
-// grant: the manual goal form sent no scope at all, and the designer's
-// firstGoalScope granted notify + optional external_read — read pages only.
-// The lock was built (destination judgments, the aimed-corpus gate); the wire
-// from an operator's hand to a goal's scope was not.
+// THE CLAIM UNDER TEST. A goal can carry a granted webhook destination in its
+// scope, and the Governor judges attempts against it: granted attempts are
+// judged releasable (would_release in shadow), ungranted ones are refused by
+// name. (Phase 34: the corpus is gone; the grant is the gate, not an earning.)
 //
 // What this suite proves:
 //
@@ -109,7 +106,7 @@ await test("firstGoalScope: a destination grant only lands with webhook.post, an
 });
 
 // ------------------------------------------------------- live: the routes
-console.log("phase27: harness — destination grants through the two create routes, then the corpus fills");
+console.log("phase27: harness — destination grants through the two create routes, then the attempt is judged");
 const h = await bootHarness({
   COGNOS_AUTONOMY_ENABLED: "true",
   COGNOS_AUTONOMY_RESIDENTS: "true",
@@ -264,13 +261,13 @@ try {
       "the read grant is untouched — looking and acting stay different authorities");
   });
 
-  await test("END TO END — the corpus fills: a granted attempt is judged aimed at the approved destination", async () => {
+  await test("END TO END — a granted attempt is staged and judged would_release in shadow", async () => {
     const agent = await makeAgent(undefined, "p27-live");
 
     const made = await h.raw("/api/autonomy/goals", {
       method: "POST",
       body: {
-        title: "Earn the corpus", objective: "Post the build result to the granted hook.",
+        title: "Post the build result", objective: "Post the build result to the granted hook.",
         agent_id: agent.id,
         scope: { effectsAllowed: ["notify", { effect: "webhook.post", destinations: [APPROVED] }] }
       }
@@ -298,14 +295,15 @@ try {
     assert.equal(rows[0].status, "would_release", "shadow: judged releasable, performed not at all");
     assert.equal(rows[0].destination, APPROVED);
 
-    // The readiness report now counts corpus aimed at the approved destination,
-    // and its corpus_aimed condition — which could never be met — is met.
+    // Phase 34 — the corpus is gone. The readiness report has four conditions
+    // (delegated, unpinned, autonomy on, destination approved), none of them
+    // about a corpus. This harness pins the mode to shadow, so it is not
+    // ready — but the report is still readable.
     const rungs = await h.raw("/api/autonomy/rungs");
     assert.equal(rungs.status, 200);
-    assert.ok(rungs.json.live.corpus.aimedAtApproved >= 1,
-      `corpus aimed at the approved destination: ${JSON.stringify(rungs.json.live.corpus)}`);
-    const aimed = rungs.json.live.conditions.find(c => c.id === "corpus_aimed");
-    assert.equal(aimed.met, true, "the aimed-corpus condition is satisfied by attempts the grant made possible");
+    assert.equal(rungs.json.live.conditions.length, 4);
+    assert.ok(rungs.json.live.unmet.includes("not_pinned_down"),
+      "the shadow pin holds the mode down here");
   });
 
   await test("the lock holds — the same attempt with NO grant is still refused by name", async () => {

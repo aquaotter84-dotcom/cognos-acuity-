@@ -66,12 +66,12 @@ const STEP_SCHEMA = {
 const ALLOWED_NOTE_KINDS = new Set(["finding", "question", "dead_end", "decision",
   "plan_change", "evidence_ref", "blocker"]);
 
-// Rung names to the env flag that earns them. Named here so a rung-gate
+// Rung names to the env flag that opens them. Named here so a rung-gate
 // refusal tells the operator exactly which switch to consider.
 const RUNG_FLAGS = Object.freeze({
   residents: "COGNOS_AUTONOMY_RESIDENTS",
   search: "COGNOS_AUTONOMY_SEARCH",
-  externalWrites: "COGNOS_AUTONOMY_EXTERNAL_WRITES"
+  inbound: "COGNOS_INBOUND_ENABLED"
 });
 
 // Refusals that mean "stop", not "try something else". A rate limit or an
@@ -590,9 +590,9 @@ async function runStepInner({ db, cfg, goal, agent, authorization, workspaceId, 
   if (!skill) return await refusal(`skill not in registry: ${skillId}`);
   if (!allowlist.includes(skillId)) return await refusal(`skill not in this resident's allowlist: ${skillId}`);
   // The rung gate sits between the allowlist and the kill switch so the row
-  // names the actual barrier: a rung the deployment has not earned, not a
-  // skill that is merely switched off. isSkillEnabled would refuse it too —
-  // this message is the one an operator can act on.
+  // names the actual barrier: a capability switch the operator has not opened,
+  // not a skill that is merely switched off. isSkillEnabled would refuse it
+  // too — this message is the one an operator can act on.
   if (skill.requiresRung && cfg.rung?.[skill.requiresRung] !== true) {
     return await refusal(`rung gate: ${skillId} needs rung '${skill.requiresRung}' (${RUNG_FLAGS[skill.requiresRung] || "unflagged"}), which is off`);
   }

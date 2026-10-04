@@ -34,6 +34,7 @@ import { noteLocator } from '@/components/chat/GoalCard';
 import { useCognos } from '@/lib/cognosContext';
 import { Pill, Empty, ErrorNote } from '@/components/system/SystemUi';
 import DesignerDrawer from '@/components/autonomy/DesignerDrawer';
+import ResidentChatDrawer from '@/components/autonomy/ResidentChatDrawer';
 import AuthorizeConsent from '@/components/autonomy/AuthorizeConsent';
 import { ARCHIVIST } from '@/lib/archivist';
 import {
@@ -45,6 +46,7 @@ const TABS = [
   { id: 'overview', label: 'Overview', icon: Gauge },
   { id: 'residents', label: 'Residents', icon: Bot },
   { id: 'goals', label: 'Goals', icon: ScrollText },
+  { id: 'activity', label: 'Activity', icon: Activity },
   { id: 'notices', label: 'Notices', icon: Inbox },
   { id: 'outbox', label: 'Outbox', icon: ShieldCheck },
   { id: 'promotions', label: 'Promotions', icon: Sprout },
@@ -510,6 +512,7 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
   const [history, setHistory] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [chatResident, setChatResident] = useState(null); // Phase 34: per-resident chat
 
   const refresh = useCallback(async () => {
     try { setRows(await api.listResidents()); }
@@ -716,6 +719,15 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
                 >
                   <MessageCircle className="w-3.5 h-3.5" />
                 </button>}
+                {/* Phase 34 — Talk: per-resident chat over the resident's state.
+                    Preferences become conversations here. */}
+                <button
+                  onClick={() => setChatResident(resident)}
+                  className="shrink-0 px-2 py-1.5 rounded-lg text-xs font-medium text-primary hover:bg-muted"
+                  title={`Talk with ${resident.name}`}
+                >
+                  Talk
+                </button>
                 <button
                   onClick={() => setEditing(editing?.id === resident.id ? null : { id: resident.id, brief: resident.brief })}
                   className="shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
@@ -770,6 +782,13 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
           ))}
         </div>
       </Section>
+      {/* Phase 34 — per-resident chat drawer. */}
+      {chatResident && (
+        <ResidentChatDrawer
+          resident={chatResident}
+          onClose={() => setChatResident(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1516,6 +1535,46 @@ function Cleanup({ frozen, onChanged }) {
 }
 
 // ------------------------------------------------------------------ notices
+function ActivityTab() {
+  const [items, setItems] = useState([]);
+  const [error, setError] = useState('');
+
+  const refresh = useCallback(async () => {
+    try {
+      setError('');
+      const feed = await api.autonomyFeed({ limit: 50 });
+      setItems(Array.isArray(feed) ? feed : feed.items || []);
+    } catch (e) {
+      setError(e?.message || 'Could not load the activity feed.');
+    }
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  return (
+    <Section title="Activity" subtitle="One running story — goals, actions, notices" icon={Activity}>
+      {error && <p className="text-xs text-destructive mb-2">{error}</p>}
+      {items.length === 0 && !error ? (
+        <p className="text-xs text-muted-foreground py-6 text-center">
+          Nothing yet. When goals run, actions stage, or notices arrive, they'll appear here as one story.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {items.map((item) => (
+            <div key={item.id} className="rounded-lg border border-border/70 px-3 py-2.5">
+              <p className="text-xs leading-relaxed">{item.text}</p>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                {item.atMs ? new Date(item.atMs).toLocaleString() : ''}
+                {item.severity === 'warning' ? ' · needs attention' : ''}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
 function Notices({ onChanged }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState('');
@@ -1612,13 +1671,11 @@ const RUNG_ROWS = [
     hint: 'Let goals live here as durable residents and report through notices.' },
   { key: 'search', label: 'Web search (T3)',
     hint: 'Let a query leave for a third-party search provider. Fetching stays governed by each goal\u2019s own URL allowlist.' },
-  { key: 'externalWrites', label: 'External writes (T4)',
-    hint: 'Let the loop send to the one approved destination \u2014 and only for effects the Governor judges one at a time, against an earned corpus.' },
-  { key: 'irreversible', label: 'Irreversible effects (T5)',
-    hint: 'Let an effect that cannot be taken back be staged. It still releases only by your approval of that exact action.' },
   { key: 'inbound', label: 'Inbound',
     hint: 'Let the deployment receive work from outside rather than only reach for it.' },
 ];
+// Phase 34: externalWrites and irreversible are gone — T4/T5 are allowed when
+// built, no rung to climb. The trust is in the asking (Governor + approval).
 
 function Outbox({ status, onChanged }) {
   const [data, setData] = useState(null);
@@ -2087,85 +2144,10 @@ function Outbox({ status, onChanged }) {
  * plainly described. Everything here is skippable: turning one off silences
  * that behavior entirely, and the loop itself never depends on any of them.
  */
-function HeartbeatToggles() {
-  const [settings, setSettings] = useState(null);
-  const [busy, setBusy] = useState(null);
-  const [error, setError] = useState('');
-
-  const load = useCallback(async () => {
-    try {
-      const r = await api.heartbeatSettings();
-      setSettings(r.settings);
-    } catch {
-      setSettings({ greeting: true, dream: true, checkin: true });
-    }
-  }, []);
-  useEffect(() => { load(); }, [load]);
-
-  const flip = async (key) => {
-    if (busy || !settings) return;
-    setBusy(key); setError('');
-    try {
-      const r = await api.setHeartbeatSettings({ [key]: !settings[key] });
-      setSettings(r.settings);
-    } catch (e) {
-      setError(e?.message || 'Could not update the setting.');
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  if (!settings) return null;
-
-  const rows = [
-    {
-      key: 'greeting',
-      label: 'Morning greeting',
-      blurb: 'One short, warm hello when you first open the app each day \u2014 referencing something real, like an active goal or yesterday\u2019s memories. In-app only, never a push notification.'
-    },
-    {
-      key: 'dream',
-      label: 'Dream journal',
-      blurb: 'The day\u2019s new memories are quietly distilled into a short dream entry you\u2019ll find in Memory. No fanfare.'
-    },
-    {
-      key: 'checkin',
-      label: 'Gentle check-ins',
-      blurb: 'Rare and soft: if a goal sits untouched for days, the morning greeting may mention it once. Dismiss it and it stays dismissed until tomorrow.'
-    }
-  ];
-
-  return (
-    <Section title="Heartbeat" subtitle="A little personality on the loop \u2014 warm, sparse, never nagging" icon={Heart}>
-      {error && <p className="text-[10px] text-destructive mb-2">{error}</p>}
-      <div className="space-y-2">
-        {rows.map(({ key, label, blurb }) => (
-          <div key={key} className="rounded-lg border border-border/70 px-3 py-2.5 flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <p className="text-xs font-medium">{label}</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{blurb}</p>
-            </div>
-            <button
-              role="switch"
-              aria-checked={settings[key] === true}
-              aria-label={label}
-              disabled={busy === key}
-              onClick={() => flip(key)}
-              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 disabled:opacity-50 ${settings[key] ? 'bg-primary' : 'bg-muted-foreground/30'}`}
-              title={settings[key] ? `Turn ${label.toLowerCase()} off` : `Turn ${label.toLowerCase()} on`}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-background shadow transition-transform ${settings[key] ? 'translate-x-5' : ''}`} />
-            </button>
-          </div>
-        ))}
-      </div>
-    </Section>
-  );
-}
 
 function Overview({ status, residents, goals, onTick, ticking, onToggle, toggling, bannerError,
   attention, attentionLoading, onJump, onDesign, onSeedArchivist, seedingArchivist,
-  onAutoAuthorize, autoAuthBusy, onBypassEarning, bypassBusy, onRung, rungBusy }) {
+  onAutoAuthorize, autoAuthBusy, onRung, rungBusy }) {
   const ceilings = status?.ceilings || {};
   const counts = status?.counts || {};
   const skills = status?.skills || [];
@@ -2185,8 +2167,18 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
         ) : null}
       />
 
-      {/* Phase 31 — heartbeat with personality: three silenceable toggles. */}
-      <HeartbeatToggles />
+      {/* Phase 34 — preferences become conversations. Greeting, dream journal,
+          and check-ins are configured by talking to a resident, not by
+          switches. The chat understands "stop saying good morning" and
+          friends. */}
+      <Section title="Daily rhythms" subtitle="Morning greetings, dreams, check-ins — just ask" icon={MessageCircle}>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          These aren't switches anymore. Open any resident's chat and say what you
+          want — <span className="text-foreground">"stop saying good morning"</span>,{" "}
+          <span className="text-foreground">"start the dreams again"</span>,{" "}
+          <span className="text-foreground">"turn check-ins off"</span> — and it's done.
+        </p>
+      </Section>
 
       {/* Phase 26 — forgo goal authorization. A delegated switch, reported as its
           own three facts (on / pinned / may-I-change-it), so the toggle can
@@ -2225,48 +2217,6 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
           {!status?.settings?.canSetAutoAuthorize && (
             <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">
               {status?.settings?.autoAuthorizeRefusal?.message || 'This deployment has not handed the auto-authorize switch to this page.'}
-            </p>
-          )}
-        </div>
-      </Section>
-
-      {/* Phase 28 — the earned-corpus bypass. The one off-ramp that used to live
-          only in an environment variable, now a delegated switch with the same
-          three facts (on / pinned / may-I-change-it) as the one above. */}
-      <Section title="Live releases" subtitle="Whether a live effect has to earn its way past a shadow corpus" icon={ShieldCheck}>
-        <div className="rounded-lg border border-border/70 px-3 py-2.5">
-          <div className="flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <p className="text-xs font-medium flex items-center gap-2 flex-wrap">
-                Release without earning a corpus
-                {status?.settings?.bypassEarning
-                  ? <Pill tone="warn">vouching for the destination</Pill>
-                  : <Pill tone="ok">corpus required</Pill>}
-                {status?.settings?.bypassEarningPinned && <Pill tone="info">pinned by an operator</Pill>}
-              </p>
-              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
-                {status?.settings?.bypassEarning
-                  ? 'A live effect no longer waits for a shadow corpus — you have vouched for the approved destination. The rung, the destination, the per-effect Governor and every T5 approval still apply.'
-                  : 'A live effect has to earn its way past the shadow corpus first: recorded samples aimed at the approved destination, with no false releases.'}
-              </p>
-            </div>
-            <button
-              role="switch"
-              aria-checked={status?.settings?.bypassEarning === true}
-              aria-label="Release without earning a corpus"
-              disabled={!status?.settings?.canSetBypassEarning || bypassBusy}
-              onClick={() => onBypassEarning(!status?.settings?.bypassEarning)}
-              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 disabled:opacity-50 ${status?.settings?.bypassEarning ? 'bg-primary' : 'bg-muted-foreground/30'}`}
-              title={status?.settings?.canSetBypassEarning
-                ? (status?.settings?.bypassEarning ? 'Require the corpus again' : 'Release without earning a corpus')
-                : (status?.settings?.bypassEarningRefusal?.message || 'The earned-corpus bypass is not delegated to this page')}
-            >
-              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-background shadow transition-transform ${status?.settings?.bypassEarning ? 'translate-x-5' : ''}`} />
-            </button>
-          </div>
-          {!status?.settings?.canSetBypassEarning && (
-            <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">
-              {status?.settings?.bypassEarningRefusal?.message || 'This deployment has not handed the earned-corpus bypass to this page.'}
             </p>
           )}
         </div>
@@ -2483,7 +2433,6 @@ export default function Autonomy() {
   const [ticking, setTicking] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [autoAuthBusy, setAutoAuthBusy] = useState(false);
-  const [bypassBusy, setBypassBusy] = useState(false);
   const [rungBusy, setRungBusy] = useState(null);
   const [error, setError] = useState('');
   const [bannerError, setBannerError] = useState('');
@@ -2576,21 +2525,6 @@ export default function Autonomy() {
    * server decides (a pin or no delegation answers 409), and the toggle flips
    * back to the truth on refusal instead of staying where the click put it.
    */
-  const handleBypassEarning = async (next) => {
-    if (bypassBusy) return;
-    setBypassBusy(true); setBannerError('');
-    try {
-      const out = await api.setBypassEarning(next);
-      await refreshAll();
-      if (out.changed === false) {
-        setBannerError(`The earned-corpus bypass was already ${out.bypassEarning ? 'on' : 'off'}.`);
-      }
-    } catch (e) {
-      setBannerError(e?.message || 'Could not change the earned-corpus bypass.');
-      await refreshAll();
-    } finally { setBypassBusy(false); }
-  };
-
   /**
    * Phase 29 — flip one rung. Same contract as the switches above: the server
    * decides (a pin or no delegation answers 409), and the toggle falls back to
@@ -2731,13 +2665,14 @@ export default function Autonomy() {
               onJump={setTab} onDesign={() => setDesignerOpen(true)}
               onSeedArchivist={seedArchivist} seedingArchivist={seedingArchivist}
               onAutoAuthorize={handleAutoAuthorize} autoAuthBusy={autoAuthBusy}
-              onBypassEarning={handleBypassEarning} bypassBusy={bypassBusy}
               onRung={handleRung} rungBusy={rungBusy}
             />
           ) : tab === 'residents' ? (
             <Residents status={status} frozen={frozen} onDesign={() => setDesignerOpen(true)} onChanged={refreshAll} />
           ) : tab === 'goals' ? (
             <Goals status={status} frozen={frozen} residents={residents} onChanged={refreshAttention} />
+          ) : tab === 'activity' ? (
+            <ActivityTab />
           ) : tab === 'notices' ? (
             <Notices onChanged={refreshAttention} />
           ) : tab === 'promotions' ? (

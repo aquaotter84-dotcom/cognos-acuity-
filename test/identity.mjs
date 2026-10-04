@@ -108,14 +108,13 @@ check("the runtime reports autonomy as built and OFF, never as absent or enabled
   assert.deepEqual(a.unbuiltTiers, [], "no tier remains unbuilt");
   assert.equal(a.backgroundTasks, false, "no heartbeat without the flag");
   assert.equal(a.externalWrites.built, true);
-  assert.equal(a.externalWrites.rungEnabled, false);
   assert.equal(a.externalWrites.deliversNow, false);
-  assert.equal(a.externalWrites.requiresEvidenceRow, true);
+  assert.equal(a.externalWrites.deliversOnApproval, true);
   assert.deepEqual(a.externalWrites.adapters, ["webhook.post"]);
   // T5 is its own three facts: built, rung off, and released only by a
-  // per-effect human approval, never by class.
+  // per-effect human approval, never by class. (Phase 34: no rung.)
   assert.equal(a.irreversible.built, true);
-  assert.equal(a.irreversible.rungEnabled, false);
+  assert.ok(!("rungEnabled" in a.irreversible));
   assert.equal(a.irreversible.requiresPerEffectHumanApproval, true);
   assert.equal(a.irreversible.classAuthorized, false);
   assert.deepEqual(a.irreversible.adapters, ["post.publish"]);
@@ -142,7 +141,7 @@ check("the runtime reports autonomy as built and OFF, never as absent or enabled
     const on = describeIdentity({}, {}).runtime.autonomy;
     assert.equal(on.enabled, true);
     assert.equal(on.backgroundTasks, true);
-    assert.equal(on.externalWrites.rungEnabled, true);
+    assert.ok(!("rungEnabled" in on.externalWrites), "Phase 34: no rung");
     assert.equal(on.externalWrites.deliversNow, true);
     assert.equal(on.answersFromAutonomy, false, "no switch makes a goal an answer path");
     assert.equal(on.writesFromChatTurn, false, "and no switch gives a chat turn a write");

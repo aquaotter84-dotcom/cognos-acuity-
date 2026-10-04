@@ -129,9 +129,8 @@ const EXECUTORS = Object.freeze({
   // governance that released them, which the Action Governor already applied.
   //
   // Every gate ran before this function was reached (destination grant, https
-  // shape, header allowlist, body cap, secret_ref resolution, quiet hours, the
-  // shadow-evidence gate for a live T4 release, the per-effect human approval
-  // for a T5 release). What is left here is the socket, and the socket is
+  // shape, header allowlist, body cap, secret_ref resolution, quiet hours,
+  // the per-effect human approval for a T5 release). What is left here is the socket, and the socket is
   // bounded: DNS-pinned, re-checked per redirect, one attempt plus one bounded
   // retry, and a receipt that digests the response instead of keeping it.
   external_write: externalWriteExecutor(),
@@ -640,7 +639,8 @@ export async function revertEffect({ db, effectId, reason = null, nowMs = Date.n
   return { ok: true, row, unsendable };
 }
 
-/** The evidence gate reads this: how has the Governor actually been ruling? */
+/** How the Governor has actually been ruling, by status. Diagnostic; the
+ *  earned-corpus gate that used to read it is gone (Phase 34). */
 export async function shadowCorpus(db, workspaceId, limit = 500) {
   const safeLimit = Math.max(1, Math.min(1000, Number(limit) || 500));
   const rows = await db.query(

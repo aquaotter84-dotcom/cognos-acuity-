@@ -223,27 +223,35 @@ export const api = {
   /** THE explicit click: create the resident, and optionally its first goal. */
   createDesignedResident: (body) => req("/api/autonomy/designer/create", { method: "POST", body }),
 
+  // --- Phase 34 (Studio): the unified feed + per-resident chat ---------------
+  /**
+   * ONE running story: goal events, outbox events, and notices merged by time,
+   * each as a plain-language line. Read-only.
+   */
+  autonomyFeed: (params = {}) => req(`/api/autonomy/feed${qs(params)}`),
+  /**
+   * One conversational turn with a resident over its live state. Stateless:
+   * send the transcript (and optionally goalId to scope to one goal).
+   * A clear preference/lifecycle request is applied deterministically and
+   * reported in actionsTaken; everything else is conversation.
+   */
+  chatWithResident: (id, body) => req(`/api/autonomy/agents/${id}/chat`, { method: "POST", body }),
+
   // --- Phase 21: rungs and the evidence that earns them ---------------------
   // A rung flag says an operator switched it on. An evidence row says the
   // shadow corpus justified it. A live external write needs both.
-  /** Every rung: built, flag, recorded evidence, and the corpus measured now. */
+  /** The capability switches (residents, search, inbound) plus the go-live readiness report. */
   listRungs: () => req("/api/autonomy/rungs"),
-  /**
-   * Measure the shadow corpus and record it as an evidence row. Append-only:
-   * an insufficient measurement is recorded too, as the history of having asked.
-   */
-  recordRungEvidence: (rung, body = {}) =>
-    req(`/api/autonomy/rungs/${encodeURIComponent(rung)}/evidence`, { method: "POST", body }),
 
-  // --- Phase 22 (autonomy row): the earned flip to live --------------------
-  // `listRungs().live` is the readiness report: eight named conditions, each
+  // --- Phase 22 (autonomy row): the flip to live ---------------------------
+  // `listRungs().live` is the readiness report: named conditions, each
   // with a sentence to read when it is unmet. This is the flip itself.
   /**
-   * Widen or narrow the outbox mode. 409 with `code: 'live_not_earned'` and the
-   * whole readiness report attached when a widening to live has not been earned;
+   * Widen or narrow the outbox mode. 409 with `code: 'live_not_ready'` and the
+   * whole readiness report attached when a widening to live is refused;
    * `not_delegated` when the deployment never handed the switch to this UI;
    * `pinned_by_operator` when an environment value holds the mode down.
-   * Narrowing is refused by nothing.
+   * Narrowing is refused by nothing. (Phase 34: no earned corpus required.)
    */
   setOutboxMode: (outboxMode, body = {}) =>
     req("/api/autonomy/settings", { method: "POST", body: { outboxMode, ...body } }),
@@ -257,16 +265,6 @@ export const api = {
    */
   setAutoAuthorize: (autoAuthorize, body = {}) =>
     req("/api/autonomy/settings", { method: "POST", body: { autoAuthorize, ...body } }),
-
-  // --- Phase 28: the earned-corpus bypass ------------------------------
-  /**
-   * Flip the earned-corpus bypass. 409 with the reason in words when pinned or
-   * not delegated. When on, a live T4 release no longer waits for a recorded
-   * shadow corpus aimed at the approved destination; the rung flag, the
-   * destination, the per-effect Governor and every T5 approval still apply.
-   */
-  setBypassEarning: (bypassEarning, body = {}) =>
-    req("/api/autonomy/settings", { method: "POST", body: { bypassEarning, ...body } }),
 
   // --- Phase 29: the rung switches --------------------------------------
   /**

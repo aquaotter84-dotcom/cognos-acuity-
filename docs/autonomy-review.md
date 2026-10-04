@@ -2,16 +2,19 @@
 
 Scope: `server/autonomy/` (21 files, ~8,500 lines) — the agentic loop that does
 bounded background work for Jeremy: goals with leases, a skill registry, an
-outbox of staged effects judged by an Action Governor, an evidence gate that
-makes live external writes *earned*, templated notices, a heartbeat, a
+outbox of staged effects judged by an Action Governor, per-effect human
+approvals for consequential writes, templated notices, a heartbeat, a
 personality layer, and a conversational resident designer.
+(Phase 34: the earned-corpus requirement was removed — the trust is in the
+asking, not in practice runs.)
 
 Three parallel read-only reviews covered the whole set (governance, outbox +
 notifications, engine + config + settings). This doc consolidates their
 findings, ranked. Line numbers refer to the pre-v40 tree.
 
 The safety architecture is genuinely well-thought-out: refuse-by-default,
-replay-safe, earned-not-enabled, honest receipts. The findings below are
+replay-safe, ask-not-earn, honest receipts. (Phase 34: earned-not-enabled
+became asked-not-earned.) The findings below are
 places where the code doesn't live up to its own design — not places where
 the design is wrong. **Governance keeps its full authority throughout.**
 
@@ -233,9 +236,9 @@ rhymes with COGNOS's governor — Orbit just says it in plain language.
 ## What COGNOS's autonomy already has
 
 The engine side is ahead of Orbit: residents with leased goals, a tick loop,
-a staged-effect outbox judged by a refuse-by-default Action Governor, an
-evidence gate that makes live external writes *earned*, deterministic
-notices, a promotion pipeline from notes to memory, and Postgres persistence.
+a staged-effect outbox judged by a refuse-by-default Action Governor,
+per-effect human approvals, deterministic notices, a promotion pipeline
+from notes to memory, and Postgres persistence.
 And the app already has an Autonomy page (`src/pages/Autonomy.jsx`, ~2,600
 lines) with goal cards, a resident designer drawer, authorization consent,
 and `autonomyLabels.js` — the "jargon demoted, not removed" discipline the
@@ -272,8 +275,9 @@ team you manage.
    should be copied onto COGNOS's APIs.
 3. **Two design languages.** Orbit has its own aesthetic; COGNOS has its own.
    Verbatim ports read as a visual Frankenstein. Rebuild in COGNOS's idioms.
-4. **Governance has no Orbit equivalent.** Rungs, evidence gates, shadow
+4. **Governance has no Orbit equivalent.** Rungs, shadow
    mode, tiers — Orbit never needed them because it never acts unattended
+   (Phase 34: the evidence gate / earned corpus was removed; approvals remain)
    with tools. COGNOS's safety story is stricter and must be *presented*,
    not hidden. The v40 wording pass (plain language + technical disclosure)
    is the foundation this presentation stands on.
@@ -320,9 +324,8 @@ replaces it, and which (if any) genuinely need to survive as settings.
 | Check-ins on/off | Personality settings | "Check in with me less" / "don't check in unless something's wrong" | No |
 | Agent mode (Off/Read/Write/Research) | Chat input dropdown | Already conversational-shaped (a mode picker, not a config page); the dropdown stays, default Research | Yes — a mode picker is a control, not a maze; keep it visible |
 | Outbox mode (shadow/dry_run/live) | Autonomy settings | Tell the resident: "practice in the background, don't touch anything yet" (= shadow); "show me before you act" (= live + approvals). The mode becomes *how you talk to it*, not a setting you set | No — expressed as instructions to the agent |
-| Rungs (earned capabilities) | Evidence gate | "What are you allowed to do yet?" — the resident answers from its own earned state. Earning stays automatic; the manual rung knobs go away | No — governance is presented, not configured |
+| Rungs (capability switches) | Operator switches | "What are you allowed to do?" — the resident answers from the deployment's switches. Phase 34 removed earning entirely: no corpus to build, no rung to climb. The writing rungs are gone; T4/T5 are allowed when built. The trust is in the asking (Governor + Jeremy's approval), not in practice runs. | No — governance is presented, not configured |
 | Auto-authorize ("forgo goal authorization") | Autonomy settings | Per-goal: "you don't need to ask me for this one" — the existing authorization consent, conversational | No — it's a per-goal conversation, not a global toggle |
-| Bypass earning (evidence gate) | Env pin + UI delegation | Nothing. This was never a preference; in the studio world it has no user-facing surface at all (env pin for emergencies only) | No — removed from any UI |
 | **Autonomy on/off (kill switch)** | Autonomy settings | — | **Yes — the one switch that survives.** When Jeremy wants everything to stop, he must not have to negotiate with the thing he's stopping. A master stop is a control, not a conversation. |
 
 The principle: **preferences become conversations; governance becomes

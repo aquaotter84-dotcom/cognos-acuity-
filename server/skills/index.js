@@ -216,10 +216,9 @@ export const SKILL_REGISTRY = Object.freeze({
     tier: "T4",
     effectType: "external_write",
     killSwitch: "COGNOS_SKILL_WEBHOOK_POST",
-    requiresRung: "externalWrites",
     maxPayloadBytes: 40_960,
     timeoutMs: 12_000,
-    summary: "POST one body to one destination granted in the goal's scope. https only, judged per delivery, shadow until a corpus earns live.",
+    summary: "POST one body to one destination granted in the goal's scope. https only, judged per delivery; a live send still needs Jeremy's approval.",
     idempotencyRule: "keyed by (goal, url, body): the same trigger stages once however many steps ask for it, and a released key returns its receipt instead of sending again",
     args: {
       url: { type: "string", max: 2000, required: true },
@@ -235,14 +234,14 @@ export const SKILL_REGISTRY = Object.freeze({
   // --- T5: irreversible (Phase 22, autonomy row — second slice) -------------
   // The first act this loop may take that cannot be taken back: publishing
   // content to a granted destination. It is delivered with the same bounded
-  // https machinery as a T4 webhook, and it is governed strictly harder: the
-  // `irreversible` rung must be on AND a human approval row must name this
-  // exact outbox id, one at a time, never by class (pin.irreversible_human_approval).
+  // https machinery as a T4 webhook, and it is governed strictly harder: a
+  // human approval row must name this exact outbox id, one at a time, never
+  // by class (pin.irreversible_human_approval). No rung, no corpus — the
+  // approval is the authority.
   "post.publish": def({
     tier: "T5",
     effectType: "irreversible",
     killSwitch: "COGNOS_SKILL_POST_PUBLISH",
-    requiresRung: "irreversible",
     maxPayloadBytes: 40_960,
     timeoutMs: 12_000,
     summary: "Publish one body to one destination granted in the goal's scope. Irreversible: it runs only after a human approves this exact effect, one at a time, never by class.",
@@ -308,14 +307,9 @@ export function isSkillEnabled(id, config = null) {
   // does not even name is not enabled.
   if (skill.requiresRung && rung[skill.requiresRung] !== true) return false;
   if (skill.tier === "T2" && (notices.mode === "none" || notices.enabled === false)) return false;
-  // Phase 21: T4 is BUILT and still off. The rung flag above already gates a
-  // skill that declares requiresRung; this repeats the question at the tier so
-  // a future T4 skill cannot forget to declare one and slip through.
-  if (skill.tier === "T4" && rung.externalWrites !== true) return false;
-  // Phase 22 (autonomy row): T5 is BUILT and still off. The rung flag is the
-  // operator's sign-off that the tier exists; it is necessary and not
-  // sufficient — a release still needs a per-effect human approval.
-  if (skill.tier === "T5" && rung.irreversible !== true) return false;
+  // Phase 34 — T4 and T5 are allowed when built. No rung flag gates them; the
+  // Governor judges each effect and Jeremy's approval gates the consequential
+  // ones. The per-skill kill switch above is still the operator's off switch.
   return true;
 }
 

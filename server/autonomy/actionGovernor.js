@@ -32,13 +32,10 @@ import { getSkill, TIERS } from "../skills/index.js";
 import { SECRET_PATTERNS } from "../meta/policy.js";
 import { tierAllowed, budgetLineExhausted, insideQuietHours, liveDestinationCovers, dayStartMs } from "./config.js";
 // Phase 28 — the earned-corpus bypass is a delegated operator switch now, not a
-// raw environment read: settings.js owns the pin/delegation/row precedence, so
-// there is exactly one place that decides whether the corpus is still required.
-import { effectiveBypassEarning } from "./settings.js";
+// raw environment read: settings.js owns the pin/delegation/row precedence.
 import { authorizationCovers } from "./authorize.js";
 import { urlAllowedByScope, destinationsForScope, scopeEntryFor } from "./scopeUrl.js";
 import { checkWebhookUrl, checkWebhookHeaders, resolveSecretRef } from "./webhookPost.js";
-import { RUNGS } from "./evidenceGate.js";
 
 /** Every rule, so a refusal names what fired instead of just "no".
  *
@@ -399,12 +396,11 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
         `external deliveries are quiet between ${qh.startHour}:00 and ${qh.endHour}:00`);
     }
 
-    // The earned-not-enabled gate. A live release at T4 requires a recorded
-    // shadow corpus that satisfied the gate, and the recorded metrics must
-    // still satisfy the gate as it is configured NOW — raising minShadowSamples
-    // after the fact invalidates an old justification instead of grandfathering
-    // it. T5 does NOT walk this gate: Rung 6's release authority is the
-    // per-effect human approval below, never a corpus (pin.irreversible_human_approval).
+    // Live external writes: no earned corpus required (Phase 34). The checks
+    // below are policy, not earning: the destination must be the deployment's
+    // one approved live endpoint, and the scope grant above must cover it.
+    // T5 does NOT walk an evidence gate either: its release authority is the
+    // per-effect human approval below (pin.irreversible_human_approval).
     if (effect.effect_type === "external_write" && effectiveMode === "live") {
       // Phase 22 (autonomy row) — THE ONE APPROVED DESTINATION. The scope grant
       // above answers "did a human authorize THIS goal to act here?". This
@@ -424,42 +420,12 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
         passed.push(`the destination is the deployment's one approved live endpoint (${approved.entry})`);
       }
 
-      const bypassEarning = effectiveBypassEarning();
-      if (!bypassEarning) {
-        // A lookup error is its own rule, never "no evidence": the ledger must
-        // not claim the corpus doesn't exist when the check couldn't run.
-        let evidence = null;
-        let evidenceError = false;
-        if (typeof db?.RungEvidence?.currentJustified === "function") {
-          try {
-            evidence = await db.RungEvidence.currentJustified(goal?.workspace_id, RUNGS.external_writes.rung);
-          } catch { evidenceError = true; }
-        }
-        if (evidenceError) {
-          fail("EVIDENCE_UNREADABLE", "pin.live_mode_earned");
-        } else if (!evidence) {
-          fail("EVIDENCE_GATE_UNMET", "pin.live_mode_earned",
-            "no recorded shadow corpus justifies a live release at this tier");
-        } else {
-          const gate = config?.shadow || { minShadowSamples: 25, maxAcceptableFalseReleases: 0 };
-          const minSamples = Number(gate.minShadowSamples ?? 25);
-          const maxFalse = Number(gate.maxAcceptableFalseReleases ?? 0);
-          let metrics = {};
-          if (typeof evidence.metrics === "string") {
-            try { metrics = JSON.parse(evidence.metrics); } catch { metrics = {}; }
-          } else if (evidence.metrics && typeof evidence.metrics === "object") {
-            metrics = evidence.metrics;
-          }
-          if (Number(metrics.samples ?? 0) < minSamples || Number(metrics.falseReleaseCount ?? 0) > maxFalse) {
-            fail("EVIDENCE_GATE_UNMET", "pin.live_mode_earned",
-              "the recorded shadow corpus no longer satisfies the gate as configured now");
-          } else {
-            passed.push("a recorded shadow corpus justifies live delivery");
-          }
-        }
-      } else {
-        passed.push("external delivery does not require earned evidence when bypass is enabled");
-      }
+      // Phase 34 — the earned requirement is gone (Jeremy: "86 that shit").
+      // A live T4 release used to need a recorded shadow corpus justifying it;
+      // now the capability is available and the trust model is ASK, not EARN:
+      // the Governor's policy checks above, plus Jeremy's per-effect approval
+      // in the outbox, are the gates. T5 never walked the evidence gate —
+      // its release authority is the per-effect human approval below, unchanged.
     }
   }
 

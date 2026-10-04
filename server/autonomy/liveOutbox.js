@@ -1,4 +1,4 @@
-// Earn-and-flip live for T4 — Phase 22 (autonomy row), first slice.
+// Ask-and-flip live for T4 — Phase 22 (autonomy row), first slice; earning removed in Phase 34.
 //
 // WHAT WAS TRUE BEFORE THIS. Rung 4 was built in Phase 21 and could not be
 // reached. `webhook.post` existed with DNS pinning, hop re-validation,
@@ -21,14 +21,15 @@
 //      the first delivery.
 //   2. A GUARDED FLIP. `setOutboxMode` writes `autonomy_settings.outbox_mode`
 //      and refuses to widen to `live` unless every condition holds. NARROWING
-//      is refused by nothing: a brake an operator has to earn is not a brake.
+//      is refused by nothing: a brake is not a brake if it takes effort to reach.
 //   3. ONE APPROVED DESTINATION. `COGNOS_AUTONOMY_LIVE_DESTINATION` names a
 //      single endpoint a live T4 delivery may target. The goal's scope grant
 //      (pin.destination_granted) and this must BOTH hold, so the intersection
 //      is strictly narrower than either gate alone. The Action Governor
-//      enforces it per effect; this module requires it at flip time and
-//      additionally requires that the earned corpus was aimed at it — evidence
-//      about endpoint A does not justify sending to endpoint B.
+//      enforces it per effect; this module requires it at flip time too.
+//      (Phase 34: the earned-corpus conditions are gone. Going live needs no
+//      practice runs — every send is still judged per effect and still needs
+//      Jeremy's approval.)
 //
 // WHAT THIS DOES NOT ADD. T5. An irreversible act is a different authority
 // than a live T4 delivery: it releases only by a per-effect human approval
@@ -45,10 +46,9 @@
 // leaf-shaped.
 
 import { createHash } from "node:crypto";
-import { RUNGS, rungEvidenceStatus } from "./evidenceGate.js";
 import {
   OUTBOX_MODES, OUTBOX_MODE_ENV, OUTBOX_UI_CONTROL_ENV,
-  applyOutboxModeCache, describeSettings, effectiveBypassEarning, effectiveOutboxMode,
+  applyOutboxModeCache, describeSettings, effectiveOutboxMode,
   envOutboxMode, isWideningOutboxMode, outboxModeRefusal
 } from "./settings.js";
 import { LIVE_DESTINATION_ENV, autonomyConfig, liveDestinationCovers, describeLiveDestination } from "./config.js";
@@ -57,8 +57,6 @@ const sha256 = (value) => createHash("sha256").update(String(value)).digest("hex
 
 /** The audit action, alongside Phase 25's 'autonomy.enabled'. */
 export const OUTBOX_MODE_AUDIT_ACTION = "autonomy.outbox_mode";
-
-const EXTERNAL_WRITES_ENV = "COGNOS_AUTONOMY_EXTERNAL_WRITES";
 
 /**
  * What would it take to go live right now?
@@ -73,34 +71,9 @@ const EXTERNAL_WRITES_ENV = "COGNOS_AUTONOMY_EXTERNAL_WRITES";
 export async function describeLiveReadiness({ db, workspaceId, config = null, nowMs = Date.now() }) {
   const cfg = config || autonomyConfig();
   const wsId = workspaceId || (await db.Workspace.ensureDefault()).id;
-  const rung = RUNGS.external_writes;
   const dest = cfg.liveDestination || {};
 
-  // One call answers three questions: is there a recorded `justified` row, does
-  // the corpus satisfy the gate AS CONFIGURED NOW, and what does the corpus
-  // look like. rungEvidenceStatus re-measures rather than trusting the row,
-  // which is what makes raising minShadowSamples invalidate an old
-  // justification instead of grandfathering it.
-  const status = await rungEvidenceStatus({ db, workspaceId: wsId, rung: rung.rung, config: cfg, nowMs });
-  const metrics = status?.measurement?.metrics || {};
-  const byDestination = metrics.byDestination || {};
-
-  // Where the earned corpus was actually aimed. A gate earned against one
-  // endpoint says nothing about another, so this is a condition of its own
-  // rather than a footnote on the destination check.
-  let aimed = 0;
-  let elsewhere = 0;
-  for (const [url, count] of Object.entries(byDestination)) {
-    const n = Number(count) || 0;
-    if (dest.configured && liveDestinationCovers(dest, url).allowed) aimed += n;
-    else elsewhere += n;
-  }
-
-  const bypassEarning = effectiveBypassEarning();
-
   const env = envOutboxMode();
-  const evidence = status?.evidence || null;
-  const measurementReasons = status?.measurement?.reasons || [];
 
   // A condition carries a sentence only when it is UNMET, and that is enforced
   // by the shape of this helper rather than by each condition remembering it:
@@ -113,6 +86,10 @@ export async function describeLiveReadiness({ db, workspaceId, config = null, no
   // The LABELS are plain language for the person reading the Outbox tab; the
   // ids stay machine-stable and the note below keeps the precise explanation.
   // Jargon is demoted, not removed — same discipline as autonomyLabels.js.
+  // Phase 34: the earned-corpus conditions (evidence_recorded, evidence_current,
+  // corpus_aimed) and the rung flag are gone. Going live is a choice, not an
+  // achievement: autonomy on, one approved destination, and the flip handed to
+  // this API. Every send is still judged per effect and still needs approval.
   const conditions = [
     cond("delegated", "You can flip this switch from here",
       cfg.settings?.canSetOutboxMode === true,
@@ -126,31 +103,11 @@ export async function describeLiveReadiness({ db, workspaceId, config = null, no
       cfg.enabled === true,
       "Autonomy is off, so the loop wakes for nothing and stages nothing. Turn it on first — a live mode with a frozen loop is a switch that means nothing."),
 
-    cond("rung_flag", "Sending outside messages is switched on",
-      cfg.rung?.externalWrites === true,
-      () => `Outside messages are switched off. Set ${EXTERNAL_WRITES_ENV}=true and restart — building the switch and flipping it are two separate steps on purpose.`),
-
     cond("destination_approved", "One approved place to send to",
       dest.configured === true,
       () => (dest.misconfigured === true
         ? `${LIVE_DESTINATION_ENV} is set but the adapter would refuse it: ${dest.reason}. Fix the value and restart — a broken brake is no brake.`
         : `Name exactly one endpoint with ${LIVE_DESTINATION_ENV}=https://host/path and restart. A live send with no approved destination has nowhere it is allowed to go.`)),
-
-    cond("evidence_recorded", "Practice runs have proved it out",
-      Boolean(evidence) || bypassEarning,
-      () => `Nothing has proved this out yet. Run it in shadow mode first — the Outbox tab can measure the practice runs, or POST /api/autonomy/rungs/${rung.rung}/evidence.`),
-
-    cond("evidence_current", "Those practice runs still count under today's settings",
-      status?.justifiedNow === true || bypassEarning,
-      () => (measurementReasons.length
-        ? `The evidence row ${evidence?.id || ""} no longer satisfies the gate: ${measurementReasons.join("; ")}.`
-        : "The recorded evidence row no longer satisfies the gate.")),
-
-    cond("corpus_aimed", "The practice runs were aimed at that same place",
-      aimed > 0 || bypassEarning,
-      () => (dest.configured
-        ? `The practice runs went somewhere else: ${metrics.samples ?? 0} total, 0 aimed at ${dest.hostname} (${elsewhere} aimed elsewhere). Practice at one address proves nothing about another — aim attempts at ${dest.hostname} in shadow mode first.`
-        : "No approved destination is configured, so no practice run can be aimed at it."))
   ];
 
   const unmet = conditions.filter(c => !c.met);
@@ -158,63 +115,32 @@ export async function describeLiveReadiness({ db, workspaceId, config = null, no
 
   return {
     ok: true,
-    rung: rung.rung,
-    tier: rung.tier,
+    tier: "T4",
     mode,
     modeSource: cfg.outboxModeSource || null,
     alreadyLive: mode === "live",
     ready: unmet.length === 0,
     conditions,
-    // Both counts, so a surface can say "5 of 8" without counting the array it
+    // Both counts, so a surface can say "2 of 4" without counting the array it
     // was handed and without trusting `ready` to be the only summary.
     met: conditions.length - unmet.length,
     total: conditions.length,
     unmet: unmet.map(c => c.id),
     refusal: unmet.length
-      ? { code: "live_not_earned", message: unmet.map(c => c.sentence).join(" "), unmet: unmet.map(c => c.id) }
+      ? { code: "live_not_ready", message: unmet.map(c => c.sentence).join(" "), unmet: unmet.map(c => c.id) }
       : null,
-    corpus: {
-      samples: metrics.samples ?? 0,
-      wouldRelease: metrics.wouldRelease ?? 0,
-      refused: metrics.refused ?? 0,
-      released: metrics.released ?? 0,
-      falseReleases: metrics.falseReleaseCount ?? 0,
-      aimedAtApproved: aimed,
-      aimedElsewhere: elsewhere,
-      // Normalized to ONE shape. Two already exist in this codebase —
-      // measureRung reports { minShadowSamples, maxAcceptableFalseReleases }
-      // and auditCorpus reports { minSamples, maxFalseReleases } — and a
-      // surface that forwarded either one raw would leave a reader guessing
-      // which number is the floor. This is the gate as configured NOW, which
-      // is the one an old evidence row is re-checked against.
-      gate: (() => {
-        const g = status?.measurement?.gate || cfg.shadow || {};
-        return {
-          minSamples: Number(g.minShadowSamples ?? g.minSamples ?? 0),
-          maxFalseReleases: Number(g.maxAcceptableFalseReleases ?? g.maxFalseReleases ?? 0)
-        };
-      })()
-    },
-    evidence: evidence ? {
-      id: evidence.id, decision: evidence.decision,
-      decided_ms: evidence.decided_ms, decided_by: evidence.decided_by,
-      metrics_sha256: evidence.metrics_sha256, reason: evidence.reason
-    } : null,
-    justifiedNow: status?.justifiedNow === true,
     // The host is reported; the full URL is not. describeLiveDestination is the
     // one definition of what a surface may say, shared with /api/autonomy/status
     // so the two cannot drift.
     destination: describeLiveDestination(dest),
-    rungFlag: cfg.rung?.externalWrites === true,
-    killSwitch: rung.killSwitch,
-    note: "Three things have to be true before anything goes out live: outside messages are switched on, the practice runs proved it out, and exactly one destination is approved. Even then, every single send is judged on its own — the Action Governor never bulk-approves."
+    note: "Two things have to be true before anything goes out live: autonomy is on, and exactly one destination is approved. Even then, every single send is judged on its own and needs Jeremy's approval — the Action Governor never bulk-approves."
   };
 }
 
 /** The notes a flip returns, exported so a surface can quote the same words. */
 export const OUTBOX_MODE_NOTES = Object.freeze({
   live: "Live. From here on, an approved send is PERFORMED for real — it actually goes out, to the one approved destination, and only after it's judged on its own. Flip back to shadow any time; turning it back down needs no proof.",
-  shadow: "Shadow. The loop plans, stages, and judges — but nothing goes out. This is the resting state, and these practice runs are what earn the flip to live.",
+  shadow: "Shadow. The loop plans, stages, and judges — but nothing goes out. This is the resting state.",
   dry_run: "Dry run. The exact message is built and written down, and still nothing is sent."
 });
 
@@ -225,7 +151,7 @@ export const OUTBOX_MODE_NOTES = Object.freeze({
  *   not_delegated       — this deployment never handed the mode to the API;
  *   pinned_by_operator  — an environment value holds the mode down, and a pin
  *                         outranks the API (but never blocks a narrowing);
- *   live_not_earned     — every reason a widening to live is refused, as
+ *   live_not_ready      — every reason a widening to live is refused, as
  *                         sentences, so the response is the readiness report
  *                         rather than a bare 409.
  *
@@ -328,12 +254,6 @@ export async function setOutboxMode({ db, workspaceId = null, outboxMode,
         updatedBy,
         widening: widensToLive,
         envPin: env,
-        rungFlag: cfg.rung?.externalWrites === true,
-        evidenceId: readiness?.evidence?.id ?? null,
-        evidenceSha256: readiness?.evidence?.metrics_sha256 ?? null,
-        samples: readiness?.corpus?.samples ?? null,
-        falseReleases: readiness?.corpus?.falseReleases ?? null,
-        aimedAtApproved: readiness?.corpus?.aimedAtApproved ?? null,
         // The destination is digested, not stored. An audit row is readable by
         // anyone who can read this workspace's history, and the row still
         // proves WHICH endpoint was approved at the moment of the flip without
@@ -375,7 +295,6 @@ export async function listOutboxModeFlips(db, { workspaceId = null, limit = 20 }
       widening: row.detail?.widening === true,
       via: row.detail?.via || "api",
       updatedBy: row.detail?.updatedBy || row.user_id || null,
-      evidenceSha256: row.detail?.evidenceSha256 || null,
       samples: row.detail?.samples ?? null,
       destinationSha256: row.detail?.destinationSha256 || null
     }));

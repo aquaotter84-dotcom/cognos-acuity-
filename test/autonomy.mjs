@@ -50,7 +50,7 @@ await test("skills are code, not data: the registry is frozen and tiers are decl
   assert.ok(tiers.includes("T5"), "Phase 22 (autonomy row) builds T5 (irreversible)");
 });
 
-await test("exactly one externally-writing skill exists per tier, and both are off", async () => {
+await test("exactly one externally-writing skill exists per tier, and both are allowed when built", async () => {
   // Phase 21's whole external-write surface is one T4 adapter; Phase 22 adds
   // one T5 adapter. A second entry at either tier means a new way to touch the
   // world shipped without its own review.
@@ -60,36 +60,18 @@ await test("exactly one externally-writing skill exists per tier, and both are o
   assert.equal(getSkill("post.publish").tier, "T5");
   assert.equal(getSkill("post.publish").effectType, "irreversible");
   assert.equal(tierAllowed("T3", autonomyConfig()), true);
-  // Built is not enabled: each tier is refused until its own rung flag is set.
-  assert.equal(tierAllowed("T4", autonomyConfig()), false);
-  assert.equal(tierAllowed("T5", autonomyConfig()), false);
-  {
-    const previous = process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES;
-    try {
-      process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES = "true";
-      assert.equal(tierAllowed("T4", autonomyConfig()), true, "the rung flag is what opens T4");
-      assert.equal(tierAllowed("T5", autonomyConfig()), false, "and it does not open T5");
-      assert.equal(autonomyConfig().builtTiers.includes("T4"), true);
-    } finally {
-      if (previous === undefined) delete process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES;
-      else process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES = previous;
-    }
-  }
-  {
-    const previous = process.env.COGNOS_AUTONOMY_IRREVERSIBLE;
-    try {
-      process.env.COGNOS_AUTONOMY_IRREVERSIBLE = "true";
-      assert.equal(tierAllowed("T5", autonomyConfig()), true, "the irreversible rung flag is what opens T5");
-      assert.equal(tierAllowed("T4", autonomyConfig()), false, "and it does not open T4");
-      assert.equal(autonomyConfig().builtTiers.includes("T5"), true);
-    } finally {
-      if (previous === undefined) delete process.env.COGNOS_AUTONOMY_IRREVERSIBLE;
-      else process.env.COGNOS_AUTONOMY_IRREVERSIBLE = previous;
-    }
-  }
+  // Phase 34 — built is allowed. The trust is in the asking (the Governor's
+  // per-effect verdict and Jeremy's approval), not in a flag that opens the
+  // tier. T5's release authority is still one-by-one human approval.
+  assert.equal(tierAllowed("T4", autonomyConfig()), true);
+  assert.equal(tierAllowed("T5", autonomyConfig()), true);
+  assert.equal(autonomyConfig().builtTiers.includes("T4"), true);
+  assert.equal(autonomyConfig().builtTiers.includes("T5"), true);
+});
 
-  // T2 depends on the notice channel. Explicit none/internal/webhook still
-  // win; the default is tested separately so unset is not confused with none.
+await test("T2 depends on the notice channel", async () => {
+  // Explicit none/internal/webhook still win; the default is tested separately
+  // so unset is not confused with none.
   const previousMode = process.env.COGNOS_AUTONOMY_NOTICE_MODE;
   const previousUrl = process.env.COGNOS_AUTONOMY_NOTICE_WEBHOOK;
   try {
@@ -441,13 +423,12 @@ try {
     // The external-write boundary is reported as three separate facts, because
     // "built", "rung on" and "delivers now" are three different questions.
     assert.equal(a.externalWrites.built, true);
-    assert.equal(a.externalWrites.rungEnabled, false);
     assert.equal(a.externalWrites.deliversNow, false);
-    assert.equal(a.externalWrites.requiresEvidenceRow, true);
-    // The irreversible boundary is its own three facts: built, rung off, and
-    // released only by a per-effect human approval, never by class.
+    assert.equal(a.externalWrites.deliversOnApproval, true);
+    // The irreversible boundary is its own three facts: built, released only
+    // by a per-effect human approval, never by class. (Phase 34: no rung.)
     assert.equal(a.irreversible.built, true);
-    assert.equal(a.irreversible.rungEnabled, false);
+    assert.ok(!("rungEnabled" in a.irreversible));
     assert.equal(a.irreversible.requiresPerEffectHumanApproval, true);
     assert.equal(a.irreversible.classAuthorized, false);
     assert.equal(a.skills.length, SKILL_IDS.length);
@@ -456,17 +437,16 @@ try {
       assert.ok(skill.tierName, `${skill.id} names its tier in words`);
       assert.ok(skill.killSwitch, `${skill.id} names a kill switch`);
       assert.ok(skill.idempotencyRule, `${skill.id} states how replay is detected`);
-      // Both external tiers are built and off: a skill may claim T4 or T5 and
-      // still be disabled until its own rung flag is set.
+      // Phase 34 — T4 and T5 declare no rung: they are built and allowed, and
+      // the trust is in the asking (Governor + approval), not a flag.
       if (skill.tier === "T4") {
-        assert.equal(skill.enabled, false, "T4 is off unless the rung flag is set");
-        assert.equal(skill.requiresRung, "externalWrites");
+        assert.equal(skill.enabled, true, "T4 is built and allowed; the Governor judges each effect");
+        assert.ok(!("requiresRung" in skill) || skill.requiresRung == null);
       }
       if (skill.tier === "T5") {
-        assert.equal(skill.enabled, false, "T5 is off unless the rung flag is set");
-        assert.equal(skill.requiresRung, "irreversible");
+        assert.equal(skill.enabled, true, "T5 is built and allowed; approval gates each release");
+        assert.ok(!("requiresRung" in skill) || skill.requiresRung == null);
       }
-      assert.ok("requiresRung" in skill, `${skill.id} declares its rung gate (or null)`);
     }
     // The tiers are described, so "T2" is never an unexplained string.
     assert.equal(a.tiers.T0, "observe");

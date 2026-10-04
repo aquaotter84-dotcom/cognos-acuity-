@@ -119,9 +119,10 @@ await test("the clamp only ever narrows a draft: budgets down, skills intersecte
   // note.promote.request is a T1 internal write, and it is STILL dropped: it
   // declares requiresRung 'residents', and that rung is off here. An internal
   // write is not automatically safe, and the clamp does not treat it as one.
-  assert.deepEqual(d.skills, ["note.append"]);
+  // (Phase 34: webhook.post is kept — T4 is allowed when built, no rung to climb.)
+  assert.deepEqual(d.skills, ["note.append", "webhook.post"]);
   const droppedIds = out.droppedSkills.map(s => s.id);
-  assert.ok(droppedIds.includes("webhook.post"), "T4 needs its rung");
+  assert.ok(!droppedIds.includes("webhook.post"), "T4 is allowed when built");
   assert.ok(droppedIds.includes("web.search"), "T3 search needs its rung");
   assert.ok(droppedIds.includes("note.promote.request"), "a T1 skill gated on the residents rung is dropped too");
   assert.ok(droppedIds.includes("invented.skill"), "a skill that does not exist is named");
@@ -199,11 +200,12 @@ await test("the executability probe holds the global switch open and nothing els
   assert.equal(isSkillEnabled("note.append", cfg), false, "a frozen deployment runs nothing");
   assert.equal(isSkillEnabled("note.append", probe), true, "the probe asks the narrower design question");
   // Every rung, notice channel and unbuilt tier is still honoured by the probe.
-  assert.equal(isSkillEnabled("webhook.post", probe), cfg.rung.externalWrites === true,
-    "T4 still needs its rung flag even in a draft");
+  // (Phase 34: T4/T5 have no rung — they are allowed when built.)
+  assert.equal(isSkillEnabled("webhook.post", probe), true,
+    "T4 is allowed when built, even in a draft");
   assert.equal(isSkillEnabled("web.search", probe), cfg.rung.search === true, "and T3 search still needs its rung");
-  assert.equal(isSkillEnabled("post.publish", probe), cfg.rung.irreversible === true,
-    "and T5 still needs its rung — a draft cannot sneak an irreversible skill through");
+  assert.equal(isSkillEnabled("post.publish", probe), true,
+    "and T5 is allowed when built — a draft still cannot release it without a per-effect approval");
   // Unset notice mode + the probe's hypothetical "on" → internal, so notice.emit
   // survives a draft made while frozen. Explicit none still drops it.
   const previousNotice = process.env.COGNOS_AUTONOMY_NOTICE_MODE;
@@ -381,21 +383,19 @@ try {
     });
     assert.equal(turn.status, 200);
     const d = turn.json.draft;
-    assert.deepEqual(d.skills, ["notice.emit", "note.append"],
-      "notice.emit survives a frozen draft when the notice mode is unset — it will be executable once autonomy is on");
+    assert.deepEqual(d.skills, ["webhook.post", "notice.emit", "note.append"],
+      "notice.emit survives a frozen draft when the notice mode is unset — it will be executable once autonomy is on (Phase 34: webhook.post is allowed when built)");
     assert.equal(d.budget.maxSteps, DEFAULT_GOAL_BUDGET.maxSteps, "the ceiling did not move up");
     assert.equal(d.budget.maxCostUsd, DEFAULT_GOAL_BUDGET.maxCostUsd);
     assert.equal(d.heartbeatMs, DESIGNER_LIMITS.heartbeatMinMs);
 
     const dropped = turn.json.droppedSkills.map(x => x.id);
-    for (const id of ["webhook.post", "web.search", "money.send"]) {
+    // Phase 34: webhook.post is NOT dropped — T4 is allowed when built.
+    for (const id of ["web.search", "money.send"]) {
       assert.ok(dropped.includes(id), `${id} is named as dropped`);
     }
+    assert.equal(dropped.includes("webhook.post"), false, "T4 is allowed when built, not dropped");
     assert.equal(dropped.includes("notice.emit"), false, "T2 is not dropped for an unset channel");
-    const webhook = turn.json.droppedSkills.find(x => x.id === "webhook.post");
-    assert.equal(webhook.reason, "not_executable_here");
-    assert.equal(webhook.tier, "T4");
-    assert.match(webhook.note, /externalWrites rung|switched off/, "the reason is specific");
     const invented = turn.json.droppedSkills.find(x => x.id === "money.send");
     assert.equal(invented.reason, "no_such_skill");
     assert.match(invented.note, /registry is code/);
@@ -433,7 +433,8 @@ try {
         body: { messages: [{ role: "user", content: "Give it search." }] }
       });
       assert.equal(off.status, 200);
-      assert.deepEqual(off.json.draft.skills, ["note.append"]);
+      assert.deepEqual(off.json.draft.skills, ["note.append", "webhook.post"],
+        "Phase 34: webhook.post is allowed when built, even when search is off");
       assert.ok(off.json.droppedSkills.some(d => d.id === "web.search"));
       const offReq = A.model.requests.filter(r => r.role === "residentDesigner").pop();
       const offSearch = (offReq.content.split("\n").find(l => l.includes("web.search")) || "");
@@ -446,15 +447,15 @@ try {
         body: { messages: [{ role: "user", content: "Give it search." }] }
       });
       assert.equal(on.status, 200);
-      assert.deepEqual(on.json.draft.skills, ["web.search", "note.append"]);
+      assert.deepEqual(on.json.draft.skills, ["web.search", "note.append", "webhook.post"]);
       assert.ok(!on.json.droppedSkills.some(d => d.id === "web.search"));
       const onReq = A.model.requests.filter(r => r.role === "residentDesigner").pop();
       const onSearch = (onReq.content.split("\n").find(l => l.includes("web.search")) || "");
       assert.match(onSearch, /search rung is on/);
       assert.doesNotMatch(onSearch, /NOT executable/);
       const webhookLine = (onReq.content.split("\n").find(l => l.includes("webhook.post")) || "");
-      assert.match(webhookLine, /NOT executable/);
-      assert.match(webhookLine, /externalWrites rung, which is off here/);
+      assert.doesNotMatch(webhookLine, /NOT executable/, "Phase 34: T4 is executable when built");
+      assert.match(webhookLine, /needs Jeremy's approval/);
     } finally {
       if (previous === undefined) delete process.env.COGNOS_AUTONOMY_SEARCH;
       else process.env.COGNOS_AUTONOMY_SEARCH = previous;
@@ -549,13 +550,15 @@ try {
       [create.json.agent.id]);
     const skills = typeof stored[0].skill_allowlist === "string"
       ? JSON.parse(stored[0].skill_allowlist) : stored[0].skill_allowlist;
-    assert.deepEqual(skills, ["web.fetch", "note.append"], "webhook.post never reached the row");
+    assert.deepEqual(skills, ["web.fetch", "note.append", "webhook.post"],
+      "Phase 34: webhook.post is executable when built, so the clamp keeps it");
     const budgets = typeof stored[0].default_budgets === "string"
       ? JSON.parse(stored[0].default_budgets) : stored[0].default_budgets;
     assert.equal(budgets.maxSteps, DEFAULT_GOAL_BUDGET.maxSteps, "the ceiling was re-clamped on the way in");
     assert.equal(budgets.maxCostUsd, DEFAULT_GOAL_BUDGET.maxCostUsd);
     assert.equal(Number(stored[0].heartbeat_interval_ms), 3_600_000, "the interval survived the round trip");
-    assert.ok(create.json.droppedSkills.some(d => d.id === "webhook.post"), "and the operator is told");
+    assert.ok(!create.json.droppedSkills.some(d => d.id === "webhook.post"),
+      "Phase 34: webhook.post is kept, not dropped");
 
     // The first goal exists and is waiting — it does no work until authorized.
     assert.ok(create.json.goal, "the goal was created");
@@ -581,7 +584,8 @@ try {
 
     const designed = await A.sql(`SELECT detail FROM workspace_audit WHERE action='autonomy.resident_designed'`);
     assert.equal(designed.length, 1, "the creation is in the audit trail too");
-    assert.deepEqual(designed[0].detail.droppedSkills, ["webhook.post"]);
+    assert.deepEqual(designed[0].detail.droppedSkills, [],
+      "Phase 34: webhook.post is kept, so nothing is recorded as dropped");
 
     // Designing the SAME name again is likelier from a conversation than from a
     // form — the model proposes sensible names, and "Agenda Watcher" is sensible

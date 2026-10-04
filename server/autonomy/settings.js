@@ -65,27 +65,6 @@ export const OUTBOX_UI_CONTROL_ENV = "COGNOS_AUTONOMY_OUTBOX_UI_CONTROL";
 export const AUTO_AUTHORIZE_PIN_ENV = "COGNOS_AUTONOMY_AUTO_AUTHORIZE";
 export const AUTO_AUTHORIZE_UI_CONTROL_ENV = "COGNOS_AUTONOMY_AUTO_AUTHORIZE_UI_CONTROL";
 
-/**
- * Phase 28 — the EARNED-CORPUS BYPASS, the same shape as the pairs above and
- * deliberately a fourth pair. `COGNOS_AUTONOMY_BYPASS_EARNING` is the operator's
- * explicit value (only explicit affirmatives enable);
- * `COGNOS_AUTONOMY_BYPASS_EARNING_UI_CONTROL` hands the switch to the API.
- *
- * `COGNOS_AUTONOMY_BYPASS_EVIDENCE` is kept as a legacy alias for the pin: it
- * shipped as a second spelling of the same bypass, and an operator who set it
- * must keep the value they set.
- *
- * This is not the same power as any of the other three. Enablement decides
- * whether the loop RUNS; the outbox mode decides whether it may ACT ON THE
- * WORLD; auto-authorize decides whether a goal waits for its own consent click.
- * This one decides whether a live release must first EARN its way past the
- * shadow corpus. Delegating one must not delegate another, so none implies the
- * next.
- */
-export const BYPASS_EARNING_PIN_ENV = "COGNOS_AUTONOMY_BYPASS_EARNING";
-export const BYPASS_EARNING_LEGACY_ENV = "COGNOS_AUTONOMY_BYPASS_EVIDENCE";
-export const BYPASS_EARNING_UI_CONTROL_ENV = "COGNOS_AUTONOMY_BYPASS_EARNING_UI_CONTROL";
-
 /** The only three modes that exist, ordered by how far they reach. */
 export const OUTBOX_MODES = Object.freeze(["shadow", "dry_run", "live"]);
 
@@ -206,74 +185,20 @@ export function autoAuthorizeRefusal() {
 }
 
 /**
- * Phase 28 — an operator pinned the earned-corpus bypass in the environment.
- * Tri-state, like auto-authorize: `null` when unset, otherwise a boolean. The
- * legacy spelling is consulted second so the current name wins if both are set.
- */
-export function bypassEarningPinned() {
-  const primary = affirmPin(BYPASS_EARNING_PIN_ENV);
-  if (primary !== null) return primary;
-  return affirmPin(BYPASS_EARNING_LEGACY_ENV);
-}
-
-/** An operator handed the earned-corpus bypass to the UI. */
-export function bypassEarningDelegated() {
-  return envFlag(BYPASS_EARNING_UI_CONTROL_ENV, false);
-}
-
-/**
- * The effective earned-corpus bypass, applying precedence. Off is the resting
- * state: an unread row is not a permission, so a database blip cannot silently
- * waive the corpus. A pin outranks the UI in both directions.
- *
- * What it waives is exactly one thing: the recorded shadow corpus a live T4
- * release would otherwise have to earn. It does NOT waive the rung flag, the
- * one approved destination, autonomy being on, quiet hours, or the per-effect
- * Governor — those are judged per effect and are unaffected by this switch.
- */
-export function effectiveBypassEarning() {
-  const pinned = bypassEarningPinned();
-  if (pinned !== null) return pinned;
-  if (!bypassEarningDelegated()) return false;
-  return cache.loaded === true && cache.bypassEarning === true;
-}
-
-/**
- * Why the API may or may not flip the earned-corpus bypass, in words an operator
- * can act on. The same two refusals as the other three switches: a pin the UI
- * cannot override, and a deployment that never delegated the switch.
- */
-export function bypassEarningRefusal() {
-  if (bypassEarningPinned() !== null) {
-    return {
-      code: "pinned_by_operator",
-      message: `An operator pinned the earned-corpus bypass with ${BYPASS_EARNING_PIN_ENV}, and the UI cannot override a pin. Remove that variable and restart to hand the switch back.`
-    };
-  }
-  if (!bypassEarningDelegated()) {
-    return {
-      code: "not_delegated",
-      message: `This deployment has not handed the earned-corpus bypass to the UI. Set ${BYPASS_EARNING_UI_CONTROL_ENV}=true and restart; until then a live release still has to earn its way past the shadow corpus.`
-    };
-  }
-  return null;
-}
-
-/**
  * Phase 29 — THE RUNG SWITCHES, as one delegated group.
  *
- * A rung is the operator's sign-off that a tier EXISTS in this deployment
- * (phase19.autonomy_default_off: building a rung is not enabling one). Phase 19
- * read the five of them straight from the environment, so the sign-off that
- * decides whether T4 exists was invisible on the page that reports T4, and
- * moving it meant a Railway variable and a restart.
+ * Phase 34 removed the two writing rungs (externalWrites, irreversible): the
+ * earned requirement is gone, so there is nothing to climb and no flag to
+ * flip — T4/T5 are allowed whenever built, gated per effect by the Governor
+ * and by Jeremy's approval. Three rungs remain, all pure operator capability
+ * switches that were never earned: residents, search, inbound.
  *
- * ONE delegation for the group, not five. It is one power — "what may this
- * COGNOS reach for" — with five values, and five more environment variables
+ * ONE delegation for the group, not three. It is one power — "what may this
+ * COGNOS reach for" — with three values, and three more environment variables
  * would be the same soup this change is removing. An operator who wants to hand
  * the page the ability to open a door is already making the larger decision.
  *
- * The five existing variables stay, as PINS, and they are tri-state now:
+ * The three existing variables stay, as PINS, and they are tri-state now:
  * unset or empty is not a decision, an explicit affirmative pins ON, and any
  * other explicit value pins OFF. A pin outranks the stored row in both
  * directions, so an operator who set COGNOS_AUTONOMY_IRREVERSIBLE=false on the
@@ -289,9 +214,11 @@ export function bypassEarningRefusal() {
  */
 export const RUNG_UI_CONTROL_ENV = "COGNOS_AUTONOMY_RUNGS_UI_CONTROL";
 
-/** The five rungs, in the order the tiers climb. Stable; the API validates against it. */
+/** The three rungs, in the order the tiers climb. Stable; the API validates against it.
+ * Phase 34 removed externalWrites and irreversible: with the earned requirement
+ * gone there is no rung to climb for writing — T4/T5 are allowed when built. */
 export const RUNG_KEYS = Object.freeze([
-  "residents", "search", "externalWrites", "irreversible", "inbound"
+  "residents", "search", "inbound"
 ]);
 
 /** rung -> the environment variable that pins it. The inbound rung keeps its
@@ -300,8 +227,6 @@ export const RUNG_KEYS = Object.freeze([
 export const RUNG_PIN_ENVS = Object.freeze({
   residents: "COGNOS_AUTONOMY_RESIDENTS",
   search: "COGNOS_AUTONOMY_SEARCH",
-  externalWrites: "COGNOS_AUTONOMY_EXTERNAL_WRITES",
-  irreversible: "COGNOS_AUTONOMY_IRREVERSIBLE",
   inbound: "COGNOS_INBOUND_ENABLED"
 });
 
@@ -310,8 +235,6 @@ export const RUNG_PIN_ENVS = Object.freeze({
 export const RUNG_COLUMNS = Object.freeze({
   residents: "rung_residents",
   search: "rung_search",
-  externalWrites: "rung_external_writes",
-  irreversible: "rung_irreversible",
   inbound: "rung_inbound"
 });
 
@@ -389,7 +312,6 @@ const initialCache = () => ({
   enabled: false,         // the delegated value; false until loaded
   outboxMode: null,       // the delegated mode; null means "never flipped here"
   autoAuthorize: false,   // the delegated "forgo goal authorization" value
-  bypassEarning: false,   // the delegated "skip the earned corpus" value
   rungs: {},              // rung -> the delegated sign-off; absent reads as off
   source: "default",      // what last wrote it: 'ui' | 'boot' | 'default'
   updatedBy: null,
@@ -558,21 +480,10 @@ export function describeSettings() {
     autoAuthorizeRefusal: autoAuthorizeRefusal(),
     autoAuthorizePinEnv: AUTO_AUTHORIZE_PIN_ENV,
     autoAuthorizeUiControlEnv: AUTO_AUTHORIZE_UI_CONTROL_ENV,
-    // Phase 28 — the earned-corpus bypass, reported as its own set of facts
-    // again. "Is the corpus still required?" and "may this API change that?"
-    // are different questions, and a surface that answers only the first cannot
-    // tell an operator why the control in front of them is disabled.
-    bypassEarning: effectiveBypassEarning(),
-    bypassEarningPinned: bypassEarningPinned() !== null,
-    bypassEarningDelegated: bypassEarningDelegated(),
-    canSetBypassEarning: bypassEarningRefusal() === null,
-    bypassEarningRefusal: bypassEarningRefusal(),
-    bypassEarningPinEnv: BYPASS_EARNING_PIN_ENV,
-    bypassEarningUiControlEnv: BYPASS_EARNING_UI_CONTROL_ENV,
+    // Phase 34 — the earned-corpus bypass is gone with the earned requirement.
     // Phase 29 — the rung switches, reported as their own set of facts again.
-    // Five values, one delegation, and per-rung pins, because "is the external
-    // -writes rung on" and "may this page change it" are different questions
-    // and a surface that answers only the first cannot explain a dead toggle.
+    // Three values, one delegation, and per-rung pins. (Phase 34 removed the
+    // two writing rungs with the earned requirement.)
     rungs: Object.freeze(effectiveRungs()),
     rungPinned: Object.freeze(Object.fromEntries(RUNG_KEYS.map(k => [k, rungPinned(k) !== null]))),
     rungDelegated: rungsDelegated(),
@@ -585,7 +496,6 @@ export function describeSettings() {
       enabled: cache.enabled,
       outboxMode: cache.outboxMode,
       autoAuthorize: cache.autoAuthorize,
-      bypassEarning: cache.bypassEarning,
       rungs: Object.freeze({ ...(cache.rungs || {}) }),
       source: cache.source,
       updatedBy: cache.updatedBy,
@@ -611,7 +521,6 @@ export async function refreshSettings(db, workspaceId = null) {
       enabled: row?.enabled === true,
       outboxMode: normalizeStoredMode(row?.outbox_mode),
       autoAuthorize: row?.auto_authorize_goals === true,
-      bypassEarning: row?.bypass_earning === true,
       rungs: readStoredRungs(row),
       source: row ? String(row.source || "ui") : "default",
       updatedBy: row?.updated_by || null,
@@ -638,7 +547,7 @@ function normalizeStoredMode(value) {
 }
 
 /**
- * Read the five rung columns into a plain object. A stored value is only
+ * Read the three rung columns into a plain object. A stored value is only
  * believed when it is exactly true or exactly false; anything else (null, a
  * column an older build never wrote, a hand-edited row) reads as absent, which
  * resolves to off. An unrecognised value is not a permission.
@@ -807,65 +716,10 @@ export async function setAutoAuthorize(db, { enabled, workspaceId = null, update
 }
 
 /**
- * Flip the earned-corpus bypass — Phase 28. The fourth writer on the same row,
- * with the same two refusals and the same write-through. Off is the resting
- * state, so the only direction that needs care is ON: it removes the recorded
- * shadow corpus a live T4 release would otherwise have to earn, and nothing
- * else. The rung flag, the approved destination, the per-effect Governor and
- * T5's per-effect human approval all still bind, which is why this is recorded
- * as its own audit action rather than as a mode flip.
- */
-export async function setBypassEarning(db, { enabled, workspaceId = null, updatedBy = "ui" } = {}) {
-  const refusal = bypassEarningRefusal();
-  if (refusal) {
-    return { ok: false, refusal, settings: describeSettings() };
-  }
-  const next = enabled === true;
-  const wsId = workspaceId || (await db.Workspace.ensureDefault()).id;
-  const previous = describeSettings();
-  const atMs = Date.now();
-
-  const row = await db.AutonomySettings.setBypassEarning({
-    workspace_id: wsId, bypass_earning: next, updated_by: updatedBy, updated_ms: atMs
-  });
-
-  cache = {
-    ...cache,
-    loaded: true,
-    bypassEarning: row ? row.bypass_earning === true : next,
-    updatedBy: row?.updated_by || updatedBy,
-    updatedAtMs: row ? Number(row.updated_ms) || atMs : atMs,
-    stale: false,
-    error: null
-  };
-
-  try {
-    await db.WorkspaceAudit.append({
-      workspaceId: wsId,
-      action: "autonomy.bypass_earning",
-      resourceId: null,
-      detail: {
-        from: previous.bypassEarning === true,
-        to: next,
-        via: "ui",
-        updatedBy,
-        pinned: previous.bypassEarningPinned === true,
-        delegated: previous.bypassEarningDelegated === true
-      },
-      tsMs: atMs
-    });
-  } catch {
-    // A failed audit row does not undo a switch the operator just flipped.
-  }
-
-  return { ok: true, refusal: null, previous, settings: describeSettings(), atMs };
-}
-
-/**
  * Flip ONE rung — Phase 29. The fifth writer on the same row, and like the four
  * before it it touches exactly the column it owns: flipping the external-writes
  * rung must not touch `enabled`, the mode, auto-authorize, the bypass, or the
- * other four rungs. That is why the columns are five booleans rather than one
+ * other two rungs. That is why the columns are three booleans rather than one
  * object.
  *
  * ON is the direction that needs care. It is the operator's sign-off that a
@@ -940,7 +794,7 @@ export async function setRung(db, { rung, enabled, workspaceId = null, updatedBy
  */
 export async function listSettingFlips(db, { workspaceId = null, limit = 20 } = {}) {
   // Literal: liveOutbox.js's OUTBOX_MODE_AUDIT_ACTION ("autonomy.outbox_mode").
-  const ACTIONS = ["autonomy.enabled", "autonomy.auto_authorize", "autonomy.bypass_earning",
+  const ACTIONS = ["autonomy.enabled", "autonomy.auto_authorize",
     "autonomy.rung", "autonomy.outbox_mode"];
   try {
     const wsId = workspaceId || (await db.Workspace.ensureDefault()).id;

@@ -29,7 +29,7 @@ import {
 import { destinationsForScope, urlAllowedByScope } from "../server/autonomy/scopeUrl.js";
 import { autonomyConfig, insideQuietHours, hourInTimeZone, tierAllowed } from "../server/autonomy/config.js";
 import { judgeEffect } from "../server/autonomy/actionGovernor.js";
-import { auditCorpus, auditRelease, metricsDigest } from "../server/autonomy/evidenceGate.js";
+import { auditRelease } from "../server/autonomy/evidenceGate.js";
 import { scopeHashes } from "../server/autonomy/authorize.js";
 import { isSkillEnabled, getSkill, validateArgs } from "../server/skills/index.js";
 import { redactSecrets, evaluateAdaptation, GATED_ACTIONS, REDACTION } from "../server/meta/policy.js";
@@ -63,7 +63,6 @@ const baseCfg = autonomyConfig();
 const cfgT4 = (over = {}) => ({
   ...baseCfg,
   outboxMode: "shadow",
-  rung: { ...baseCfg.rung, externalWrites: true },
   quietHours: { enabled: false, misconfigured: false, startHour: null, endHour: null },
   ...over
 });
@@ -455,14 +454,11 @@ await test("the Action Governor judges a T4 write harder than a read of the same
     else process.env[SECRET_NAME] = prevSecret;
   }
 
-  // --- rung, scope, authorization ---------------------------------------------
-  const rungOff = await judge(fx(), { config: cfgT4({ rung: { ...baseCfg.rung, externalWrites: false } }) });
-  assert.ok(rulesOf(rungOff).includes("TIER_NOT_ALLOWED"), JSON.stringify(rungOff.failed));
-  assert.equal(tierAllowed("T4", cfgT4({ rung: { ...baseCfg.rung, externalWrites: false } })), false);
+  // --- tier, scope, authorization ------------------------------------------------
+  // Phase 34 — T4 and T5 are allowed when built. The rung flags are gone; the
+  // trust is in the asking (Governor + approval), not in a switch.
   assert.equal(tierAllowed("T4", cfgT4()), true);
-  // T5 is built (Phase 22) but still refused: the irreversible rung is off,
-  // and even switched on it is necessary and never sufficient.
-  assert.equal(tierAllowed("T5", cfgT4()), false, "T5 is off unless the irreversible rung flag is set");
+  assert.equal(tierAllowed("T5", cfgT4()), true, "T5 is built; its release authority is per-effect approval");
 
   const notifyOnly = { id: goal.id, workspace_id: "ws1", spent: {}, budget: goal.budget,
     scope: { effectsAllowed: ["notify"] } };
@@ -501,46 +497,6 @@ await test("the Action Governor judges a T4 write harder than a read of the same
     payload: { templateId: "goal_parked", fields: { goalTitle: "x", parkReason: "budget_exhausted" } }
   }, { config: cfgT4({ quietHours: qh }) });
   assert.ok(!rulesOf(notice).includes("QUIET_HOURS"), JSON.stringify(notice.failed));
-});
-
-await test("a live release needs a recorded corpus, and raising the floor invalidates an old justification", async () => {
-  const evidence = (samples, falseReleaseCount = 0) => ({
-    id: "rev_1", rung: "external_writes", tier: "T4", decision: "justified",
-    metrics: { samples, falseReleaseCount }, gate: { minSamples: 25, maxFalseReleases: 0 },
-    metrics_sha256: "a".repeat(64), decided_ms: Date.now()
-  });
-  const dbWith = (row) => fakeDb({ RungEvidence: { currentJustified: async () => row } });
-
-  // No row at all: the flag is on, the gate has not been shown to work.
-  const noRow = await judge(fx(), { db: dbWith(null), mode: "live" });
-  assert.ok(rulesOf(noRow).includes("EVIDENCE_GATE_UNMET"), JSON.stringify(noRow.failed));
-  // Shadow mode asks no such question — that is what makes a corpus possible.
-  assert.equal((await judge(fx(), { db: dbWith(null), mode: "shadow" })).decision, "release");
-  assert.equal((await judge(fx(), { db: dbWith(null) })).decision, "release", "the row's own mode is shadow");
-
-  const earned = await judge(fx(), { db: dbWith(evidence(25)), mode: "live" });
-  assert.equal(earned.decision, "release", JSON.stringify(earned.failed));
-  assert.ok(earned.passed.some(p => /recorded shadow corpus justifies/.test(p)));
-
-  // A thin corpus does not earn it, and neither does a corpus with one false
-  // release — zero tolerance is the gate, not a target.
-  assert.ok(rulesOf(await judge(fx(), { db: dbWith(evidence(24)), mode: "live" })).includes("EVIDENCE_GATE_UNMET"));
-  assert.ok(rulesOf(await judge(fx(), { db: dbWith(evidence(500, 1)), mode: "live" })).includes("EVIDENCE_GATE_UNMET"));
-
-  // Raising the floor after the fact invalidates an old justification instead
-  // of grandfathering it: the gate is read as it is configured NOW.
-  const raised = await judge(fx(), {
-    db: dbWith(evidence(25)), mode: "live",
-    config: cfgT4({ shadow: { minShadowSamples: 100, maxAcceptableFalseReleases: 0 } })
-  });
-  assert.ok(rulesOf(raised).includes("EVIDENCE_GATE_UNMET"), JSON.stringify(raised.failed));
-  assert.match(raised.failed.find(f => f.rule === "EVIDENCE_GATE_UNMET").reason, /no longer satisfies/);
-
-  // A row that cannot be read is not a justification.
-  const garbage = await judge(fx(), {
-    db: dbWith({ id: "rev_x", decision: "justified", metrics: "not json", gate: null }), mode: "live"
-  });
-  assert.ok(rulesOf(garbage).includes("EVIDENCE_GATE_UNMET"));
 });
 
 await test("a recorded release is re-auditable: every way it could be false has a name", async () => {
@@ -589,70 +545,6 @@ await test("a recorded release is re-auditable: every way it could be false has 
     .some(r => /released without a human approval naming this exact outbox row/.test(r)));
   assert.equal(auditRelease(t5row, { goal: clean, approvals: new Set(["fx_1"]) })
     .some(r => /released without a human approval/.test(r)), false);
-});
-
-await test("a corpus counts only its own tier, and one that never releases or never refuses proves nothing", async () => {
-  const t4 = (status, over = {}) => ({
-    id: `fx_${Math.random().toString(36).slice(2)}`, skill_id: "webhook.post", tier: "T4",
-    effect_type: "external_write", status, destination: DEST,
-    payload: { url: DEST, body: BODY }, verdict: { decision: status === "refused" ? "refuse" : "release", failed: [] },
-    ...over
-  });
-  const notice = { id: "fx_n", skill_id: "notice.emit", tier: "T2", effect_type: "notify",
-    status: "would_release", payload: { templateId: "goal_parked" }, verdict: { decision: "release", failed: [] } };
-  const goalsById = { [goal.id]: { id: goal.id, scope: WRITE_SCOPE } };
-  const gate = { minShadowSamples: 25, maxAcceptableFalseReleases: 0 };
-  const withGoal = (rows) => auditCorpus(rows.map(r => ({ ...r, goal_id: goal.id })), gate,
-    { goalsById, tiers: ["T4"] });
-
-  // Twenty-five notices say nothing about whether a webhook gate is too loose:
-  // only samples OF THIS TIER count toward the floor.
-  const onlyNotices = auditCorpus(Array.from({ length: 40 }, () => notice), gate, { tiers: ["T4"] });
-  assert.equal(onlyNotices.samples, 0);
-  assert.equal(onlyNotices.totalSamples, 40);
-  assert.equal(onlyNotices.satisfied, false);
-  assert.ok(onlyNotices.reasons.some(r => /below the 25-sample floor/.test(r)));
-
-  const enough = [
-    ...Array.from({ length: 20 }, () => t4("would_release")),
-    ...Array.from({ length: 5 }, () => t4("refused", { verdict: { decision: "refuse", failed: [{ rule: "DESTINATION_NOT_IN_SCOPE" }] } }))
-  ];
-  const measured = withGoal(enough);
-  assert.equal(measured.samples, 25);
-  assert.equal(measured.satisfied, true, JSON.stringify(measured.reasons));
-  assert.equal(measured.wouldRelease, 20);
-  assert.equal(measured.refused, 5);
-  assert.equal(measured.falseReleaseCount, 0);
-  assert.deepEqual(measured.byRule, { DESTINATION_NOT_IN_SCOPE: 5 });
-  assert.deepEqual(measured.byDestination, { [DEST]: 25 });
-  assert.deepEqual(measured.byTier, { T4: 25 });
-  assert.equal(measured.goalScopesChecked, true);
-
-  // A gate that never releases has proven nothing; a gate that never refuses
-  // has not been exercised. Both are named rather than reported as "no false
-  // releases found", which reads like a pass.
-  const allRefused = withGoal(Array.from({ length: 30 }, () => t4("refused",
-    { verdict: { decision: "refuse", failed: [{ rule: "UNSAFE_URL" }] } })));
-  assert.equal(allRefused.satisfied, false);
-  assert.ok(allRefused.reasons.some(r => /no release verdict at all/.test(r)));
-  const allReleased = withGoal(Array.from({ length: 30 }, () => t4("would_release")));
-  assert.equal(allReleased.satisfied, false);
-  assert.ok(allReleased.reasons.some(r => /no refusal/.test(r)));
-
-  // One false release fails a corpus of any size: zero tolerance is the gate.
-  const oneBad = withGoal([...enough, t4("released", { payload: { url: OFF_LIST }, destination: OFF_LIST })]);
-  assert.equal(oneBad.falseReleaseCount, 1);
-  assert.equal(oneBad.satisfied, false);
-  assert.ok(oneBad.reasons.some(r => /1 false release/.test(r)));
-  assert.equal(oneBad.falseReleases[0].tier, "T4");
-
-  // The digest is stable across measurement times, so two runs over the same
-  // corpus can be compared without comparing clocks.
-  const a = metricsDigest(withGoal(enough));
-  const b = metricsDigest(withGoal(enough));
-  assert.equal(a, b);
-  assert.equal(a.length, 64);
-  assert.notEqual(a, metricsDigest(oneBad), "a different corpus has a different digest");
 });
 
 // ================================================== the adapter against a sink
@@ -949,16 +841,13 @@ const stepRows = async (goalId) => h.sql(
 const goalEvents = async (goalId) => h.sql(
   `SELECT * FROM goal_events WHERE goal_id=$1 ORDER BY seq`, [goalId]);
 
-await test("the deployment reports Rung 4 as three separate facts: built, switched on, and live", async () => {
+await test("the deployment reports T4 as built and allowed, with no rung to climb", async () => {
   const status = await h.raw("/api/autonomy/status");
   assert.equal(status.status, 200);
   const writes = status.json.externalWrites;
   assert.equal(writes.built, true, "Phase 21 built T4");
-  assert.equal(writes.rungEnabled, true, "this suite switches the rung on");
-  assert.equal(writes.deliversNow, false, "shadow mode: built and on is still not delivering");
-  assert.equal(writes.requiresEvidenceRow, true);
-  assert.equal(writes.killSwitch, "COGNOS_AUTONOMY_EXTERNAL_WRITES");
-  assert.deepEqual(writes.evidence, [], "no corpus has been recorded yet");
+  assert.equal(writes.deliversNow, false, "shadow mode: built is still not delivering");
+  assert.equal(writes.deliversOnApproval, true);
   assert.equal(status.json.webhook.maxBodyBytes, 32_768);
   assert.equal(status.json.webhook.schemes.length, 1);
   assert.deepEqual(status.json.webhook.schemes, ["https:"]);
@@ -983,17 +872,11 @@ await test("the deployment reports Rung 4 as three separate facts: built, switch
 
   const rungs = await h.raw("/api/autonomy/rungs");
   assert.equal(rungs.status, 200);
-  const t4 = rungs.json.rungs.find(r => r.rung === "external_writes");
-  assert.equal(t4.tier, "T4");
-  assert.equal(t4.flag, true);
-  assert.equal(t4.evidence, null);
-  assert.equal(t4.justifiedNow, false);
-  assert.equal(t4.measurement.metrics.samples >= 0, true);
+  // Phase 34 — the writing rungs are gone. The rungs list holds only the
+  // operator capability switches; none of them gates writing.
+  assert.ok(!rungs.json.rungs.some(r => r.rung === "external_writes"), "no writing rung to climb");
+  assert.ok(!rungs.json.rungs.some(r => r.rung === "irreversible"), "no irreversible rung either");
   assert.equal(rungs.json.outboxMode, "shadow");
-  const t5 = rungs.json.rungs.find(r => r.rung === "irreversible");
-  assert.equal(t5.tier, "T5");
-  assert.equal(t5.flag, false, "Rung 6 is built and still off — explicit operator sign-off is its entry criterion");
-  assert.equal(t5.measurement.satisfied, false);
 });
 
 await test("§8.10a — a destination off the allowlist is refused by name, and the attempt is still a row", async () => {
@@ -1208,82 +1091,28 @@ await test("§8.10d — one (goal, url, body) is one effect, and a replayed rele
   sink.respond = () => ({ status: 200, body: '{"ok":true}' });
   const { decideEffect } = await import("../server/autonomy/outbox.js");
   const liveCfg = { ...autonomyConfig(), outboxMode: "live" };
-  // A live verdict needs the corpus; the evidence row is recorded later in this
-  // file, so this decision is asserted to be refused for exactly that reason.
+  // Phase 34 — a live verdict needs no corpus. The effect releases (the
+  // destination is granted and the deployment approves it); the idempotency
+  // is what this test proves.
   const gated = await decideEffect({ db, effectId: first.row.id, goal: goalRow, authorization,
     config: liveCfg, mode: "live", transport: sinkTransport(sink), resolve: publicResolve });
-  assert.equal(gated.row.status, "refused");
-  assert.ok((gated.verdict.failed || []).some(f => f.rule === "EVIDENCE_GATE_UNMET"),
-    JSON.stringify(gated.verdict.failed));
-  assert.equal(sink.seen.length, 0, "the flag was on and the delivery still did not happen");
+  assert.equal(gated.row.status, "released");
+  assert.equal(sink.seen.length, 1, "the effect was performed once");
 });
 
 await test("§8.10e — a delivered receipt is digest-only in the row, the ledger, and the goal's own history", async () => {
   const { default: db } = await import("../server/db.js");
-  // Build the corpus the gate asks for: five goals, five shadow samples each.
-  // Spread across goals on purpose — the default per-goal ceilings are ten
-  // effects a day and twenty-five external effects a lifetime, and a test that
-  // quietly raised them would be testing a deployment nobody runs.
-  const agent = await makeAgent();
-  const corpusGoals = [];
-  for (let g = 0; g < 5; g++) {
-    const made = await makeGoal(agent.id, { title: `Corpus goal ${g}` });
-    await authorizeKeep(made.id);
-    corpusGoals.push(made.id);
-  }
   const { requestExternalWrite } = await import("../server/autonomy/externalWrite.js");
-  let n = 0;
-  for (const goalId of corpusGoals) {
-    const goalRow = await db.AutonomyGoal.get(goalId);
-    for (let k = 0; k < 5; k++) {
-      n++;
-      // Every fourth sample is an off-allowlist attempt, so the corpus has
-      // refusals in it: a gate that never refuses has not been exercised.
-      const url = n % 4 === 0 ? OFF_LIST : DEST;
-      const body = `{"event":"corpus.sample","n":${n}}`;
-      const out = await requestExternalWrite({
-        db, goal: goalRow, agentId: agent.id, tickId: `tick_corpus_${n}`, skillId: "webhook.post",
-        destination: url, payload: { url, method: "POST", headers: {}, body, secretRef: null, reason: "corpus" },
-        keyPayload: { url, body }, config: autonomyConfig()
-      });
-      assert.equal(out.ok, url === DEST, `sample ${n} -> ${out.error}`);
-    }
-  }
+  // Phase 34 — no corpus to build. A live verdict delivers when the
+  // destination is granted and approved; the receipt is what this test proves.
+  const agent = await makeAgent();
+  const made = await makeGoal(agent.id, { title: "Receipt goal" });
+  await authorizeKeep(made.id);
 
-  // Too thin at first? No — 25 samples is exactly the floor, and the rows from
-  // the earlier tests are in the same workspace corpus. Measure, then record.
-  const measured = await h.raw("/api/autonomy/rungs");
-  const t4 = measured.json.rungs.find(r => r.rung === "external_writes");
-  assert.ok(t4.measurement.metrics.samples >= 25, JSON.stringify(t4.measurement.reasons));
-  assert.equal(t4.measurement.metrics.falseReleaseCount, 0,
-    JSON.stringify(t4.measurement.metrics.falseReleases));
-
-  const recorded = await h.raw("/api/autonomy/rungs/external_writes/evidence", {
-    method: "POST", body: { decided_by: "phase21-suite", reason: "25 shadow samples, zero false releases" }
-  });
-  assert.equal(recorded.status, 201, JSON.stringify(recorded.json));
-  assert.equal(recorded.json.decision, "justified");
-  assert.equal(recorded.json.satisfied, true);
-  assert.equal(recorded.json.metrics.falseReleaseCount, 0);
-  assert.equal(recorded.json.metricsSha256.length, 64);
-  assert.equal(recorded.json.evidence.decided_by, "phase21-suite");
-  assert.equal(await count("autonomy_rung_evidence"), 1, "append-only, and this is the first row");
-
-  // The status route now reports the earned fact, and the measurement behind it.
-  const after = await h.raw("/api/autonomy/status");
-  assert.equal(after.json.externalWrites.evidence.length, 1);
-  assert.equal(after.json.externalWrites.evidence[0].decision, "justified");
-  assert.ok(after.json.externalWrites.evidence[0].samples >= 25);
-  const rungs = await h.raw("/api/autonomy/rungs");
-  const earned = rungs.json.rungs.find(r => r.rung === "external_writes");
-  assert.ok(earned.evidence, "a justified row is now current");
-  assert.equal(earned.justifiedNow, true);
-
-  // With evidence recorded, a live verdict delivers — once, to the sink.
+  // A live verdict delivers — once, to the sink.
   sink.seen.length = 0;
   sink.respond = () => ({ status: 200, body: JSON.stringify({ ok: true, secret: SECRET_VALUE }) });
-  const liveGoalId = corpusGoals[0];
-  const liveGoal = await db.AutonomyGoal.get(liveGoalId);
+  const liveGoal = await db.AutonomyGoal.get(made.id);
   const liveBody = '{"event":"live.delivery","n":1}';
   const released = await requestExternalWrite({
     db, goal: liveGoal, agentId: agent.id, tickId: "tick_live_1", skillId: "webhook.post",
@@ -1317,7 +1146,7 @@ await test("§8.10e — a delivered receipt is digest-only in the row, the ledge
   const releasedEvent = events.find(e => e.to_status === "released");
   const detail = json(releasedEvent.detail, {});
   assert.deepEqual(Object.keys(detail.receipt).sort(), ["accepted", "attempts", "signed", "status", "url"]);
-  const ge = (await goalEvents(liveGoalId)).filter(e => e.event_type === "effect_released");
+  const ge = (await goalEvents(made.id)).filter(e => e.event_type === "effect_released");
   assert.equal(ge.length, 1);
   assert.equal(json(ge[0].detail, {}).destination, DEST);
   assert.equal(json(ge[0].detail, {}).skillId, "webhook.post");
@@ -1344,13 +1173,6 @@ await test("§8.10e — a delivered receipt is digest-only in the row, the ledge
   assert.match(replay.output.note, /already happened/);
   assert.equal(replay.output.status, 200);
   assert.equal(await count("autonomy_outbox", " WHERE id=$1", [released.effectId]), 1, "and it is still one row");
-
-  // Re-measuring writes a NEW row rather than editing the old one, so "what did
-  // we know when we turned this on" stays answerable.
-  const again = await h.raw("/api/autonomy/rungs/external_writes/evidence", { method: "POST", body: {} });
-  assert.equal(again.status, 201);
-  assert.equal(await count("autonomy_rung_evidence"), 2);
-  assert.equal(again.json.decision, "justified");
 });
 
 await test("dry_run records the exact request it declined to send, and sends nothing", async () => {
@@ -1710,58 +1532,51 @@ await test("a route-driven live approval fails closed when there is no network p
   }
 });
 
-await test("the rung flag is the gate: off means nothing is staged by the loop and an approval is refused with the flag's name", async () => {
-  const prev = process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES;
-  delete process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES;
-  try {
-    const cfg = autonomyConfig();
-    assert.equal(cfg.rung.externalWrites, false);
-    assert.ok(cfg.builtTiers.includes("T4"), "built is not enabled, and the build does not disappear");
-    assert.equal(tierAllowed("T4", cfg), false);
-    assert.equal(isSkillEnabled("webhook.post", cfg), false);
-    assert.equal(getSkill("webhook.post").requiresRung, "externalWrites");
+await test("T4 is built and allowed: the loop stages, and an approval is judged (not refused for a missing rung)", async () => {
+  // Phase 34 — there is no rung flag. T4 is allowed when built; the Governor
+  // judges each effect, and the approval route records the human decision.
+  const cfg = autonomyConfig();
+  assert.ok(!("externalWrites" in cfg.rung), "the writing rung is gone");
+  assert.ok(cfg.builtTiers.includes("T4"), "built is not enabled, and the build does not disappear");
+  assert.equal(tierAllowed("T4", cfg), true);
+  assert.equal(isSkillEnabled("webhook.post", cfg), true);
+  assert.ok(!("requiresRung" in getSkill("webhook.post")) || getSkill("webhook.post").requiresRung == null);
 
-    const status = await h.raw("/api/autonomy/status");
-    assert.equal(status.json.externalWrites.built, true);
-    assert.equal(status.json.externalWrites.rungEnabled, false);
-    assert.equal(status.json.externalWrites.deliversNow, false);
-    const tools = await h.raw("/api/agent/tools");
-    assert.equal(tools.json.autonomy.externalWrites.rungEnabled, false);
-    const identity = await h.raw("/api/identity");
-    assert.equal(identity.json.runtime.autonomy.externalWrites.rungEnabled, false);
-    assert.equal(identity.json.runtime.autonomy.externalWrites.deliversNow, false);
+  const status = await h.raw("/api/autonomy/status");
+  assert.equal(status.json.externalWrites.built, true);
+  assert.ok(!("rungEnabled" in status.json.externalWrites));
+  assert.equal(status.json.externalWrites.deliversNow, false);
+  const tools = await h.raw("/api/agent/tools");
+  assert.ok(!("rungEnabled" in tools.json.autonomy.externalWrites));
+  const identity = await h.raw("/api/identity");
+  assert.ok(!("rungEnabled" in identity.json.runtime.autonomy.externalWrites));
+  assert.equal(identity.json.runtime.autonomy.externalWrites.deliversNow, false);
 
-    // The loop refuses at the rung gate and names the flag an operator would set.
-    const agent = await makeAgent();
-    const made = await makeGoal(agent.id, { title: "Rung off goal" });
-    await authorize(made.id);
-    const before = await count("autonomy_outbox", " WHERE tier='T4'");
-    let i = 0;
-    const script = [
-      { thought: "post", skill: "webhook.post", args: { url: DEST, body: BODY }, done: false },
-      { thought: "done", skill: "none", args: {}, done: true }
-    ];
-    await tick(() => script[Math.min(i++, script.length - 1)]);
-    assert.equal(await count("autonomy_outbox", " WHERE tier='T4'"), before,
-      "a rung that is off stages nothing at all — not even a refusal row, because the barrier is before the effect");
-    const steps = await stepRows(made.id);
-    assert.equal(steps[0].status, "refused");
-    assert.match(steps[0].error_message,
-      /rung gate: webhook\.post needs rung 'externalWrites' \(COGNOS_AUTONOMY_EXTERNAL_WRITES\), which is off/);
+  // The loop stages the effect (no rung gate in the way); the Governor judges
+  // it in shadow as would_release, performed by nothing.
+  const agent = await makeAgent();
+  const made = await makeGoal(agent.id, { title: "No rung goal" });
+  await authorize(made.id);
+  const before = await count("autonomy_outbox", " WHERE tier='T4'");
+  let i = 0;
+  const script = [
+    { thought: "post", skill: "webhook.post", args: { url: DEST, body: BODY }, done: false },
+    { thought: "done", skill: "none", args: {}, done: true }
+  ];
+  await tick(() => script[Math.min(i++, script.length - 1)]);
+  assert.equal(await count("autonomy_outbox", " WHERE tier='T4'"), before + 1,
+    "with no rung gate, the loop stages the effect for judging");
 
-    // And the operator surface says the same thing instead of offering a button
-    // that looks like it worked.
-    const existing = (await h.sql(
-      `SELECT id FROM autonomy_outbox WHERE tier='T4' ORDER BY created_date DESC LIMIT 1`))[0];
-    assert.ok(existing, "an earlier test left a T4 row");
-    const approve = await h.raw(`/api/autonomy/outbox/${existing.id}/decision`, { method: "POST", body: { decision: "approve" } });
-    assert.equal(approve.status, 409);
-    assert.equal(approve.json.killSwitch, "COGNOS_AUTONOMY_EXTERNAL_WRITES");
-    assert.match(approve.json.error, /Rung 4 \(external writes\) is off/);
-  } finally {
-    if (prev === undefined) delete process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES;
-    else process.env.COGNOS_AUTONOMY_EXTERNAL_WRITES = prev;
-  }
+  // And the approval route no longer refuses for a missing rung: it records
+  // the human decision and lets the Governor judge.
+  const staged = (await h.sql(
+    `SELECT id FROM autonomy_outbox WHERE tier='T4' ORDER BY created_date DESC LIMIT 1`))[0];
+  assert.ok(staged, "the loop staged a T4 row");
+  const approve = await h.raw(`/api/autonomy/outbox/${staged.id}/decision`, { method: "POST", body: { decision: "approve" } });
+  // The effect is judged in live mode by the route; the destination here is
+  // the test sink, so the verdict depends on the Governor, not on a rung.
+  assert.ok([200, 409].includes(approve.status), JSON.stringify(approve.json));
+  assert.ok(!/rung/i.test(approve.json.error || ""), "no rung is named in the refusal");
 });
 
 await test("the kill switch disables the skill on its own, and the resident's allowlist is still required", async () => {
@@ -1808,7 +1623,7 @@ await test("the registry schema is the first gate, and it is not the same gate a
   assert.equal(skill.tier, "T4");
   assert.equal(skill.effectType, "external_write");
   assert.equal(skill.killSwitch, "COGNOS_SKILL_WEBHOOK_POST");
-  assert.equal(skill.requiresRung, "externalWrites");
+  assert.ok(!("requiresRung" in skill) || skill.requiresRung == null, "Phase 34: no rung gate on the skill");
   assert.equal(skill.timeoutMs, 12_000);
   assert.match(skill.idempotencyRule, /\(goal, url, body\)/);
 
@@ -1915,15 +1730,14 @@ await test("Phase 21 laws are pinned, and the Policy Engine refuses to open a ch
 
   const proposal = (action, params = {}) => evaluateAdaptation({
     action, params,
-    justification: "Phase 21 has a shadow corpus with zero false releases, so the rung should be raised now.",
-    law_refs: ["pin.external_write_earned"],
-    evidence: { shadowSamples: 25, falseReleases: 0 }
+    justification: "The operator chose it, so the rung should be raised now.",
+    law_refs: ["pin.live_mode_earned"]
   });
 
-  const rung = proposal("set_autonomy_rung", { rung: "external_writes" });
+  const rung = proposal("set_autonomy_rung", { rung: "inbound" });
   assert.equal(rung.decision, "refused");
   assert.ok(rung.violations.some(v => v.law === "phase19.autonomy_default_off"));
-  assert.ok(rung.violations.some(v => v.law === "pin.external_write_earned"));
+  assert.ok(rung.violations.some(v => v.law === "pin.live_mode_earned"));
   assert.equal(rung.applied, false, "and nothing is applied at runtime in any case");
 
   const channel = proposal("enable_outbound_channel", { killSwitch: "COGNOS_AUTONOMY_EXTERNAL_WRITES" });
@@ -1939,14 +1753,14 @@ await test("Phase 21 laws are pinned, and the Policy Engine refuses to open a ch
   // and appends the refusal to the ledger: a refused proposal is a record.
   const ledgerBefore = await count("improvement_ledger");
   const viaRoute = await h.raw("/api/meta/adaptations", {
-    method: "POST", body: { action: "set_autonomy_rung", params: { rung: "4" },
-      justification: "Raise Rung 4 because the code is written and the tests pass.",
-      law_refs: ["pin.external_write_earned"], evidence: { tests: "phase21" } }
+    method: "POST", body: { action: "set_autonomy_rung", params: { rung: "inbound" },
+      justification: "Raise the inbound rung because the code is written and the tests pass.",
+      law_refs: ["pin.live_mode_earned"] }
   });
   assert.equal(viaRoute.status, 409, JSON.stringify(viaRoute.json).slice(0, 400));
   assert.equal(viaRoute.json.decision, "refused");
   assert.equal(viaRoute.json.applied, false);
-  assert.ok(viaRoute.json.violations.some(v => v.law === "pin.external_write_earned"),
+  assert.ok(viaRoute.json.violations.some(v => v.law === "pin.live_mode_earned"),
     JSON.stringify(viaRoute.json.violations));
   assert.equal(await count("improvement_ledger"), ledgerBefore + 1);
 });
@@ -1987,14 +1801,12 @@ await test("the ledger redacts a credential in anything a model composed, and ke
   assert.equal(redactSecrets("x".repeat(5000)).length <= 4001, true, "a long string is bounded");
 });
 
-await test("the shadow corpus endpoint reports the distribution a Rung 4 decision is actually made from", async () => {
+await test("the outbox endpoint reports T4 rows filterable by tier and destination", async () => {
   const corpus = await h.raw("/api/autonomy/outbox?tier=T4&limit=200");
   assert.equal(corpus.status, 200);
   const rows = corpus.json.effects || corpus.json.rows || corpus.json;
-  assert.ok(Array.isArray(rows) && rows.length >= 25, `T4 rows are filterable: ${JSON.stringify(corpus.json).slice(0, 200)}`);
+  assert.ok(Array.isArray(rows) && rows.length >= 1, `T4 rows are filterable: ${JSON.stringify(corpus.json).slice(0, 200)}`);
   assert.ok(rows.every(r => r.tier === "T4"));
-  assert.ok(rows.some(r => r.status === "refused") && rows.some(r => r.status === "would_release"),
-    "the corpus has both outcomes in it");
 
   const byDest = await h.raw(`/api/autonomy/outbox?destination=${encodeURIComponent(DEST)}&limit=200`);
   assert.equal(byDest.status, 200);
@@ -2006,12 +1818,9 @@ await test("the shadow corpus endpoint reports the distribution a Rung 4 decisio
   const summary = corpus.json.corpus;
   assert.ok(summary.byStatus, JSON.stringify(summary).slice(0, 300));
   assert.ok(summary.byRule && Object.keys(summary.byRule).length > 0, "which rules fired, and how often");
-  assert.ok(summary.byTier?.T4 >= 25, JSON.stringify(summary.byTier));
+  assert.ok(summary.byTier?.T4 >= 1, JSON.stringify(summary.byTier));
   assert.ok(summary.byDestination?.[DEST] >= 1, "and where the attempts were aimed");
   assert.ok(summary.byRule.DESTINATION_NOT_IN_SCOPE >= 1);
-  assert.ok(summary.byRule.UNSAFE_URL >= 1);
-  assert.ok(summary.byRule.RATE_LIMIT >= 1 || summary.byRule.QUIET_HOURS >= 1,
-    "the corpus shows the ceilings firing too");
 });
 
 await test("every Phase 21 switch is documented in .env.example under the name that is wired", async () => {
@@ -2020,10 +1829,8 @@ await test("every Phase 21 switch is documented in .env.example under the name t
   const lines = example.split("\n");
   const documented = (name) => lines.some(line => line.startsWith(`${name}=`));
   for (const name of [
-    "COGNOS_AUTONOMY_EXTERNAL_WRITES",
     "COGNOS_AUTONOMY_QUIET_HOURS",
     "COGNOS_AUTONOMY_OUTBOX_MODE",
-    "COGNOS_AUTONOMY_MIN_SHADOW_SAMPLES",
     "COGNOS_WEBHOOK_MAX_BODY_BYTES",
     "COGNOS_WEBHOOK_TIMEOUT_MS",
     "COGNOS_WEBHOOK_MAX_REDIRECTS",
@@ -2035,10 +1842,11 @@ await test("every Phase 21 switch is documented in .env.example under the name t
   }
   // The documented default is the wired default: an example file that says 25
   // while the code says 10 is a lie with a comment on it.
-  assert.match(example, /COGNOS_AUTONOMY_MIN_SHADOW_SAMPLES=25/);
   assert.match(example, /COGNOS_WEBHOOK_MAX_BODY_BYTES=32768/);
   assert.match(example, /COGNOS_WEBHOOK_TIMEOUT_MS=8000/);
-  assert.match(example, /COGNOS_AUTONOMY_EXTERNAL_WRITES=false/, "the rung is documented as OFF");
+  // Phase 34: COGNOS_AUTONOMY_EXTERNAL_WRITES and COGNOS_AUTONOMY_MIN_SHADOW_SAMPLES
+  // are gone — the rung and the gate they configured went with earning. They
+  // must NOT be documented as switches.
   assert.match(example, /COGNOS_AUTONOMY_OUTBOX_MODE=shadow/, "and the outbox as shadow");
 
   // Every env var the webhook adapter reads is one of the documented ones.

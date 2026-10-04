@@ -82,39 +82,6 @@ await test("a missing spend ceiling is unverifiable, not a crash", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Governor: a lookup error is its own rule, never "does not exist".
-// ---------------------------------------------------------------------------
-const T4_EFFECT = {
-  id: "fx2", skill_id: "webhook.post", tier: "T4", effect_type: "external_write",
-  status: "staged", mode: "live", destination: "https://hooks.example.com/x",
-  payload: { url: "https://hooks.example.com/x", method: "POST", headers: {}, body: "{}" }
-};
-const throwingDb = {
-  query: async () => [{ n: 0, total: 0 }],
-  RungEvidence: { currentJustified: async () => { throw new Error("db is down"); } },
-  EffectApproval: { current: async () => { throw new Error("db is down"); } }
-};
-
-await test("a failing evidence lookup does not impersonate absence", async () => {
-  const scope = { effectsAllowed: [{ effect: "webhook.post", destinations: ["https://hooks.example.com/x"] }] };
-  const budget = {};
-  const hashes = scopeHashes({ goalId: "g1", scope, budget });
-  const verdict = await judgeEffect({
-    db: throwingDb, effect: T4_EFFECT,
-    goal: { id: "g1", workspace_id: "ws1", budget, scope },
-    authorization: { decision: "authorize", scope_sha256: hashes.scopeSha256,
-      budget_sha256: hashes.budgetSha256, expires_at_ms: Date.now() + 60000 },
-    config: { ...baseConfig, rung: { externalWrites: true }, outboxMode: "live",
-      liveDestination: { configured: true, url: "https://hooks.example.com/x" } },
-    nowMs: Date.now(), mode: "live"
-  });
-  const rules = rulesList(verdict);
-  assert.ok(rules.includes("EVIDENCE_UNREADABLE"), JSON.stringify(rules));
-  assert.ok(!rules.includes("EVIDENCE_GATE_UNMET"),
-    "must not claim the corpus does not exist when the check could not run");
-});
-
-// ---------------------------------------------------------------------------
 // decideEffect: reverted rows replay as reverted, not refused.
 // ---------------------------------------------------------------------------
 await test("a reverted effect replays as reverted", async () => {

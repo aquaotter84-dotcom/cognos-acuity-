@@ -475,11 +475,9 @@ export function describeIdentityRuntime(config, { databaseConfigured = false } =
       backgroundTasks: autonomy.enabled === true,
       externalWrites: {
         built: externalWritesBuilt,
-        rungEnabled: autonomy.rung.externalWrites === true,
-        killSwitch: "COGNOS_AUTONOMY_EXTERNAL_WRITES",
         outboxMode: autonomy.outboxMode,
         outboxModeSource: autonomy.outboxModeSource,
-        deliversNow: externalWritesBuilt && autonomy.rung.externalWrites === true && autonomy.outboxMode === "live",
+        deliversNow: externalWritesBuilt && autonomy.outboxMode === "live",
         // Phase 22 (autonomy row) — `deliversNow` answers one question: does the
         // LOOP perform a release verdict? It is not the whole answer to "can a
         // byte leave this deployment", and reporting only it was a way of saying
@@ -487,11 +485,10 @@ export function describeIdentityRuntime(config, { databaseConfigured = false } =
         // already a live decision. An approval judges the effect in live mode
         // whatever the loop's mode is, so this is the second fact, stated
         // separately rather than folded into the first.
-        deliversOnApproval: externalWritesBuilt && autonomy.rung.externalWrites === true,
-        // A live release also needs a recorded evidence row AND the one
-        // destination the deployment approved; both are environment or database
-        // state, so they are stated as requirements rather than guessed.
-        requiresEvidenceRow: true,
+        deliversOnApproval: externalWritesBuilt,
+        // A live release also needs the one destination the deployment
+        // approved; that is environment state, so it is stated as a
+        // requirement rather than guessed. (Phase 34: no evidence row.)
         requiresApprovedDestination: true,
         approvedDestinationConfigured: autonomy.liveDestination?.configured === true,
         approvedDestinationMisconfigured: autonomy.liveDestination?.misconfigured === true,
@@ -499,15 +496,11 @@ export function describeIdentityRuntime(config, { databaseConfigured = false } =
         maxBodyBytes: autonomy.webhook.maxBodyBytes,
         timeoutMs: autonomy.webhook.timeoutMs
       },
-      // Phase 22 (autonomy row, second slice) — T5. Built, default-off, and
-      // released only by a per-effect human approval naming the exact outbox
-      // row. `deliversNow` stays false unless both the rung and a human
-      // approval exist, which is why the loop's own flag is necessary and
-      // never sufficient.
+      // Phase 22 (autonomy row, second slice) — T5. Built, and released only
+      // by a per-effect human approval naming the exact outbox row.
+      // (Phase 34: the rung and its kill switch are gone with earning.)
       irreversible: {
         built: autonomy.builtTiers.includes("T5"),
-        rungEnabled: autonomy.rung.irreversible === true,
-        killSwitch: "COGNOS_AUTONOMY_IRREVERSIBLE",
         requiresPerEffectHumanApproval: true,
         classAuthorized: false,
         adapters: autonomy.builtTiers.includes("T5") ? ["post.publish"] : []

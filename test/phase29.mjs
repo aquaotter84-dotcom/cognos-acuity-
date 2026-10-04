@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 // Phase 29 — the RUNG switches, as DELEGATED operator switches.
 //
-// THE CLAIM UNDER TEST. A rung is the operator's sign-off that a tier EXISTS in
-// this deployment. Phase 19 read the five of them straight from the
-// environment, so the sign-off that decides whether T4 exists was invisible on
-// the page that reports T4, and moving it meant a Railway variable and a
-// restart.
+// THE CLAIM UNDER TEST. A rung is the operator's sign-off that a capability
+// EXISTS in this deployment. Phase 19 read them straight from the environment,
+// so moving one meant a Railway variable and a restart.
+//
+// Phase 34 removed the two writing rungs (externalWrites, irreversible) with
+// the earned requirement: T4/T5 are allowed whenever built, gated per effect
+// by the Governor and by Jeremy's approval. Three rungs remain — residents,
+// search, inbound — all pure operator switches that were never earned.
 //
 // What this suite proves:
 //
@@ -16,17 +19,14 @@
 //     refusal names the variable);
 //   * the ONLY path that opens a rung is delegation plus a stored row, and a
 //     flip with no delegation is refused with a sentence and stores nothing;
-//   * the rung reaches the gate that matters — tierAllowed('T4') follows the
-//     resolved value, not the environment;
-//   * one rung flip writes ONE column, and it does not disturb the other four,
-//     the mode, auto-authorize, the bypass or enablement — proved against a real
-//     Postgres, through the real route;
+//   * one rung flip writes ONE column, and it does not disturb the other two,
+//     the mode, auto-authorize or enablement — proved against a real Postgres,
+//     through the real route;
 //   * the route refuses an unknown rung and a two-switch request, and records
 //     an autonomy.rung audit row for a flip that lands;
 //   * the new delegation is documented in .env.example under the name wired;
-//   * the five columns are applied by the SERVER's own boot path, not only by
-//     scripts/migrate.mjs (Phase 28 registered its column in PHASE_SCHEMAS but
-//     never concatenated it into db.js; that gap is fixed here and tested).
+//   * the three columns are applied by the SERVER's own boot path, not only by
+//     scripts/migrate.mjs.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -94,14 +94,14 @@ await test("the rungs rest OFF — absence is not a permission", async () => {
       assert.equal(effectiveRung(key), false, `${key} rests off`);
     }
     assert.equal(rungsDelegated(), false);
-    assert.equal(rungRefusal("externalWrites").code, "not_delegated");
+    assert.equal(rungRefusal("search").code, "not_delegated");
 
     // Delegation without a stored row is still OFF: an unread row is not a
-    // permission, and a database blip must not open a tier.
+    // permission, and a database blip must not open a capability.
     process.env[RUNG_UI_CONTROL_ENV] = "true";
     resetSettingsCache();
-    assert.equal(effectiveRung("externalWrites"), false);
-    assert.equal(rungRefusal("externalWrites"), null, "with delegation the page MAY flip it");
+    assert.equal(effectiveRung("search"), false);
+    assert.equal(rungRefusal("search"), null, "with delegation the page MAY flip it");
     assert.equal(describeSettings().canSetRungs, true);
   });
 });
@@ -127,29 +127,30 @@ await test("an unrecognised value pins OFF and an empty value is not a pin", asy
 });
 
 await test("a pin outranks the page in both directions, and names itself when it refuses", async () => {
-  await withEnv({ ...noPins, [RUNG_UI_CONTROL_ENV]: "true", [RUNG_PIN_ENVS.externalWrites]: "false" },
+  await withEnv({ ...noPins, [RUNG_UI_CONTROL_ENV]: "true", [RUNG_PIN_ENVS.search]: "false" },
     async () => {
       const writes = [];
-      const outcome = await setRung(settingsDb(writes), { rung: "externalWrites", enabled: true });
+      const outcome = await setRung(settingsDb(writes), { rung: "search", enabled: true });
       assert.equal(outcome.ok, false, "a pinned-off rung cannot be opened from the page");
       assert.equal(outcome.refusal.code, "pinned_by_operator");
-      assert.match(outcome.refusal.message, /COGNOS_AUTONOMY_EXTERNAL_WRITES/,
+      assert.match(outcome.refusal.message, /COGNOS_AUTONOMY_SEARCH/,
         "the refusal names the variable to remove");
       assert.deepEqual(writes, [], "nothing was written");
-      assert.equal(effectiveRung("externalWrites"), false);
+      assert.equal(effectiveRung("search"), false);
 
       // A pin ON is also final: the page cannot close a rung an operator opened.
-      process.env[RUNG_PIN_ENVS.irreversible] = "true";
+      process.env[RUNG_PIN_ENVS.inbound] = "true";
       resetSettingsCache();
-      assert.equal(effectiveRung("irreversible"), true);
-      assert.equal(rungRefusal("irreversible").code, "pinned_by_operator");
+      assert.equal(effectiveRung("inbound"), true);
+      assert.equal(rungRefusal("inbound").code, "pinned_by_operator");
     });
 });
 
 await test("an unknown rung reads as OFF and is refused on write", async () => {
   await withEnv({ ...noPins, [RUNG_UI_CONTROL_ENV]: "true" }, async () => {
-    assert.equal(isRungKey("externalWrites"), true);
-    assert.equal(isRungKey("ExternalWrites"), false, "keys are exact — no case folding");
+    assert.equal(isRungKey("search"), true);
+    assert.equal(isRungKey("externalWrites"), false, "the writing rungs are gone");
+    assert.equal(isRungKey("Search"), false, "keys are exact — no case folding");
     assert.equal(isRungKey("everything"), false);
     assert.equal(effectiveRung("everything"), false, "a typo on the read path must not open a tier");
 
@@ -166,49 +167,44 @@ await test("an unknown rung reads as OFF and is refused on write", async () => {
 await test("delegation plus a stored row is the only path that opens a rung", async () => {
   await withEnv({ ...noPins, [RUNG_UI_CONTROL_ENV]: "true" }, async () => {
     const writes = [];
-    const on = await setRung(settingsDb(writes), { rung: "externalWrites", enabled: true });
+    const on = await setRung(settingsDb(writes), { rung: "search", enabled: true });
     assert.equal(on.ok, true, JSON.stringify(on.refusal));
-    assert.equal(on.settings.rungs.externalWrites, true, "write-through: the response is the new truth");
-    assert.equal(effectiveRung("externalWrites"), true);
-    assert.equal(describeSettings().stored.rungs.externalWrites, true);
-    assert.equal(on.settings.rungs.search, false, "the other four are untouched");
-    assert.deepEqual(effectiveRungs(), { residents: false, search: false, externalWrites: true, irreversible: false, inbound: false });
+    assert.equal(on.settings.rungs.search, true, "write-through: the response is the new truth");
+    assert.equal(effectiveRung("search"), true);
+    assert.equal(describeSettings().stored.rungs.search, true);
+    assert.equal(on.settings.rungs.residents, false, "the other two are untouched");
+    assert.deepEqual(effectiveRungs(), { residents: false, search: true, inbound: false });
     assert.equal(writes.filter(w => w.writer === "rung").length, 1);
     assert.ok(writes.some(w => w.writer === "audit" && w.action === "autonomy.rung"),
       "the flip is recorded as its own audit action");
 
-    const off = await setRung(settingsDb(), { rung: "externalWrites", enabled: false });
+    const off = await setRung(settingsDb(), { rung: "search", enabled: false });
     assert.equal(off.ok, true);
-    assert.equal(effectiveRung("externalWrites"), false, "the brake needs no permission");
+    assert.equal(effectiveRung("search"), false, "the brake needs no permission");
   });
 });
 
 await test("a flip with no delegation is refused with a sentence and stores nothing", async () => {
   await withEnv(noPins, async () => {
     const writes = [];
-    const outcome = await setRung(settingsDb(writes), { rung: "externalWrites", enabled: true });
+    const outcome = await setRung(settingsDb(writes), { rung: "search", enabled: true });
     assert.equal(outcome.ok, false);
     assert.equal(outcome.refusal.code, "not_delegated");
     assert.match(outcome.refusal.message, /COGNOS_AUTONOMY_RUNGS_UI_CONTROL=true/);
     assert.deepEqual(writes, [], "nothing was written");
-    assert.equal(effectiveRung("externalWrites"), false);
+    assert.equal(effectiveRung("search"), false);
   });
 });
 
-await test("the resolved rung reaches tierAllowed, and a rung flip is not a corpus", async () => {
+await test("Phase 34: T4/T5 need no rung — allowed when built, approval still gates", async () => {
   await withEnv(noPins, async () => {
-    assert.equal(tierAllowed("T4", autonomyConfig()), false, "T4 rests off");
-    assert.equal(tierAllowed("T5", autonomyConfig()), false, "T5 rests off");
-  });
-  await withEnv({ ...noPins, [RUNG_UI_CONTROL_ENV]: "true" }, async () => {
-    await setRung(settingsDb(), { rung: "externalWrites", enabled: true });
     const cfg = autonomyConfig();
-    assert.equal(cfg.rung.externalWrites, true, "config.rung is a resolved value now");
-    assert.equal(tierAllowed("T4", cfg), true, "the rung gate follows the page");
-    assert.equal(tierAllowed("T5", cfg), false, "opening one rung opens exactly one tier");
-    // The other half of the gate is untouched: the corpus and the destination
-    // are not in this row and no request can write them.
-    assert.equal(cfg.liveDestination.configured, false, "no approved destination is implied by a rung");
+    assert.equal(tierAllowed("T4", cfg), cfg.builtTiers.includes("T4"),
+      "T4 follows the build, not a rung flag");
+    assert.equal(tierAllowed("T5", cfg), cfg.builtTiers.includes("T5"),
+      "T5 follows the build, not a rung flag");
+    assert.equal(cfg.liveDestination.configured, false,
+      "no approved destination is implied by anything here");
   });
 });
 
@@ -224,7 +220,7 @@ await test("flipping enablement does not forget the rungs", async () => {
   });
 });
 
-await test("the column map covers exactly the five rungs", async () => {
+await test("the column map covers exactly the three rungs", async () => {
   assert.deepEqual(Object.keys(RUNG_COLUMNS).sort(), [...RUNG_KEYS].sort());
   assert.deepEqual(Object.keys(RUNG_PIN_ENVS).sort(), [...RUNG_KEYS].sort());
   for (const key of RUNG_KEYS) {
@@ -252,52 +248,47 @@ const harness = await bootHarness({ [RUNG_UI_CONTROL_ENV]: "true" });
 const post = (body) => harness.raw("/api/autonomy/settings", { method: "POST", body });
 
 try {
-  await test("the server's own boot path applies the five rung columns", async () => {
+  await test("the server's own boot path applies the three rung columns", async () => {
     const rows = await harness.sql(
       `SELECT column_name FROM information_schema.columns
         WHERE table_name = 'autonomy_settings' AND column_name LIKE 'rung\\_%'`
     );
-    const found = rows.map(r => r.column_name).sort();
-    assert.deepEqual(found, Object.values(RUNG_COLUMNS).sort(),
-      "PHASE29_SCHEMA is concatenated into db.js, not only into PHASE_SCHEMAS");
-    const bypass = await harness.sql(
-      `SELECT column_name FROM information_schema.columns
-        WHERE table_name = 'autonomy_settings' AND column_name = 'bypass_earning'`
-    );
-    assert.equal(bypass.length, 1, "and Phase 28's column is wired into boot too");
+    const found = rows.map(r => r.column_name);
+    for (const col of Object.values(RUNG_COLUMNS)) {
+      assert.ok(found.includes(col), `${col} is applied by the server boot path`);
+    }
+    // The retired writing-rung columns stay in the schema, unread — like
+    // bypass_earning, they are harmless history, not a migration.
   });
 
   await test("the route flips one rung and writes exactly one column", async () => {
     const before = await harness.sql(`SELECT * FROM autonomy_settings`);
     assert.equal(before.length, 0, "no row before the first flip");
 
-    const res = await post({ rung: { name: "externalWrites", enabled: true } });
+    const res = await post({ rung: { name: "residents", enabled: true } });
     assert.equal(res.status, 200, res.text?.slice(0, 300));
-    assert.equal(res.json.rungs.externalWrites, true);
+    assert.equal(res.json.rungs.residents, true);
     assert.equal(res.json.changed, true);
-    assert.equal(res.json.rung, "externalWrites");
+    assert.equal(res.json.rung, "residents");
 
     const [row] = await harness.sql(`SELECT * FROM autonomy_settings`);
-    assert.equal(row.rung_external_writes, true);
-    assert.equal(row.rung_search, null, "the other four columns were never written");
-    assert.equal(row.rung_residents, null);
-    assert.equal(row.rung_irreversible, null);
+    assert.equal(row.rung_residents, true);
+    assert.equal(row.rung_search, null, "the other two columns were never written");
     assert.equal(row.rung_inbound, null);
     assert.equal(row.enabled, false, "a rung flip does not enable autonomy");
     assert.equal(row.outbox_mode, null, "a rung flip does not touch the mode");
     assert.equal(row.auto_authorize_goals, null);
-    assert.equal(row.bypass_earning, null);
 
     const status = await harness.raw("/api/autonomy/status");
-    assert.equal(status.json.rung.externalWrites, true, "status reports the resolved rung");
-    assert.equal(status.json.settings.rungs.externalWrites, true);
+    assert.equal(status.json.rung.residents, true, "status reports the resolved rung");
+    assert.equal(status.json.settings.rungs.residents, true);
     assert.equal(status.json.settings.canSetRungs, true);
 
     const audit = await harness.sql(
       `SELECT action, resource_id, detail FROM workspace_audit WHERE action = 'autonomy.rung'`
     );
     assert.equal(audit.length, 1, "one audit row for one flip");
-    assert.equal(audit[0].resource_id, "externalWrites");
+    assert.equal(audit[0].resource_id, "residents");
     assert.equal(audit[0].detail.to, true);
   });
 
@@ -306,12 +297,12 @@ try {
     assert.equal(on.status, 200, on.text?.slice(0, 300));
     const [row] = await harness.sql(`SELECT * FROM autonomy_settings`);
     assert.equal(row.rung_search, true);
-    assert.equal(row.rung_external_writes, true, "the rung next to it still holds its value");
+    assert.equal(row.rung_residents, true, "the rung next to it still holds its value");
 
-    const off = await post({ rung: { name: "externalWrites", enabled: false } });
+    const off = await post({ rung: { name: "residents", enabled: false } });
     assert.equal(off.status, 200);
     const [after] = await harness.sql(`SELECT * FROM autonomy_settings`);
-    assert.equal(after.rung_external_writes, false, "the brake lands");
+    assert.equal(after.rung_residents, false, "the brake lands");
     assert.equal(after.rung_search, true, "and the other rung is untouched");
     assert.equal(off.json.note.includes("off"), true, "the response says what it means");
   });
@@ -339,7 +330,7 @@ try {
     delete process.env[RUNG_UI_CONTROL_ENV];
     resetSettingsCache();
     try {
-      const res = await post({ rung: { name: "irreversible", enabled: true } });
+      const res = await post({ rung: { name: "inbound", enabled: true } });
       assert.equal(res.status, 409, res.text?.slice(0, 300));
       assert.equal(res.json.code, "not_delegated");
       assert.match(res.json.error, /COGNOS_AUTONOMY_RUNGS_UI_CONTROL=true/);
@@ -348,14 +339,14 @@ try {
       resetSettingsCache();
     }
     const [after] = await harness.sql(`SELECT * FROM autonomy_settings`);
-    assert.equal(after.rung_irreversible, null, "a refused flip writes nothing");
+    assert.equal(after.rung_inbound, null, "a refused flip writes nothing");
     assert.equal(after.rung_search, before.rung_search);
   });
 
   await test("a fresh read agrees with what the flips stored", async () => {
     const status = await harness.raw("/api/autonomy/status?fresh=1");
     assert.equal(status.json.settings.rungs.search, true);
-    assert.equal(status.json.settings.rungs.externalWrites, false);
+    assert.equal(status.json.settings.rungs.residents, false);
     assert.equal(status.json.rung.search, true, "config.rung and the settings snapshot agree");
   });
 } finally {

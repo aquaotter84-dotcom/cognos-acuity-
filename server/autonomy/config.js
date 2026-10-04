@@ -284,8 +284,7 @@ export function autonomyConfig() {
       // query goes to a third-party provider (a data flow to the outside),
       // while web.fetch stays governed by the per-goal URL allowlist.
       search: effectiveRung("search"),
-      externalWrites: effectiveRung("externalWrites"),
-      irreversible: effectiveRung("irreversible"),
+      // Phase 34: the writing rungs are gone with the earned requirement.
       inbound: effectiveRung("inbound")
     },
 
@@ -403,14 +402,10 @@ export function tierAllowed(tier, config) {
   // A webhook notice channel with no URL configured is a misconfiguration; the
   // tier is not allowed until it is fixed, rather than failing open to nowhere.
   if (tier === "T2" && notices.misconfigured) return false;
-  // Phase 21: T4 is BUILT, and still off. Building a rung is not enabling one
-  // (phase19.autonomy_default_off) — the flag is the difference, and the
-  // shadow-evidence gate inside the Governor is the second half.
-  if (tier === "T4" && config.rung?.externalWrites !== true) return false;
-  // Phase 22 (autonomy row): T5 is BUILT, and still off. The `irreversible`
-  // rung is the operator's sign-off that the tier exists; it is necessary and
-  // not sufficient — a release also needs a per-effect human approval.
-  if (tier === "T5" && config.rung?.irreversible !== true) return false;
+  // Phase 34 — the rungs are gone. T4/T5 are allowed whenever built; the gates
+  // are the Governor's per-effect policy and Jeremy's per-effect approval,
+  // not an earned flag. (phase19.autonomy_default_off still holds: nothing
+  // runs until autonomy itself is on.)
   return true;
 }
 

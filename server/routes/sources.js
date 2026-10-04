@@ -216,17 +216,14 @@ export function registerSourceRoutes(app, { wrap, db, logger }) {
         // believing a shadow deployment can POST to the internet.
         externalWrites: {
           built: cfg.builtTiers.includes("T4"),
-          rungEnabled: cfg.rung.externalWrites === true,
-          killSwitch: "COGNOS_AUTONOMY_EXTERNAL_WRITES",
           outboxMode: cfg.outboxMode,
           outboxModeSource: cfg.outboxModeSource,
-          deliversNow: cfg.rung.externalWrites === true && cfg.outboxMode === "live",
+          deliversNow: cfg.outboxMode === "live",
           // Phase 22 (autonomy row): a human Approve judges an effect in live
           // mode whatever the loop's mode is, so `deliversNow: false` is a claim
           // about the loop and not a claim that no byte can leave. Stated as its
           // own fact rather than folded into the one above.
-          deliversOnApproval: cfg.builtTiers.includes("T4") && cfg.rung.externalWrites === true,
-          requiresEvidenceRow: true,
+          deliversOnApproval: cfg.builtTiers.includes("T4"),
           requiresApprovedDestination: true,
           approvedDestinationConfigured: cfg.liveDestination?.configured === true,
           maxBodyBytes: cfg.webhook.maxBodyBytes,
@@ -236,10 +233,9 @@ export function registerSourceRoutes(app, { wrap, db, logger }) {
         // Phase 22 (autonomy row, second slice): the irreversible boundary, its
         // own three facts. Built, default-off, and released only by a
         // per-effect human approval naming the exact outbox row.
+        // (Phase 34: the rung and its kill switch are gone with earning.)
         irreversible: {
           built: cfg.builtTiers.includes("T5"),
-          rungEnabled: cfg.rung.irreversible === true,
-          killSwitch: "COGNOS_AUTONOMY_IRREVERSIBLE",
           requiresPerEffectHumanApproval: true,
           classAuthorized: false,
           adapters: cfg.builtTiers.includes("T5") ? ["post.publish"] : []

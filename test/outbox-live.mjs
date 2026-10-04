@@ -1,26 +1,24 @@
 #!/usr/bin/env node
-// Phase 22 (autonomy row), first slice: EARN-AND-FLIP LIVE FOR T4 ONLY.
+// Phase 22 (autonomy row), narrowed in Phase 34: ASK-AND-FLIP LIVE FOR T4 ONLY.
 //
 // What this file has to prove is not "live webhooks work" — Phase 21 proved the
-// adapter. It is that the distance between "built" and "delivers" is now a
-// RECORDED DECISION rather than a restart, and that the decision is refused
-// until it is earned:
+// adapter. It is that the distance between "built" and "delivers" is a RECORDED
+// DECISION rather than a restart, and that the decision is a choice, not an
+// earning:
 //
 //   * the outbox mode rests at shadow, and absence of a stored mode is shadow;
-//   * widening to live is refused unless a recorded evidence row still
-//     satisfies the gate as configured now, the rung flag is on, autonomy is
-//     running, exactly one destination is approved, and the earned corpus was
-//     aimed at that destination;
-//   * narrowing is refused by nothing — a brake an operator has to earn is not
-//     a brake;
+//   * widening to live is a recorded decision — autonomy running, exactly one
+//     destination approved, delegated to the UI — and needs no corpus;
+//   * narrowing is refused by nothing — a brake is not a brake if it takes
+//     effort to reach;
 //   * an operator's environment value may hold the mode down and may never be
 //     widened from a request;
 //   * a live delivery is confined to the approved destination IN ADDITION TO
 //     the goal's scope grant, and an unset or malformed approval fails closed;
-//   * shadow judging is untouched, because the corpus is what earns the rung;
+//   * shadow judging is untouched: shadow asks no destination question;
 //   * T5 is a DIFFERENT authority that this slice does not touch: it is built,
 //     default-off, and released only by a per-effect human approval naming the
-//     exact outbox row — never by a corpus, a rung flag alone, or a class grant.
+//     exact outbox row — never by a corpus, a rung flag, or a class grant.
 //
 // Deterministic and local, on the same two seams Phase 21 uses: live deliveries
 // go to a loopback sink through the injected transport, and the resolver is a
@@ -228,7 +226,6 @@ const cfgWith = (over = {}) => {
   const base = autonomyConfig();
   return {
     ...base,
-    rung: { ...base.rung, externalWrites: true },
     quietHours: { enabled: false, misconfigured: false, startHour: null, endHour: null },
     liveDestination: { configured: true, misconfigured: false, url: APPROVED,
       hostname: "hooks-approved.example.com", reason: null },
@@ -278,20 +275,21 @@ await test("a live write needs BOTH gates: the goal's grant and the deployment's
     /COGNOS_AUTONOMY_LIVE_DESTINATION/);
 });
 
-await test("shadow judging is untouched, because the shadow corpus is what earns the rung", async () => {
+await test("shadow judging is untouched, because shadow is the loop's practice field", async () => {
   // The same effect the live judge just refused is RELEASED in shadow — recorded
-  // as would_release, performed by nothing. Refusing shadow samples would starve
-  // the gate that is supposed to decide whether live is safe.
+  // as would_release, performed by nothing. Shadow asks no destination
+  // question; it is the loop's practice field, not its gate.
   const shadow = await judge(ELSEWHERE, { mode: "shadow", db: fakeDb(null) });
   assert.equal(shadow.decision, "release", JSON.stringify(shadow.failed));
   assert.ok(!rulesOf(shadow).includes("DESTINATION_NOT_APPROVED"));
-  assert.ok(!rulesOf(shadow).includes("EVIDENCE_GATE_UNMET"),
-    "shadow asks no evidence question; that is what makes a corpus possible");
 
-  // And a live verdict still asks the evidence question first: the destination
-  // gate is an addition to Phase 21's, not a replacement for it.
-  const noEvidence = await judge(APPROVED, { db: fakeDb(null) });
-  assert.ok(rulesOf(noEvidence).includes("EVIDENCE_GATE_UNMET"), JSON.stringify(noEvidence.failed));
+  // And the live verdict refuses the unapproved destination by name — the
+  // destination gate is Phase 22's, and it asks no evidence question.
+  const live = await judge(ELSEWHERE, { db: fakeDb(null) });
+  assert.equal(live.decision, "refuse");
+  assert.ok(rulesOf(live).includes("DESTINATION_NOT_APPROVED"), JSON.stringify(live.failed));
+  assert.ok(!rulesOf(live).includes("EVIDENCE_GATE_UNMET"),
+    "live asks no evidence question; Phase 34 removed the earned gate");
 });
 
 // ============================================================ pure: the laws
@@ -314,15 +312,13 @@ await test("the two new pins are laws, and the Policy Engine cites them at runti
 
   const proposal = (action, params = {}) => evaluateAdaptation({
     action, params,
-    justification: "The corpus is earned and the code is written, so widen the outbox to live.",
-    law_refs: ["pin.live_mode_earned"],
-    evidence: { shadowSamples: 25, falseReleases: 0 }
+    justification: "The operator chose it and the code is written, so widen the outbox to live.",
+    law_refs: ["pin.live_mode_earned"]
   });
 
-  const rung = proposal("set_autonomy_rung", { rung: "external_writes" });
+  const rung = proposal("set_autonomy_rung", { rung: "inbound" });
   assert.equal(rung.decision, "refused");
   assert.ok(rung.violations.some(v => v.law === "pin.live_mode_earned"), JSON.stringify(rung.violations));
-  assert.ok(rung.violations.some(v => v.law === "pin.external_write_earned"));
   assert.equal(rung.applied, false);
 
   const channel = proposal("enable_outbound_channel", { killSwitch: "COGNOS_AUTONOMY_EXTERNAL_WRITES" });
@@ -330,9 +326,9 @@ await test("the two new pins are laws, and the Policy Engine cites them at runti
   assert.ok(channel.violations.some(v => v.law === "pin.live_destination_approved"),
     JSON.stringify(channel.violations));
 
-  // T5 is a different authority than the corpus this slice earned: it is
-  // judged, and refused without a human approval naming this exact effect —
-  // a corpus, a rung flag, or a class grant never stands in for that.
+  // T5 is a different authority than any corpus: it is judged, and refused
+  // without a human approval naming this exact effect — a class grant never
+  // stands in for that.
   const t5 = await judgeEffect({
     db: fakeDb(evidence(500)), effect: { ...effectAt(APPROVED), tier: "T5", skill_id: "webhook.post" },
     goal: governedGoal, authorization: governedAuth, config: cfgWith(), mode: "live"
@@ -391,7 +387,7 @@ async function makeGoal(agentId, { destinations = [APPROVED, ELSEWHERE], title =
   return made.json.goal;
 }
 
-await test("the surfaces report the mode as three facts before anything is earned", async () => {
+await test("the surfaces report the mode as three facts before anything is flipped", async () => {
   const status = await h.raw("/api/autonomy/status");
   assert.equal(status.status, 200);
   assert.equal(status.json.outboxMode, "shadow", "the resting state");
@@ -415,7 +411,6 @@ await test("the surfaces report the mode as three facts before anything is earne
 
   const writes = status.json.externalWrites;
   assert.equal(writes.built, true);
-  assert.equal(writes.rungEnabled, true);
   assert.equal(writes.deliversNow, false, "shadow: the loop performs nothing");
   assert.equal(writes.deliversOnApproval, true,
     "and an approval is a live decision whatever the loop's mode is — the two facts are reported separately");
@@ -424,8 +419,8 @@ await test("the surfaces report the mode as three facts before anything is earne
 
   const rungs = await h.raw("/api/autonomy/rungs");
   assert.equal(rungs.status, 200);
-  assert.equal(rungs.json.live.ready, false, "nothing has earned a flip yet");
-  assert.ok(rungs.json.live.unmet.includes("evidence_recorded"), JSON.stringify(rungs.json.live.unmet));
+  assert.equal(rungs.json.live.ready, true, "no corpus to earn — the flip is a recorded choice");
+  assert.deepEqual(rungs.json.live.unmet, [], JSON.stringify(rungs.json.live.unmet));
   assert.equal(rungs.json.live.destination.hostname, "hooks-approved.example.com");
   assert.equal(rungs.json.live.destination.url, undefined,
     "the readiness report names the host, not the endpoint");
@@ -447,26 +442,39 @@ await test("the surfaces report the mode as three facts before anything is earne
   assert.equal(tools.json.autonomy.externalWrites.deliversOnApproval, true);
 });
 
-await test("widening to live is refused before it is earned, and the refusal is a list of things to do", async () => {
-  const attempt = await h.raw("/api/autonomy/settings", {
+await test("widening to live is a recorded choice: no corpus, just the flip and the audit row", async () => {
+  // Phase 34 — there is nothing to earn. The deployment is ready (delegated,
+  // unpinned, autonomy on, destination approved), so the flip succeeds on the
+  // first ask and is recorded as a transition.
+  const flip = await h.raw("/api/autonomy/settings", {
     method: "POST", body: { outboxMode: "live", updated_by: "outbox-live-suite" }
   });
-  assert.equal(attempt.status, 409, JSON.stringify(attempt.json));
-  assert.equal(attempt.json.code, "live_not_earned");
-  assert.equal(attempt.json.changed, false);
-  assert.equal(attempt.json.mode, "shadow", "the truth is returned with the refusal");
-  assert.ok(attempt.json.unmet.includes("evidence_recorded"), JSON.stringify(attempt.json.unmet));
-  assert.match(attempt.json.error, /evidence/i, "the sentence says what is missing");
-  assert.match(attempt.json.error, /rungs\/external_writes\/evidence|Outbox tab/,
-    "and says where to go");
+  assert.equal(flip.status, 200, JSON.stringify(flip.json));
+  assert.equal(flip.json.changed, true);
+  assert.equal(flip.json.mode, "live");
+  assert.equal(flip.json.previousMode, "shadow");
+  assert.match(flip.json.note, /PERFORMED/);
+  assert.equal(flip.json.live.ready, true);
 
-  // No row was written by a refused flip, and nothing was audited: an attempt
-  // that changed nothing must not look like a decision somebody made.
-  assert.equal(await count("autonomy_settings", " WHERE outbox_mode IS NOT NULL"), 0);
-  assert.equal(await count("workspace_audit", " WHERE action=$1", [OUTBOX_MODE_AUDIT_ACTION]), 0);
+  const rows = await h.sql(
+    `SELECT detail FROM workspace_audit WHERE action=$1 ORDER BY ts_ms DESC LIMIT 1`,
+    [OUTBOX_MODE_AUDIT_ACTION]);
+  assert.equal(rows.length, 1, "the flip is a recorded decision");
+  const detail = json(rows[0].detail, {});
+  assert.equal(detail.from, "shadow");
+  assert.equal(detail.to, "live");
+  assert.equal(detail.updatedBy, "outbox-live-suite");
+  assert.ok(!("evidenceSha256" in detail), "no corpus travels with the flip anymore");
+  assert.ok(String(detail.destinationSha256 || "").length === 64,
+    "the destination digest still does");
 
-  const still = await h.raw("/api/autonomy/status");
-  assert.equal(still.json.outboxMode, "shadow");
+  // Back to shadow for the tests that follow; the flip back is also recorded.
+  const back = await h.raw("/api/autonomy/settings", {
+    method: "POST", body: { outboxMode: "shadow", updated_by: "outbox-live-suite" }
+  });
+  assert.equal(back.status, 200);
+  assert.equal(back.json.mode, "shadow");
+  assert.equal(await count("workspace_audit", " WHERE action=$1", [OUTBOX_MODE_AUDIT_ACTION]), 2);
 });
 
 await test("without a delegation the mode cannot be flipped, and the refusal names the variable", async () => {
@@ -514,85 +522,36 @@ await test("one request changes one switch, and an invented mode is refused", as
     "a refusal of the enablement switch says nothing about the mode switch");
 });
 
-await test("a corpus earned against another endpoint does not justify sending to this one", async () => {
-  const { default: db } = await import("../server/db.js");
-  const { requestExternalWrite } = await import("../server/autonomy/externalWrite.js");
-  const agent = await makeAgent();
-  // makeGoal returns the goal ROW; the loop below wants ids.
-  //
-  // The real floor, not a lowered one. SHADOW_GATE is frozen when config.js is
-  // first imported, which in a test file happens before bootHarness can set
-  // COGNOS_AUTONOMY_MIN_SHADOW_SAMPLES — so overriding it here would have
-  // silently changed nothing and the suite would have measured a gate of 25
-  // while asserting a gate of 6. Earning 25 samples across five goals is also
-  // the honest version of the test: it stays inside the default per-goal
-  // ceilings rather than raising them, which would be testing a deployment
-  // nobody runs.
-  const goalIds = [];
-  for (let g = 0; g < 5; g++) goalIds.push((await makeGoal(agent.id, { title: `Corpus goal ${g}` })).id);
+await test("the approval is per-endpoint: granted but unapproved is refused, no corpus involved", async () => {
+  // Phase 34 — there is no corpus to aim. The destination gate is purely the
+  // deployment's approval: a destination the goal was granted but the
+  // deployment never named is refused by the Governor, live or not.
+  const grantedOnly = await judge(ELSEWHERE, { db: fakeDb(null) });
+  assert.equal(grantedOnly.decision, "refuse");
+  assert.ok(rulesOf(grantedOnly).includes("DESTINATION_NOT_APPROVED"),
+    JSON.stringify(grantedOnly.failed));
+  assert.ok(!rulesOf(grantedOnly).includes("EVIDENCE_GATE_UNMET"),
+    "the refusal names the missing approval, not a missing corpus");
 
-  // Every sample is granted in scope but aimed at ELSEWHERE, and every fourth
-  // one is aimed at a destination the goal was never granted, so the corpus
-  // contains both verdicts: a gate that never refuses has not been exercised.
-  let n = 0;
-  for (const goalId of goalIds) {
-    const goalRow = await db.AutonomyGoal.get(goalId);
-    assert.ok(goalRow, `the corpus goal ${goalId} is readable`);
-    for (let k = 0; k < 5; k++) {
-      n++;
-      const url = n % 4 === 0 ? UNGRANTED : ELSEWHERE;
-      const out = await requestExternalWrite({
-        db, goal: goalRow, agentId: agent.id, tickId: `tick_aim_${n}`, skillId: "webhook.post",
-        destination: url,
-        payload: { url, method: "POST", headers: {}, body: BODY(n), secretRef: null, reason: "corpus" },
-        keyPayload: { url, body: BODY(n) }, config: autonomyConfig()
-      });
-      assert.equal(out.ok, url === ELSEWHERE, `sample ${n} -> ${out.error}`);
-      assert.equal(out.released, undefined, "shadow performed nothing");
-    }
-  }
-
-  const measured = await h.raw("/api/autonomy/rungs");
-  const live = measured.json.live;
-  assert.ok(live.corpus.samples >= 25, JSON.stringify(live.corpus));
-  assert.equal(live.corpus.gate.minSamples, 25, "the report quotes the wired gate, not a convenient one");
-  assert.equal(live.corpus.falseReleases, 0, JSON.stringify(measured.json.rungs.find(r => r.rung === "external_writes").measurement.metrics.falseReleases));
-  assert.ok(live.corpus.wouldRelease >= 15, "the corpus contains release verdicts");
-  assert.ok(live.corpus.refused >= 5, "and refusals");
-  assert.equal(live.corpus.aimedAtApproved, 0, "none of it was aimed at the approved endpoint");
-  assert.ok(live.corpus.aimedElsewhere >= 15);
-  assert.ok(live.unmet.includes("corpus_aimed"), JSON.stringify(live.unmet));
-
-  // Recording the measurement is still allowed and still honest: the gate is
-  // satisfied, so the row is justified. It is the FLIP that refuses, because a
-  // corpus about one endpoint is not evidence about another.
-  const recorded = await h.raw("/api/autonomy/rungs/external_writes/evidence", {
-    method: "POST", body: { decided_by: "outbox-live-suite", reason: "corpus aimed elsewhere" }
-  });
-  assert.equal(recorded.status, 201, JSON.stringify(recorded.json));
-  assert.equal(recorded.json.decision, "justified");
-
-  const attempt = await h.raw("/api/autonomy/settings", { method: "POST", body: { outboxMode: "live" } });
-  assert.equal(attempt.status, 409);
-  assert.deepEqual(attempt.json.unmet, ["corpus_aimed"], JSON.stringify(attempt.json.unmet));
-  assert.match(attempt.json.error, /aimed/i);
-  assert.equal(attempt.json.live.corpus.aimedAtApproved, 0);
-  assert.equal(await count("autonomy_settings", " WHERE outbox_mode IS NOT NULL"), 0,
-    "a refused flip still wrote nothing");
+  // And the approved destination is still refused when the goal never granted
+  // it — the two gates are independent, and neither is a corpus.
+  const ungranted = await judge(UNGRANTED, { db: fakeDb(null) });
+  assert.ok(rulesOf(ungranted).includes("DESTINATION_NOT_IN_SCOPE"));
 });
 
-await test("narrowing needs no evidence: the brake is unconditional", async () => {
+await test("narrowing is refused by nothing: the brake is unconditional", async () => {
+  const before = await count("workspace_audit", " WHERE action=$1", [OUTBOX_MODE_AUDIT_ACTION]);
   // Shadow is where the deployment already is, so this is a no-op that must not
   // pretend to be a decision.
   const noop = await h.raw("/api/autonomy/settings", { method: "POST", body: { outboxMode: "shadow" } });
   assert.equal(noop.status, 200, JSON.stringify(noop.json));
   assert.equal(noop.json.changed, false);
   assert.equal(noop.json.mode, "shadow");
-  assert.equal(await count("workspace_audit", " WHERE action=$1", [OUTBOX_MODE_AUDIT_ACTION]), 0,
+  assert.equal(await count("workspace_audit", " WHERE action=$1", [OUTBOX_MODE_AUDIT_ACTION]), before,
     "a flip that changed nothing recorded nothing");
 
   // dry_run reaches further than shadow but sends nothing, so it is not a
-  // delivery widening and is not gated on the corpus.
+  // delivery widening.
   const dry = await h.raw("/api/autonomy/settings", { method: "POST", body: { outboxMode: "dry_run" } });
   assert.equal(dry.status, 200, JSON.stringify(dry.json));
   assert.equal(dry.json.changed, true);
@@ -603,66 +562,47 @@ await test("narrowing needs no evidence: the brake is unconditional", async () =
   const back = await h.raw("/api/autonomy/settings", { method: "POST", body: { outboxMode: "shadow" } });
   assert.equal(back.status, 200);
   assert.equal(back.json.mode, "shadow");
-  assert.equal(await count("workspace_audit", " WHERE action=$1", [OUTBOX_MODE_AUDIT_ACTION]), 2,
+  assert.equal(await count("workspace_audit", " WHERE action=$1", [OUTBOX_MODE_AUDIT_ACTION]), before + 2,
     "both real flips are transitions in the audit trail");
 });
 
-await test("the flip succeeds once the corpus is aimed at the approved destination, and the audit row carries digests", async () => {
-  // Same corpus, repointed: the deployment now approves the endpoint the
-  // evidence was actually earned against. Nothing else changed.
-  const prev = process.env[LIVE_DESTINATION_ENV];
-  process.env[LIVE_DESTINATION_ENV] = ELSEWHERE;
-  try {
-    const rungs = await h.raw("/api/autonomy/rungs");
-    const live = rungs.json.live;
-    assert.equal(live.destination.hostname, "hooks-elsewhere.example.com");
-    assert.ok(live.corpus.aimedAtApproved >= 15, JSON.stringify(live.corpus));
-    assert.equal(live.ready, true, JSON.stringify(live.unmet));
-    assert.deepEqual(live.unmet, []);
-    assert.equal(live.justifiedNow, true);
-    assert.ok(live.evidence, "a justified row is current");
-    assert.equal(live.corpus.gate.minSamples, 25, "the report quotes the gate this deployment configured");
+await test("the flip succeeds when ready, and the audit row carries the destination digest", async () => {
+  // Phase 34 — no corpus to aim. The deployment is delegated, unpinned,
+  // autonomy on, destination approved: the flip succeeds and the audit row
+  // proves which endpoint was approved without carrying the URL.
+  const flip = await h.raw("/api/autonomy/settings", {
+    method: "POST", body: { outboxMode: "live", updated_by: "outbox-live-suite" }
+  });
+  assert.equal(flip.status, 200, JSON.stringify(flip.json));
+  assert.equal(flip.json.changed, true);
+  assert.equal(flip.json.mode, "live");
+  assert.equal(flip.json.previousMode, "shadow");
+  assert.match(flip.json.note, /PERFORMED/);
+  assert.equal(flip.json.live.ready, true);
 
-    const flip = await h.raw("/api/autonomy/settings", {
-      method: "POST", body: { outboxMode: "live", updated_by: "outbox-live-suite" }
-    });
-    assert.equal(flip.status, 200, JSON.stringify(flip.json));
-    assert.equal(flip.json.changed, true);
-    assert.equal(flip.json.mode, "live");
-    assert.equal(flip.json.previousMode, "shadow");
-    assert.match(flip.json.note, /PERFORMED/);
-    assert.equal(flip.json.live.ready, true);
+  const status = await h.raw("/api/autonomy/status");
+  assert.equal(status.json.outboxMode, "live");
+  assert.equal(status.json.outboxModeSource, "ui");
+  assert.equal(status.json.externalWrites.deliversNow, true, "the loop now performs release verdicts");
 
-    const status = await h.raw("/api/autonomy/status");
-    assert.equal(status.json.outboxMode, "live");
-    assert.equal(status.json.outboxModeSource, "ui");
-    assert.equal(status.json.externalWrites.deliversNow, true, "the loop now performs release verdicts");
-
-    // The transition is recorded with the evidence that justified it, and with
-    // the destination DIGESTED: an audit row is readable by anyone who can read
-    // this workspace's history, and it still proves which endpoint was approved.
-    const rows = await h.sql(
-      `SELECT detail FROM workspace_audit WHERE action=$1 ORDER BY ts_ms DESC LIMIT 1`,
-      [OUTBOX_MODE_AUDIT_ACTION]);
-    assert.equal(rows.length, 1);
-    const detail = json(rows[0].detail, {});
-    assert.equal(detail.from, "shadow");
-    assert.equal(detail.to, "live");
-    assert.equal(detail.effective, "live");
-    assert.equal(detail.widening, true);
-    assert.equal(detail.updatedBy, "outbox-live-suite");
-    assert.equal(detail.rungFlag, true);
-    assert.ok(String(detail.evidenceSha256 || "").length === 64, "the evidence digest travels with the flip");
-    assert.ok(String(detail.destinationSha256 || "").length === 64, "and so does the destination's");
-    assert.ok(Number(detail.samples) >= 25);
-    assert.equal(Number(detail.falseReleases), 0);
-    const blob = String(rows[0].detail);
-    assert.ok(!blob.includes(ELSEWHERE), "the audit row does not carry the endpoint URL");
-    assert.ok(!blob.includes("hooks-elsewhere"), "nor its hostname");
-  } finally {
-    if (prev === undefined) delete process.env[LIVE_DESTINATION_ENV];
-    else process.env[LIVE_DESTINATION_ENV] = prev;
-  }
+  // The transition is recorded, and the destination is DIGESTED: an audit row
+  // is readable by anyone who can read this workspace's history, and it still
+  // proves which endpoint was approved.
+  const rows = await h.sql(
+    `SELECT detail FROM workspace_audit WHERE action=$1 ORDER BY ts_ms DESC LIMIT 1`,
+    [OUTBOX_MODE_AUDIT_ACTION]);
+  assert.equal(rows.length, 1);
+  const detail = json(rows[0].detail, {});
+  assert.equal(detail.from, "shadow");
+  assert.equal(detail.to, "live");
+  assert.equal(detail.effective, "live");
+  assert.equal(detail.widening, true);
+  assert.equal(detail.updatedBy, "outbox-live-suite");
+  assert.ok(!("evidenceSha256" in detail), "no corpus travels with the flip anymore");
+  assert.ok(String(detail.destinationSha256 || "").length === 64, "the destination digest does");
+  const blob = String(rows[0].detail);
+  assert.ok(!blob.includes(APPROVED), "the audit row does not carry the endpoint URL");
+  assert.ok(!blob.includes("hooks-approved"), "nor its hostname");
 });
 
 await test("once live, a delivery to the approved destination is performed and one to another is refused", async () => {
@@ -755,21 +695,23 @@ await test("an operator pin holds the mode down and cannot be widened, but can a
   assert.equal(after.json.outboxModeSource, "ui");
 });
 
-await test("nothing in this slice widened a rung, a ceiling, a skill or a budget", async () => {
+await test("nothing in this slice widened a ceiling, a skill or a budget", async () => {
   const status = await h.raw("/api/autonomy/status");
   const cfg = status.json;
   assert.deepEqual(cfg.builtTiers, ["T0", "T1", "T2", "T3", "T4", "T5"], "T5 is built (Phase 22)");
-  assert.equal(cfg.rung.irreversible, false, "and its rung is still off");
-  assert.equal(cfg.rung.inbound, false, "Rung 5 is still Phase 23");
+  assert.deepEqual(cfg.rung, { residents: true, search: false, inbound: false },
+    "the rungs are operator switches (this harness pins residents on), and none of them gates writing");
   assert.equal(cfg.ceilings.maxCostPerDayUsd, 2, "the workspace ceiling did not move");
   assert.equal(cfg.ceilings.maxActiveGoals, 10, "nor did any other ceiling");
   assert.equal(cfg.shadowGate.maxAcceptableFalseReleases, 0, "zero tolerance is still the gate");
   assert.equal(cfg.defaultOff, true, "the resting state is still frozen");
-  assert.ok(!cfg.skills.some(s => s.tier === "T5" && s.enabled), "no T5 skill became reachable");
+  // Phase 34: T5 IS reachable (built and allowed), but a T5 effect still
+  // releases only by a per-effect human approval naming the exact row.
+  assert.ok(cfg.skills.some(s => s.tier === "T5" && s.enabled), "T5 is built and allowed");
 
-  // A T5 effect is BUILT and still refused: the rung is off and no human
-  // approval names it. The live mode this slice earned is irrelevant to T5 —
-  // its release authority is one-by-one human approval, never a corpus.
+  // A T5 effect is BUILT and still refused: no human approval names it. The
+  // live mode is irrelevant to T5 — its release authority is one-by-one human
+  // approval, never a mode.
   const { default: db } = await import("../server/db.js");
   const { stageEffect, decideEffect } = await import("../server/autonomy/outbox.js");
   const agent = await makeAgent();
@@ -791,23 +733,12 @@ await test("nothing in this slice widened a rung, a ceiling, a skill or a budget
   assert.ok(decided.verdict.failed.some(f => f.rule === "T5_NEEDS_HUMAN"),
     JSON.stringify(decided.verdict.failed));
   assert.equal(decided.executed, false);
-
-  // And the route still refuses an approval while the rung is off, and writes
-  // no approval row — the button must not look like it worked.
-  const approve = await h.raw(`/api/autonomy/outbox/${staged.row.id}/decision`, {
-    method: "POST", body: { decision: "approve" }
-  });
-  assert.equal(approve.status, 409);
-  assert.equal(approve.json.killSwitch, "COGNOS_AUTONOMY_IRREVERSIBLE");
-  assert.equal(await count("effect_approvals", " WHERE outbox_id=$1", [staged.row.id]), 0);
 });
 
 await test("T5 releases only by a per-effect human approval, and only once", async () => {
   const { default: db } = await import("../server/db.js");
   const { stageEffect, decideEffect } = await import("../server/autonomy/outbox.js");
   const { auditRelease } = await import("../server/autonomy/evidenceGate.js");
-  const prev = process.env.COGNOS_AUTONOMY_IRREVERSIBLE;
-  process.env.COGNOS_AUTONOMY_IRREVERSIBLE = "true";
   const sink = await startSink();
   try {
     const agent = await makeAgent();
@@ -870,8 +801,6 @@ await test("T5 releases only by a per-effect human approval, and only once", asy
     assert.equal(auditRelease(released, { approvals: new Set([released.id]) }).length, 0,
       "a T5 release with a naming approval is not a false release");
   } finally {
-    if (prev === undefined) delete process.env.COGNOS_AUTONOMY_IRREVERSIBLE;
-    else process.env.COGNOS_AUTONOMY_IRREVERSIBLE = prev;
     await sink.stop();
   }
 });
@@ -879,9 +808,7 @@ await test("T5 releases only by a per-effect human approval, and only once", asy
 await test("the approval route records the human decision and still judges everything else", async () => {
   const { default: db } = await import("../server/db.js");
   const { stageEffect } = await import("../server/autonomy/outbox.js");
-  const prev = process.env.COGNOS_AUTONOMY_IRREVERSIBLE;
-  process.env.COGNOS_AUTONOMY_IRREVERSIBLE = "true";
-  try {
+  {
     const agent = await makeAgent();
     const goal = await makeGoal(agent.id, { title: "T5 route approval goal",
       effects: ["notify", { effect: "post.publish", destinations: [APPROVED] }] });
@@ -904,7 +831,7 @@ await test("the approval route records the human decision and still judges every
     const rules = (approve.json.verdict?.failed || []).map(f => f.rule);
     assert.ok(rules.includes("DESTINATION_NOT_IN_SCOPE"), JSON.stringify(rules));
     assert.ok(!rules.includes("T5_NEEDS_HUMAN"), "the naming approval cleared the human gate");
-    assert.ok(!rules.includes("TIER_NOT_ALLOWED"), "the rung is on, so the tier is allowed");
+    assert.ok(!rules.includes("TIER_NOT_ALLOWED"), "the tier is built, so it is allowed");
 
     // The route recorded the approval: one row, naming this exact effect, with
     // the scope it was recorded under.
@@ -917,9 +844,6 @@ await test("the approval route records the human decision and still judges every
     // gate, not past the Governor.
     const row = await db.AutonomyOutbox.get(staged.row.id);
     assert.equal(row.status, "refused");
-  } finally {
-    if (prev === undefined) delete process.env.COGNOS_AUTONOMY_IRREVERSIBLE;
-    else process.env.COGNOS_AUTONOMY_IRREVERSIBLE = prev;
   }
 });
 
@@ -929,9 +853,9 @@ await test("the readiness report is readable before anything is flipped, and rea
   const report = await describeLiveReadiness({ db, workspaceId: ws.id, config: autonomyConfig() });
   assert.equal(report.ok, true);
   assert.equal(report.tier, "T4");
-  assert.equal(report.rung, "external_writes");
-  assert.equal(report.conditions.length, 8, "every condition is reported, not only the failures");
-  assert.ok(report.corpus.samples >= 25, JSON.stringify(report.corpus));
+  assert.ok(!("rung" in report), "no rung to climb — the flip is a choice");
+  assert.equal(report.conditions.length, 4, "every condition is reported, not only the failures");
+  assert.ok(!("corpus" in report), "no corpus is measured anymore");
   for (const condition of report.conditions) {
     assert.ok(condition.id && condition.label, JSON.stringify(condition));
     assert.equal(typeof condition.met, "boolean");
@@ -939,10 +863,10 @@ await test("the readiness report is readable before anything is flipped, and rea
     if (condition.met) assert.equal(condition.sentence, "");
     else assert.ok(condition.sentence.length > 20, `${condition.id} explains itself`);
   }
-  assert.equal(report.ready, true, "this deployment has earned it");
+  assert.equal(report.ready, true, "this deployment is ready: delegated, unpinned, on, approved");
   assert.equal(report.refusal, null);
   assert.equal(report.destination.env, LIVE_DESTINATION_ENV);
-  // Both counts are reported so a surface can say "8 of 8" without counting the
+  // Both counts are reported so a surface can say "4 of 4" without counting the
   // array it was handed, and so `ready` is a summary rather than the only one.
   assert.equal(report.total, report.conditions.length);
   assert.equal(report.met, report.total - report.unmet.length);
@@ -962,10 +886,10 @@ await test("the readiness report is readable before anything is flipped, and rea
   assert.equal(Array.isArray(settings.json.outboxFlips), true);
   assert.ok(settings.json.outboxFlips.length >= 1);
   const flip = settings.json.outboxFlips.find(f => f.to === "live");
-  assert.ok(flip, "the earned widening is in the mode history");
+  assert.ok(flip, "the recorded widening is in the mode history");
   assert.equal(flip.widening, true);
   assert.equal(flip.from, "shadow");
-  assert.ok(String(flip.evidenceSha256).length === 64);
+  assert.ok(!("evidenceSha256" in flip), "no corpus travels with the flip anymore");
   assert.ok(String(flip.destinationSha256).length === 64);
   assert.ok(!JSON.stringify(settings.json.outboxFlips).includes("hooks-"),
     "and the history carries digests rather than endpoints");

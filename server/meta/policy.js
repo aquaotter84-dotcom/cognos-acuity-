@@ -199,11 +199,10 @@ function checkAction(proposal) {
       break;
 
     case "set_autonomy_rung": {
-      violations.push(violation("phase19.autonomy_default_off", "a rung is raised by an operator's kill switch plus a recorded evidence row, never by a runtime adaptation. Building a rung is not enabling one, and enabling one is not earning one"));
+      violations.push(violation("phase19.autonomy_default_off", "a rung is raised by an operator's pin or delegated switch, never by a runtime adaptation"));
       const target = String(params.rung ?? proposal.target ?? "");
-      if (/^(4|5|6|external|irreversible|inbound)/i.test(target)) {
-        violations.push(violation("pin.external_write_earned", `rung '${target}' touches the world: it needs a shadow corpus with zero false releases recorded as an evidence row before any live delivery`));
-        violations.push(violation("pin.live_mode_earned", `widening the outbox to live for '${target}' is an operator decision recorded as an audit transition, refused unless the evidence row still satisfies the gate as configured now and the corpus was aimed at the approved destination`));
+      if (/^(inbound)/i.test(target)) {
+        violations.push(violation("pin.live_mode_earned", `widening the outbox to live for '${target}' is an operator decision recorded as an audit transition`));
       }
       break;
     }

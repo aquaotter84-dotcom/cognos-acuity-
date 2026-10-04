@@ -295,21 +295,23 @@ export const OPERATIONAL_LAWS = Object.freeze([
 
   // --- Phase 21 — the first external write ----------------------------------
   // Rung 4 is where an autonomous loop stops being a reader. These three laws
-  // are the reason that transition does not have to be a change of product: the
-  // write is earned rather than enabled, its destination is granted rather than
-  // chosen, and its record is metadata rather than content.
+  // are the reason that transition does not have to be a change of product.
+  // Phase 34 replaced "earned, not enabled" with "asked, not earned": the
+  // capability is available, and the trust is in the asking — the destination
+  // is granted rather than chosen, every send is judged per effect, and
+  // Jeremy's approval gates the consequential ones.
   Object.freeze({
     id: "pin.external_write_earned",
     layer: "operational",
-    name: "An external write is earned, not enabled",
-    statement: "A T4 external write is built, switched off, and shadow-judged until a recorded evidence row shows the Action Governor's corpus was neither too loose nor too tight. A live release requires the rung flag, an unexpired authorization whose scope grants the destination, and that evidence row; the recorded metrics must still satisfy the gate as it is configured now. Zero false releases is the tolerance, because a count can be rationalised and a single false release cannot.",
+    name: "An external write is asked, not earned",
+    statement: "A T4 external write is built and available — no corpus to earn, no rung to climb. A live release requires an unexpired authorization whose scope grants the destination, the deployment's one approved live endpoint, the Action Governor's per-effect verdict, and Jeremy's approval in the outbox. Asking is the trust model; the approval is what opens the send, one effect at a time, never by class.",
     forbids: [
-      "a live external write with no recorded shadow corpus",
-      "grandfathering an old justification after the gate is raised",
+      "a live external write with no granted destination",
+      "a live external write to other than the one approved endpoint",
       "counting a shadow release as a delivery",
-      "an external write enabled by configuration alone"
+      "a live external write with no human approval in the outbox"
     ],
-    source: "Phase 21; server/autonomy/evidenceGate.js + server/autonomy/actionGovernor.js",
+    source: "Phase 21, narrowed in Phase 34; server/autonomy/actionGovernor.js + server/autonomy/outbox.js",
     runtime_modifiable: false
   }),
   Object.freeze({
@@ -366,15 +368,14 @@ export const OPERATIONAL_LAWS = Object.freeze([
     id: "pin.live_mode_earned",
     layer: "operational",
     name: "Going live is a recorded decision, never a default",
-    statement: "The outbox mode rests at shadow, and absence of a stored mode is shadow. Widening it to live is refused unless a recorded evidence row for the rung currently satisfies the shadow gate as the gate is configured now, the rung's own kill switch is on, autonomy is running, exactly one destination is approved, and the earned corpus was aimed at that destination. Narrowing to shadow or dry_run is refused by nothing: a brake an operator has to earn is not a brake. An operator's environment value may hold the mode down and may never be widened from a request, though it may always be narrowed. Every flip is recorded as an append-only transition carrying the digest of the evidence that justified it.",
+    statement: "The outbox mode rests at shadow, and absence of a stored mode is shadow. Widening it to live is a recorded operator decision: autonomy must be running, exactly one destination must be approved, and the flip must be handed to the API (delegation) rather than forced past an operator's environment pin. Phase 34 removed the earned-corpus requirement — going live needs no practice runs — but every send is still judged per effect by the Action Governor and still needs Jeremy's approval. Narrowing to shadow or dry_run is refused by nothing: a brake is not a brake if it takes effort to reach. Every flip is recorded as an append-only transition.",
     forbids: [
-      "a live outbox mode nobody earned",
-      "grandfathering an evidence row when the gate is raised",
+      "a live outbox mode nobody chose",
       "refusing or conditioning a narrowing",
       "widening past an operator's environment pin",
       "a flip that leaves no audit row"
     ],
-    source: "Phase 22 (autonomy row); server/autonomy/liveOutbox.js + server/autonomy/settings.js",
+    source: "Phase 22 (autonomy row); narrowed in Phase 34 — server/autonomy/liveOutbox.js + server/autonomy/settings.js",
     runtime_modifiable: false
   }),
 

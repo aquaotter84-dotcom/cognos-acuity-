@@ -27,16 +27,16 @@ const {
   applyAutonomyDelegationFiles,
 } = await import("../server/delegation-files.mjs");
 
-// The allow-list is exactly the six switches, each with a distinct env var
-// and a distinct device file.
-ok(AUTONOMY_DELEGATION_FILES.length === 6, "exactly six delegation switches");
+// The allow-list is exactly the five switches, each with a distinct env var
+// and a distinct device file. (Phase 34: bypass_earning is gone with earning.)
+ok(AUTONOMY_DELEGATION_FILES.length === 5, "exactly five delegation switches");
 const names = AUTONOMY_DELEGATION_FILES.map((s) => s.name).sort();
-ok(JSON.stringify(names) === JSON.stringify(["auto_authorize", "autonomy", "bypass_earning", "council", "outbox", "rungs"]),
-  "switch names are the six expected");
+ok(JSON.stringify(names) === JSON.stringify(["auto_authorize", "autonomy", "council", "outbox", "rungs"]),
+  "switch names are the five expected");
 ok(AUTONOMY_DELEGATION_FILES.every((s) => s.env.startsWith("COGNOS_") && s.file.endsWith(".txt")),
   "every switch maps a COGNOS_ env var to a .txt device file");
-ok(new Set(AUTONOMY_DELEGATION_FILES.map((s) => s.env)).size === 6, "env vars are distinct");
-ok(new Set(AUTONOMY_DELEGATION_FILES.map((s) => s.file)).size === 6, "files are distinct");
+ok(new Set(AUTONOMY_DELEGATION_FILES.map((s) => s.env)).size === 5, "env vars are distinct");
+ok(new Set(AUTONOMY_DELEGATION_FILES.map((s) => s.file)).size === 5, "files are distinct");
 
 // Allow-list: the six pass, everything else is refused.
 for (const name of names) ok(isDelegationName(name), `accepts "${name}"`);

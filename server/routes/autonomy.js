@@ -27,17 +27,17 @@
 import { autonomyConfig, describeLiveDestination } from "../autonomy/config.js";
 import {
   describeSettings, ensureSettingsLoaded, refreshSettings, setSettingsEnabled,
-  setAutoAuthorize, setBypassEarning, setRung, isRungKey, RUNG_KEYS,
+  setAutoAuthorize, setRung, isRungKey, RUNG_KEYS,
   listSettingFlips, AUTONOMY_PIN_ENV, AUTONOMY_UI_CONTROL_ENV
 } from "../autonomy/settings.js";
 import { designTurn, clampDraft, emptyDraft, DESIGNER_LIMITS, firstGoalScope, clampProposedUrls } from "../autonomy/designer.js";
 import { scopeHashes, authorizationCovers, isTightening } from "../autonomy/authorize.js";
 import { validateDestinationGrant } from "../autonomy/scopeUrl.js";
 import { decideEffect, revertEffect, refuseEffect, shadowCorpus } from "../autonomy/outbox.js";
-import { RUNGS, RUNG_IDS, recordRungEvidence, rungEvidenceStatus } from "../autonomy/evidenceGate.js";
 import { describeLiveReadiness, setOutboxMode, listOutboxModeFlips } from "../autonomy/liveOutbox.js";
 import { decidePromotion } from "../autonomy/promote.js";
 import { decideCleanupProposal, runCleanupAudit, cleanupDue } from "../autonomy/cleanup.js";
+import { buildFeed, residentChatTurn } from "../autonomy/studio.js";
 import { describeSkills } from "../skills/index.js";
 import { publicNotice, NOTICE_TEMPLATE_IDS } from "../autonomy/notice.js";
 import { runTick } from "../autonomy/tick.js";
@@ -171,13 +171,12 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     else await ensureSettingsLoaded(db);
     const cfg = config();
     const ws = await db.Workspace.ensureDefault();
-    const [agents, active, parked, awaiting, openPromos, evidenceRows] = await Promise.all([
+    const [agents, active, parked, awaiting, openPromos] = await Promise.all([
       db.AutonomyAgent.list(ws.id, 100),
       db.query(`SELECT COUNT(*)::int AS n FROM autonomy_goals WHERE workspace_id=$1 AND status='active'`, [ws.id]),
       db.query(`SELECT COUNT(*)::int AS n FROM autonomy_goals WHERE workspace_id=$1 AND status='parked'`, [ws.id]),
       db.query(`SELECT COUNT(*)::int AS n FROM autonomy_outbox WHERE workspace_id=$1 AND status='staged'`, [ws.id]),
-      db.query(`SELECT COUNT(*)::int AS n FROM note_promotions WHERE workspace_id=$1 AND status='requested'`, [ws.id]),
-      db.RungEvidence.list(ws.id, { limit: 20 }).catch(() => [])
+      db.query(`SELECT COUNT(*)::int AS n FROM note_promotions WHERE workspace_id=$1 AND status='requested'`, [ws.id])
     ]);
     res.json({
       enabled: cfg.enabled,
@@ -219,43 +218,28 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       ceilings: cfg.ceiling,
       shadowGate: cfg.shadow,
       tick: cfg.tick,
-      // Phase 21 — what an external write is allowed to look like here, and
-      // whether this deployment has earned one. Reported as separate facts:
-      // built, rung on, and live are three different questions.
+      // Phase 21 — what an external write is allowed to look like here.
+      // Phase 34: no earned corpus, no rung. T4 is allowed whenever built;
+      // the gates are the approved destination, the Governor's per-effect
+      // verdict, and Jeremy's approval.
       webhook: cfg.webhook,
       quietHours: cfg.quietHours,
       externalWrites: {
         built: cfg.builtTiers.includes("T4"),
-        rungEnabled: cfg.rung.externalWrites === true,
-        killSwitch: "COGNOS_AUTONOMY_EXTERNAL_WRITES",
-        deliversNow: cfg.rung.externalWrites === true && cfg.outboxMode === "live",
+        deliversNow: cfg.outboxMode === "live",
         // An operator's Approve judges the effect in live mode whatever the
         // loop's mode is, so "the loop delivers nothing" is not the same claim
         // as "nothing can leave". Both facts, separately.
-        deliversOnApproval: cfg.builtTiers.includes("T4") && cfg.rung.externalWrites === true,
-        requiresEvidenceRow: true,
+        deliversOnApproval: cfg.builtTiers.includes("T4"),
         requiresApprovedDestination: true,
         approvedDestinationConfigured: cfg.liveDestination?.configured === true,
-        approvedDestinationMisconfigured: cfg.liveDestination?.misconfigured === true,
-        evidence: (evidenceRows || [])
-          .filter(row => row.rung === RUNGS.external_writes.rung)
-          .slice(0, 5)
-          .map(row => ({
-            id: row.id, decision: row.decision, tier: row.tier,
-            decided_ms: Number(row.decided_ms), decided_by: row.decided_by,
-            reason: row.reason, metrics_sha256: row.metrics_sha256,
-            samples: parseJson(row.metrics, {}).samples ?? null,
-            falseReleases: parseJson(row.metrics, {}).falseReleaseCount ?? null
-          }))
+        approvedDestinationMisconfigured: cfg.liveDestination?.misconfigured === true
       },
-      // Phase 22 (autonomy row, second slice) — T5. Built, default-off, and
-      // released only by a per-effect human approval. Reported separately from
-      // `externalWrites` because the two tiers have different release
-      // authorities: T4 is corpus-earned, T5 is approved one effect at a time.
+      // Phase 22 (autonomy row, second slice) — T5. Built, and released only
+      // by a per-effect human approval naming the exact row, one at a time,
+      // never by class. (Phase 34: the irreversible rung is gone with earning.)
       irreversible: {
         built: cfg.builtTiers.includes("T5"),
-        rungEnabled: cfg.rung.irreversible === true,
-        killSwitch: "COGNOS_AUTONOMY_IRREVERSIBLE",
         requiresPerEffectHumanApproval: true,
         classAuthorized: false,
         adapters: cfg.builtTiers.includes("T5") ? ["post.publish"] : []
@@ -328,19 +312,18 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
      * Phase 26 adds a third switch to the same surface — auto-authorize — with
      * its own guard, so the same one-request-one-switch rule now counts three.
      *
-     * Phase 29 adds a fifth — one rung — sent as `rung: { name, enabled }`.
-     * It is one switch even though it names one of five rungs, because the
+     * Phase 29 adds a fourth — one rung — sent as `rung: { name, enabled }`.
+     * It is one switch even though it names one of three rungs, because the
      * request still changes exactly one value on one row.
      */
     const rungBody = req.body?.rung;
     const switchCount = [req.body?.enabled !== undefined,
       req.body?.outboxMode !== undefined && req.body?.outboxMode !== null,
       req.body?.autoAuthorize !== undefined,
-      req.body?.bypassEarning !== undefined,
       rungBody !== undefined && rungBody !== null].filter(Boolean).length;
     if (switchCount > 1) {
       return res.status(400).json({
-        error: "Send exactly one switch per request: enabled, outboxMode, autoAuthorize, bypassEarning, or rung. Each has its own guard.",
+        error: "Send exactly one switch per request: enabled, outboxMode, autoAuthorize, or rung. Each has its own guard.",
         code: "one_switch_per_request"
       });
     }
@@ -368,8 +351,7 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       if (outcome.changed) {
         logger.info("outbox mode flipped", {
           to: outcome.mode, from: outcome.previousMode,
-          widening: outcome.requested === "live",
-          evidence: outcome.readiness?.evidence?.metrics_sha256?.slice(0, 12) || null
+          widening: outcome.requested === "live"
         });
       }
       return res.json({
@@ -425,58 +407,17 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     }
 
     /**
-     * Phase 28 — THE EARNED-CORPUS BYPASS FLIP. When on, a live T4 release no
-     * longer has to earn its way past the shadow corpus; an operator has
-     * vouched for the destination instead. It waives the CORPUS and nothing
-     * else — the rung flag, the one approved destination, autonomy being on,
-     * quiet hours and the per-effect Governor all still bind, and T5 still
-     * releases only by a per-effect human approval. Its guard is its own
-     * delegation; none of the other three delegations implies it.
-     */
-    if (req.body?.bypassEarning !== undefined) {
-      const requestedBypass = req.body.bypassEarning;
-      if (typeof requestedBypass !== "boolean") {
-        return res.status(400).json({ error: "bypassEarning must be true or false" });
-      }
-      const outcome = await setBypassEarning(db, {
-        enabled: requestedBypass,
-        updatedBy: safe(req.body?.updated_by, 60) || "ui"
-      });
-      if (!outcome.ok) {
-        return res.status(409).json({
-          error: outcome.refusal.message,
-          code: outcome.refusal.code,
-          settings: outcome.settings
-        });
-      }
-      logger.info("earned-corpus bypass flipped from the UI", {
-        to: requestedBypass, from: outcome.previous?.bypassEarning === true
-      });
-      res.json({
-        settings: outcome.settings,
-        bypassEarning: outcome.settings.bypassEarning,
-        changed: outcome.previous?.bypassEarning === true !== requestedBypass,
-        atMs: outcome.atMs,
-        note: outcome.settings.bypassEarning
-          ? "On. A live release no longer waits for a shadow corpus — you have vouched for the approved destination. The rung, the destination, the Governor and every T5 approval still apply."
-          : "Off. A live release has to earn its way past the shadow corpus again."
-      });
-      return;
-    }
-
-    /**
      * Phase 29 — THE RUNG FLIP. `rung: { name, enabled }` changes one of the
-     * five sign-offs that decide which tiers EXIST here (residents, search,
-     * externalWrites, irreversible, inbound). It is the same power the operator
-     * used to exercise with a Railway variable and a restart.
+     * three capability switches (residents, search, inbound). It is the same
+     * power the operator used to exercise with a Railway variable and a
+     * restart. (Phase 34 removed the writing rungs with the earned requirement.)
      *
-     * What it does not do: open a live release on its own. The rung is
-     * necessary and not sufficient — the shadow corpus, the one approved
+     * What it does not do: open a live release on its own. The one approved
      * destination, the Governor's per-effect verdicts and every T5 approval all
      * still bind, and none of them is writable from here.
      *
      * Its guard is its own delegation (COGNOS_AUTONOMY_RUNGS_UI_CONTROL), which
-     * none of the other four delegations implies. A rung the operator pinned in
+     * none of the other delegations implies. A rung the operator pinned in
      * the environment is refused with the variable's name rather than ignored.
      */
     if (rungBody !== undefined && rungBody !== null) {
@@ -993,6 +934,50 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     res.json({ versioned: false, agent: updated });
   }));
 
+  // --- Phase 34 (Studio): the unified activity feed --------------------------
+  /**
+   * ONE running story: the newest goal events, outbox events, and notices,
+   * merged by time, each rendered as a plain-language line. Three APIs today;
+   * the studio shows one. Read-only — no writes, no side effects.
+   */
+  app.get("/api/autonomy/feed", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const items = await buildFeed(db, ws.id, { limit: req.query.limit });
+    res.json({ items, count: items.length });
+  }));
+
+  // --- Phase 34 (Studio): per-resident chat ----------------------------------
+  /**
+   * One conversational turn with a resident, over its live state. Stateless:
+   * the client holds the transcript and sends it each turn, with an optional
+   * goalId to scope the conversation to one goal.
+   *
+   * A clear preference or lifecycle request ("skip the mornings", "practice
+   * in the background", "go ahead") is applied deterministically through the
+   * same engine functions the settings routes call — the model never flips
+   * anything. Everything else is conversation about the resident's work.
+   * This route writes nothing except the preference/lifecycle changes it
+   * names in actionsTaken; it never approves effects or promotions.
+   */
+  app.post("/api/autonomy/agents/:id/chat", wrap(async (req, res) => {
+    const outcome = await residentChatTurn({
+      db,
+      config: config(),
+      residentId: req.params.id,
+      goalId: typeof req.body?.goalId === "string" ? req.body.goalId : null,
+      messages: req.body?.messages,
+      logger,
+    });
+
+    if (!outcome.ok) {
+      const status = outcome.code === "empty_conversation" ? 400
+        : outcome.code === "not_found" || outcome.code === "goal_not_found" ? 404
+        : 502;
+      return res.status(status).json({ error: outcome.message, code: outcome.code });
+    }
+    res.json(outcome);
+  }));
+
   // --- Goals ----------------------------------------------------------------
   app.get("/api/autonomy/goals", wrap(async (req, res) => {
     const ws = await db.Workspace.ensureDefault();
@@ -1206,66 +1191,30 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     res.json({ effects: rows, corpus });
   }));
 
-  // --- Rungs (Phase 21): what is built, what is switched on, and what has been
-  // EARNED. Three different questions, so three different fields. The evidence
-  // measurement is the expensive one (it reads the corpus), which is why the
-  // status route reports only the recorded rows and this route re-measures.
+  // --- Rungs (Phase 29; narrowed in Phase 34): the capability switches.
+  // Three operator switches that were never earned (residents, search,
+  // inbound). The writing rungs are gone with the earned requirement — T4/T5
+  // are allowed whenever built, gated per effect by the Governor and approval.
   app.get("/api/autonomy/rungs", wrap(async (req, res) => {
     const cfg = config();
     const ws = await db.Workspace.ensureDefault();
-    const rungs = [];
-    for (const rung of RUNG_IDS) {
-      rungs.push(await rungEvidenceStatus({ db, workspaceId: ws.id, rung, config: cfg }));
-    }
-    // Phase 22 (autonomy row) — the fourth question this surface has to answer.
-    // Built, switched on and earned are three facts about the rung; whether a
-    // flip to LIVE would be accepted right now is a fourth, and it is the one an
-    // operator needs before clicking rather than after a refused delivery.
     const live = await describeLiveReadiness({ db, workspaceId: ws.id, config: cfg });
     res.json({
-      rungs,
+      rungs: (RUNG_KEYS || []).map(key => ({
+        key,
+        on: cfg.settings?.rungs?.[key] === true,
+        pinned: cfg.settings?.rungPinned?.[key] === true,
+        canSet: cfg.settings?.canSetRungs === true && !cfg.settings?.rungRefusals?.[key],
+        refusal: cfg.settings?.rungRefusals?.[key]?.message || null,
+      })),
       outboxMode: cfg.outboxMode,
       outboxModeSource: cfg.outboxModeSource,
       canSetOutboxMode: cfg.settings?.canSetOutboxMode === true,
       outboxRefusal: cfg.settings?.outboxRefusal || null,
-      gate: cfg.shadow,
       enabled: cfg.enabled,
       liveDestination: live.destination,
       live,
       note: live.note
-    });
-  }));
-
-  /**
-   * Record the shadow corpus as an evidence row. Append-only: re-measuring
-   * writes a new row, so "what did we know when we turned this on" stays
-   * answerable. A measurement that does not satisfy the gate is recorded too,
-   * as `insufficient` — a failed gate with no record is a gate nobody can
-   * prove was ever checked.
-   */
-  app.post("/api/autonomy/rungs/:rung/evidence", wrap(async (req, res) => {
-    if (config().enabled !== true) {
-      return res.status(409).json({ error: `${frozenError()} There is also no corpus to measure.`, code: "autonomy_disabled" });
-    }
-    const rung = String(req.params.rung || "").trim();
-    if (!RUNG_IDS.includes(rung)) {
-      return res.status(404).json({ error: `Unknown rung. Known rungs: ${RUNG_IDS.join(", ")}` });
-    }
-    const ws = await db.Workspace.ensureDefault();
-    const out = await recordRungEvidence({
-      db, workspaceId: ws.id, rung, config: config(),
-      decidedBy: safe(req.body?.decided_by, 60) || "operator",
-      reason: safe(req.body?.reason, 300) || null
-    });
-    if (!out.ok) return res.status(400).json({ error: out.error });
-    res.status(201).json({
-      rung: out.rung, tier: out.tier, decision: out.decision,
-      satisfied: out.satisfied, reasons: out.reasons,
-      gate: out.gate, metrics: out.metrics, metricsSha256: out.metricsSha256,
-      evidence: out.row,
-      note: out.decision === "justified"
-        ? "Recorded. A live release at this tier now passes the evidence gate — the rung flag and the Governor's per-effect verdicts still apply."
-        : "Recorded as insufficient. Nothing is enabled by this row; it is the history of having asked."
     });
   }));
 
@@ -1299,28 +1248,10 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     const goal = effect.goal_id ? await db.AutonomyGoal.get(effect.goal_id) : null;
     if (!goal) return res.status(409).json({ error: "This effect has no goal" });
 
-    const cfg = config();
-    // Approving an external write in a deployment that has not switched the
-    // rung on would be a button that does nothing but look like it worked. Say
-    // so instead, and leave the row staged and judged.
-    if (effect.tier === "T4" && cfg.rung.externalWrites !== true) {
-      return res.status(409).json({
-        error: "Rung 4 (external writes) is off. Set COGNOS_AUTONOMY_EXTERNAL_WRITES=true to make an approval mean anything; the effect stays staged and judged in shadow.",
-        tier: effect.tier,
-        killSwitch: "COGNOS_AUTONOMY_EXTERNAL_WRITES"
-      });
-    }
-    // T5 is the one tier where an approval is not optional: an irreversible
-    // effect has no class authorization, so the rung switch is necessary and
-    // never sufficient. Approving while the rung is off would be a button that
-    // looks like it worked; say so instead, and leave the row staged and judged.
-    if (effect.tier === "T5" && cfg.rung.irreversible !== true) {
-      return res.status(409).json({
-        error: "Rung 6 (irreversible acts) is off. Set COGNOS_AUTONOMY_IRREVERSIBLE=true to make an approval mean anything; the effect stays staged and judged in shadow, and even then it releases only by a per-effect human approval naming this exact row.",
-        tier: effect.tier,
-        killSwitch: "COGNOS_AUTONOMY_IRREVERSIBLE"
-      });
-    }
+    // Phase 34 — the rung checks are gone with the rungs. Approving is the
+    // human decision itself; there is no flag to consult first. What the
+    // approval still cannot do is bypass the Governor: the decision below
+    // judges the effect again, and a refusal there is still a refusal.
 
     const authorization = await db.GoalAuthorization.current(goal.id, Date.now());
     if (!authorization) return res.status(409).json({ error: "The goal has no unexpired authorization" });
@@ -1351,7 +1282,7 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     }
 
     const out = await decideEffect({
-      db, effectId: effect.id, goal, authorization, config: cfg, mode: "live"
+      db, effectId: effect.id, goal, authorization, config: config(), mode: "live"
     });
     // An already-judged row replays its verdict instead of acting again. For a
     // DELIVERED effect that is the right answer — the receipt is idempotent, and
@@ -1363,7 +1294,7 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       return res.status(409).json({
         error: `This effect was already judged '${out.row.status}' and this approval delivered nothing. `
           + (out.row.status === "would_release"
-            ? "It was judged in shadow or dry-run mode, where a release verdict is recorded and not performed. For an approval to send, widen the outbox to live — earn it with a recorded evidence row and an approved destination, then flip it on the Outbox tab (or set COGNOS_AUTONOMY_OUTBOX_MODE=live and restart) — or refuse/revert this row."
+            ? "It was judged in shadow or dry-run mode, where a release verdict is recorded and not performed. For an approval to send, widen the outbox to live — then flip it on the Outbox tab (or set COGNOS_AUTONOMY_OUTBOX_MODE=live and restart) — or refuse/revert this row."
             : "A terminal row is not re-decidable: refuse or revert it, or let the loop stage a new effect."),
         replayed: true,
         row: out.row,
