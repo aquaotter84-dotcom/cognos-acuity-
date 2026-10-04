@@ -362,10 +362,14 @@ export function createAutonomyStore(run) {
      * them to Jeremy's review queue, so nothing of his vanishes silently.
      * Goal events remain as the audit trail (they reference the goal by id
      * but are never deleted).
+     * Children first: goal_steps and goal_subagents are ON DELETE RESTRICT,
+     * so the goal row cannot go before they do.
      */
     async remove(id) {
       const goal = await AutonomyGoal.get(id);
       if (!goal) return null;
+      await run(`DELETE FROM goal_subagents WHERE goal_id = $1`, [id]);
+      await run(`DELETE FROM goal_steps WHERE goal_id = $1`, [id]);
       await run(`DELETE FROM autonomy_goals WHERE id = $1`, [id]);
       return goal;
     }

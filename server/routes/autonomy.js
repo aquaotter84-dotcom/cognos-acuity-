@@ -1259,7 +1259,12 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     if (!goal || goal.workspace_id !== ws.id) {
       return res.status(404).json({ error: "Goal not found in this workspace" });
     }
-    await db.AutonomyGoal.remove(goal.id);
+    // One transaction: the goal, its steps and its subagents go together or
+    // not at all. (Children are ON DELETE RESTRICT, so remove() clears them
+    // first; without the transaction a crash mid-delete could strand them.)
+    await db.withTransaction(async (store) => {
+      await store.AutonomyGoal.remove(goal.id);
+    });
     res.json({ deleted: true, id: goal.id, title: goal.title });
   }));
 
