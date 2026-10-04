@@ -220,7 +220,7 @@ export default function Sidebar({ onNavigate }) {
 
       <div className="p-2 border-t border-border space-y-0.5">
         {navLink('/projects', Folder, 'Projects', 'text-accent')}
-        {navLink('/autonomy', Bot, 'Autonomy', 'text-accent')}
+        {navLink('/autonomy', Bot, 'Studio', 'text-accent')}
         {navLink('/memory', Brain, 'Memory', 'text-accent')}
         {navLink('/activity', ActivityIcon, 'Activity')}
         {navLink('/system', Network, 'System')}

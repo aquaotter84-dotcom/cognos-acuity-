@@ -321,6 +321,21 @@ export function createAutonomyStore(run) {
          WHERE id = $1 RETURNING *`, [id, json(next, {})]
       );
       return updated[0] || null;
+    },
+
+    /**
+     * Hard delete, user-initiated from the Studio UI with confirmation.
+     * The goal's notes stay behind as orphaned rows — the cleanup agent's
+     * daily audit finds them (goal_id not in autonomy_goals) and proposes
+     * them to Jeremy's review queue, so nothing of his vanishes silently.
+     * Goal events remain as the audit trail (they reference the goal by id
+     * but are never deleted).
+     */
+    async remove(id) {
+      const goal = await AutonomyGoal.get(id);
+      if (!goal) return null;
+      await run(`DELETE FROM autonomy_goals WHERE id = $1`, [id]);
+      return goal;
     }
   };
 

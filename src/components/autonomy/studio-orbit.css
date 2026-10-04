@@ -1,0 +1,114 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=Plus+Jakarta+Sans:wght@700;800&display=swap');
+
+/* ---------------------------------------------------------------------------
+ * The Studio is its own room.
+ *
+ * Orbit's visual language — light, warm, friendly — scoped to the Studio tab.
+ * No Orbit code is imported; this is the look rebuilt here on COGNOS's own
+ * components and CSS variables. The rest of the app keeps its own theme.
+ * ------------------------------------------------------------------------- */
+
+.studio-orbit {
+  --background: 80 14% 97%;
+  --foreground: 210 24% 16%;
+  --card: 0 0% 100%;
+  --card-foreground: 210 24% 16%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 210 24% 16%;
+  --primary: 110 32% 30%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 84 45% 93%;
+  --secondary-foreground: 210 24% 16%;
+  --muted: 110 10% 93%;
+  --muted-foreground: 200 7% 52%;
+  --accent: 84 72% 76%;
+  --accent-foreground: 210 24% 16%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 110 10% 89%;
+  --input: 110 10% 89%;
+  --ring: 110 32% 42%;
+  --font-heading: 'Plus Jakarta Sans', 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-body: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+
+  color-scheme: light;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--font-body);
+}
+
+.studio-orbit h1,
+.studio-orbit h2,
+.studio-orbit h3 {
+  font-family: var(--font-heading);
+  letter-spacing: -0.03em;
+}
+
+/* Orbit's eyebrow labels: tiny, loud, sage. */
+.studio-orbit .orbit-eyebrow {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: #92a093;
+}
+
+/* Orbit's friendly page heading. */
+.studio-orbit .orbit-page-title {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: #202b31;
+}
+.studio-orbit .orbit-page-sub {
+  color: #8a9598;
+  line-height: 1.5;
+}
+
+/* Orbit-style agent cards: white, soft border, generous radius. */
+.studio-orbit .orbit-agent-card {
+  background: #fff;
+  border: 1px solid #e8eeea;
+  border-radius: 16px;
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+.studio-orbit .orbit-agent-card:hover {
+  border-color: #dce8d8;
+  box-shadow: 0 13px 33px rgba(34, 49, 40, 0.07);
+}
+.studio-orbit .orbit-agent-card .orbit-agent-name {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  color: #26313a;
+}
+.studio-orbit .orbit-agent-card .orbit-agent-role {
+  color: #9aa5a4;
+}
+
+/* Orbit's dark button: deep green, white text, friendly radius. */
+.studio-orbit .orbit-btn-dark {
+  background: #192337;
+  color: #fff;
+  border-radius: 11px;
+  font-weight: 700;
+}
+.studio-orbit .orbit-btn-dark:hover {
+  background: #232f47;
+}
+
+/* Orbit's lime pill for the good-news states. */
+.studio-orbit .orbit-pill-lime {
+  background: #ebf5e1;
+  color: #557643;
+}
+
+/* Section headers inside the room read like Orbit's section headings. */
+.studio-orbit section > header h3 {
+  font-family: var(--font-heading);
+  font-weight: 800;
+}
+
+/* Keep the drawer's chat comfortable in the light room. */
+.studio-orbit [role="dialog"] {
+  color-scheme: light;
+}

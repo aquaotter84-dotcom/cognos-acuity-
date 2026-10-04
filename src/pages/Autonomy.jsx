@@ -36,6 +36,7 @@ import { Pill, Empty, ErrorNote } from '@/components/system/SystemUi';
 import DesignerDrawer from '@/components/autonomy/DesignerDrawer';
 import ResidentChatDrawer from '@/components/autonomy/ResidentChatDrawer';
 import AuthorizeConsent from '@/components/autonomy/AuthorizeConsent';
+import '@/components/autonomy/studio-orbit.css';
 import { ARCHIVIST } from '@/lib/archivist';
 import {
   GLOSSARY, TIER_LABEL, effectStatusLabel, goalStatusLabel,
@@ -509,6 +510,7 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: '', slug: '', purpose: '', brief: '', skill_allowlist: [] });
   const [editing, setEditing] = useState(null);   // { id, brief }
+  const [expandedPurpose, setExpandedPurpose] = useState(null); // resident id with full purpose shown
   const [history, setHistory] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -586,6 +588,12 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
   return (
     <div className="space-y-3">
       <ErrorNote error={error} />
+
+      <div className="px-1 pt-1">
+        <p className="orbit-eyebrow">Your team</p>
+        <h2 className="orbit-page-title text-xl mt-1">Meet your residents.</h2>
+        <p className="orbit-page-sub text-xs mt-1">Made by you, for the things you want to get done.</p>
+      </div>
 
       <Section
         title="Residents"
@@ -679,16 +687,26 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
 
         <div className="space-y-2">
           {rows.map(resident => (
-            <div key={resident.id} className="rounded-lg border border-border">
+            <div key={resident.id} className="orbit-agent-card rounded-lg border border-border">
               <div className="flex items-start gap-3 px-3 py-2.5">
                 <Bot className="w-4 h-4 text-accent mt-0.5 shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate flex items-center gap-2">
-                    {resident.name}
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <span className="orbit-agent-name min-w-0 flex-1 truncate">{resident.name}</span>
                     <Pill tone={resident.enabled ? 'ok' : 'muted'}>{resident.enabled ? 'enabled' : 'disabled'}</Pill>
                     <Pill tone="muted">brief v{resident.brief_version}</Pill>
-                  </p>
-                  {resident.purpose && <p className="text-xs text-muted-foreground truncate">{resident.purpose}</p>}
+                  </div>
+                  {resident.purpose && (
+                    <button
+                      onClick={() => setExpandedPurpose(expandedPurpose === resident.id ? null : resident.id)}
+                      className="block w-full text-left mt-0.5 cursor-pointer"
+                      title={expandedPurpose === resident.id ? 'Tap to collapse' : 'Tap to read the full description'}
+                    >
+                      <span className={`text-xs text-muted-foreground ${expandedPurpose === resident.id ? '' : 'truncate'} block`}>
+                        {resident.purpose}
+                      </span>
+                    </button>
+                  )}
                   <div className="flex flex-wrap gap-1 mt-1.5">
                     {(resident.skill_allowlist || []).map(id => {
                       const skill = skills.find(s => s.id === id);
@@ -785,8 +803,10 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
       {/* Phase 34 — per-resident chat drawer. */}
       {chatResident && (
         <ResidentChatDrawer
+          open={!!chatResident}
           resident={chatResident}
           onClose={() => setChatResident(null)}
+          onChanged={onChanged}
         />
       )}
     </div>
@@ -913,7 +933,7 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
     if (busy || !form.title.trim() || !form.objective.trim()) return;
     setBusy(true); setError('');
     try {
-      // The destination grant is the key the goal earns the shadow corpus
+      // The destination grant is the key the goal's webhook scope is built
       // with: { effect: "webhook.post", destinations: [...] } in the scope the
       // operator authorizes. With no destinations named, send no scope at all
       // and the route's notify-only default stands, exactly as before.
@@ -941,6 +961,12 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
   return (
     <div className="space-y-3">
       <ErrorNote error={error} />
+
+      <div className="px-1 pt-1">
+        <p className="orbit-eyebrow">Goals</p>
+        <h2 className="orbit-page-title text-xl mt-1">What they're working toward.</h2>
+        <p className="orbit-page-sub text-xs mt-1">Nothing runs until you say so.</p>
+      </div>
 
       <Section
         title="Goals"
@@ -998,7 +1024,7 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
               onRemove={url => setDestinations(prev => prev.filter(u => u !== url))}
               hint={status?.liveDestination?.configured
                 ? `This deployment's approved live destination is ${status.liveDestination.hostname} — a live delivery can only ever go there.`
-                : 'No approved live destination is set here, so evidence can be earned but the live flip cannot.'}
+                : 'No approved live destination is set here, so a live flip is not available.'}
             />
             <p className="text-[10px] text-muted-foreground">
               The goal is created <strong>waiting for you</strong> (<span className="font-mono">awaiting_authorization</span>).
@@ -1132,6 +1158,32 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                             </button>
                           </div>
                         )}
+
+                        {/* ---- delete: any status. Notes orphan to the cleanup review queue. ---- */}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={async () => {
+                              if (busy) return;
+                              const ok = window.confirm(
+                                `Delete “${goal.title}”? Its notes will wait for your call in the cleanup review — everything else about it stays in the record.`
+                              );
+                              if (!ok) return;
+                              setBusy(true); setError('');
+                              try {
+                                await api.deleteGoal(goal.id);
+                                setExpanded(null);
+                                await refresh();
+                              } catch (e) {
+                                setError(e?.message || 'Could not delete the goal.');
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                            disabled={busy}
+                            className="flex items-center gap-1.5 rounded-lg border border-destructive/40 px-2.5 py-1.5 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-40">
+                            <Trash2 className="w-3.5 h-3.5" /> Delete goal
+                          </button>
+                        </div>
 
                         {/* ---- findings: evidence, never an answer ---- */}
                         <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
@@ -1552,6 +1604,12 @@ function ActivityTab() {
   useEffect(() => { refresh(); }, [refresh]);
 
   return (
+    <div className="space-y-3">
+      <div className="px-1 pt-1">
+        <p className="orbit-eyebrow">Activity</p>
+        <h2 className="orbit-page-title text-xl mt-1">A running story.</h2>
+        <p className="orbit-page-sub text-xs mt-1">Every run, and how it got there.</p>
+      </div>
     <Section title="Activity" subtitle="One running story — goals, actions, notices" icon={Activity}>
       {error && <p className="text-xs text-destructive mb-2">{error}</p>}
       {items.length === 0 && !error ? (
@@ -1572,6 +1630,7 @@ function ActivityTab() {
         </div>
       )}
     </Section>
+    </div>
   );
 }
 
@@ -1663,9 +1722,9 @@ function ReceiptLine({ receipt }) {
 }
 
 // ------------------------------------------------------------------- outbox
-/** Phase 29 — the five rungs, in the order the tiers climb, with the sentence
- *  that says what each one actually lets the loop do. Copy lives here so the
- *  Overview switches and any other surface that lists them cannot drift. */
+/** The rungs, in plain words: what each one lets the loop reach for. Copy lives
+ *  here so every surface that lists them cannot drift. Read-only — rungs are
+ *  presented, never switched, from this UI. */
 const RUNG_ROWS = [
   { key: 'residents', label: 'Residents (T2)',
     hint: 'Let goals live here as durable residents and report through notices.' },
@@ -1683,9 +1742,7 @@ function Outbox({ status, onChanged }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
-  const [measuring, setMeasuring] = useState(false);
   const [flipping, setFlipping] = useState(false);
-  const [rungFlipping, setRungFlipping] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -1713,42 +1770,11 @@ function Outbox({ status, onChanged }) {
   };
 
   /**
-   * Phase 29 — the rung switch, right here where the wall is. The panel above
-   * reports "rung off" and the page used to answer with a variable name; this is
-   * the same delegated switch the Overview section offers, on the surface that
-   * shows what it unblocks. One handler, one source of truth (the server).
-   */
-  const flipRung = async (next) => {
-    if (rungFlipping) return;
-    setRungFlipping(true); setError(''); setNotice('');
-    try {
-      const out = await api.setRung('externalWrites', next);
-      await refresh();
-      if (out.changed === false) setNotice(`The external-writes rung was already ${out.rungs?.externalWrites ? 'on' : 'off'}.`);
-    } catch (e) {
-      setError(e?.message || 'Could not change the external-writes rung.');
-      await refresh();
-    } finally { setRungFlipping(false); }
-  };
-
-  const measure = async () => {
-    setMeasuring(true); setError(''); setNotice('');
-    try {
-      const out = await api.recordRungEvidence('external_writes');
-      setNotice(out?.decision === 'justified'
-        ? `Recorded: ${out.metrics?.samples ?? 0} T4 sample(s), ${out.metrics?.falseReleaseCount ?? 0} false release(s). A live release now passes the evidence gate — the rung flag and the Governor's per-effect verdicts still apply.`
-        : `Recorded as insufficient: ${(out?.reasons || []).join('; ') || 'the corpus does not yet justify the rung'}. Nothing was enabled by this row.`);
-      await refresh();
-    } catch (e) { setError(e.message || 'Could not measure the corpus'); }
-    finally { setMeasuring(false); }
-  };
-
-  /**
-   * Widen or narrow the outbox mode. A widening to live is refused unless it has
-   * been earned, and the refusal arrives with the whole readiness report — which
-   * the conditions list below already renders, so the error only has to say that
-   * the flip did not happen and how many things are outstanding. Narrowing is
-   * refused by nothing, so the way back to shadow is always one click.
+   * Widen or narrow the outbox mode. A widening to live is refused unless every
+   * readiness condition holds — the conditions list below already renders them,
+   * so the error only has to say that the flip did not happen and how many
+   * things are outstanding. Narrowing is refused by nothing, so the way back to
+   * shadow is always one click.
    */
   const flipMode = async (mode) => {
     setFlipping(true); setError(''); setNotice('');
@@ -1768,10 +1794,6 @@ function Outbox({ status, onChanged }) {
   const effects = data?.effects || [];
   const corpus = data?.corpus;
   const writes = status?.externalWrites || {};
-  const irreversible = status?.irreversible || {};
-  const rung = (rungs?.rungs || []).find(r => r.rung === 'external_writes');
-  const gate = rungs?.gate || status?.shadowGate || {};
-  const measured = rung?.measurement?.metrics;
   // Phase 22 (autonomy row): the readiness report. Eight named conditions, each
   // with a sentence to read when it is unmet, so the answer to "what would going
   // live take?" is on the page before the click rather than in a 409 after it.
@@ -1789,49 +1811,12 @@ function Outbox({ status, onChanged }) {
       )}
 
       <Section
-        title="Rung 4 — external writes"
-        subtitle="Built, switched off, and shadow-judged until a recorded corpus earns a live delivery"
+        title="External writes"
+        subtitle="What the outbox may send, and where it stands"
         icon={Send}
       >
         <div className="flex flex-wrap items-center gap-1.5 mb-3">
           <Pill tone={writes.built ? 'info' : 'muted'}>{writes.built ? 'T4 built' : 'T4 not built'}</Pill>
-          <Pill tone={writes.rungEnabled ? 'warn' : 'muted'}>
-            rung {writes.rungEnabled ? 'on' : 'off'}
-          </Pill>
-          {/* Phase 29 — the switch that decides whether this rung EXISTS, on the
-              panel that shows what it gates. Disabled with the server's own
-              sentence when the rung is pinned or the group was not delegated. */}
-          {(() => {
-            const refusal = status?.settings?.rungRefusals?.externalWrites || null;
-            const canSet = !refusal && status?.settings?.canSetRungs === true;
-            return (
-              <button
-                role="switch"
-                aria-checked={writes.rungEnabled === true}
-                aria-label="External-writes rung"
-                disabled={!canSet || rungFlipping}
-                onClick={() => flipRung(!writes.rungEnabled)}
-                title={canSet
-                  ? (writes.rungEnabled ? 'Turn the external-writes rung off' : 'Turn the external-writes rung on')
-                  : (refusal?.message || 'The rung switches are not delegated to this page')}
-                className={`relative w-9 h-5 rounded-full transition-colors shrink-0 disabled:opacity-50 ${writes.rungEnabled ? 'bg-primary' : 'bg-muted-foreground/30'}`}
-              >
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-background shadow transition-transform ${writes.rungEnabled ? 'translate-x-4' : ''}`} />
-              </button>
-            );
-          })()}
-          {/* Touch-visible honesty: a disabled switch says why in text, not a
-              tooltip — tooltips don't exist on a phone screen. */}
-          {(() => {
-            const refusal = status?.settings?.rungRefusals?.externalWrites || null;
-            const canSet = !refusal && status?.settings?.canSetRungs === true;
-            if (canSet) return null;
-            return (
-              <p className="basis-full text-[10px] text-muted-foreground leading-relaxed">
-                {refusal?.message || 'The rung switches are not delegated to this page.'}
-              </p>
-            );
-          })()}
           <Pill tone={writes.deliversNow ? 'bad' : 'info'}>outbox {outboxModeLabel(status?.outboxMode || 'shadow')}</Pill>
           {/* Two facts, because they are two facts. `deliversNow` answers "does
               the LOOP perform a release verdict?" — and an operator's Approve on
@@ -1843,42 +1828,23 @@ function Outbox({ status, onChanged }) {
               ? 'the loop can deliver'
               : (writes.deliversOnApproval ? 'an approval can deliver' : 'delivers nothing')}
           </Pill>
-          {writes.evidence?.length > 0 && (
-            <Pill tone={writes.evidence[0].decision === 'justified' ? 'ok' : 'muted'}>
-              evidence: {writes.evidence[0].decision}
-            </Pill>
-          )}
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           {[
-            ['T4 samples', measured?.samples ?? corpus?.byTier?.T4 ?? 0, `floor ${gate.minShadowSamples ?? 25}`],
-            ['would release', measured?.wouldRelease ?? corpus?.wouldRelease ?? 0, 'judged, not sent'],
-            ['refused', measured?.refused ?? corpus?.refused ?? 0, 'rules named below'],
-            ['false releases', measured?.falseReleaseCount ?? '—', `tolerance ${gate.maxAcceptableFalseReleases ?? 0}`],
+            ['staged', corpus?.byTier?.T4 ?? 0, 'waiting for judgment'],
+            ['would release', corpus?.wouldRelease ?? 0, 'judged, not sent'],
+            ['refused', corpus?.refused ?? 0, 'rules named below'],
           ].map(([label, value, hint]) => (
             <div key={label} className="rounded-lg border border-border px-3 py-2">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</p>
-              <p className={`text-lg font-semibold tabular-nums ${label === 'false releases' && Number(value) > 0 ? 'text-destructive' : ''}`}>
+              <p className="text-lg font-semibold tabular-nums">
                 {value}
               </p>
               <p className="text-[9px] text-muted-foreground/70">{hint}</p>
             </div>
           ))}
         </div>
-
-        {(measured?.byRule && Object.keys(measured.byRule).length > 0) && (
-          <div className="mt-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">What the gate refused, by rule</p>
-            <div className="flex flex-wrap gap-1.5">
-              {Object.entries(measured.byRule).sort((a, b) => b[1] - a[1]).map(([rule, n]) => (
-                <span key={rule} className="rounded border border-border px-1.5 py-0.5 text-[10px] font-mono">
-                  {rule} <span className="text-muted-foreground">×{n}</span>
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
 
         {(corpus?.byDestination && Object.keys(corpus.byDestination).length > 0) && (
           <div className="mt-3">
@@ -1893,52 +1859,10 @@ function Outbox({ status, onChanged }) {
           </div>
         )}
 
-        {rung?.justifiedNow === false && (rung?.measurement?.reasons || []).length > 0 && (
-          <ul className="mt-3 space-y-0.5">
-            {rung.measurement.reasons.map(reason => (
-              <li key={reason} className="text-[10px] text-muted-foreground flex items-start gap-1">
-                <AlertTriangle className="w-3 h-3 mt-0.5 text-yellow-500 shrink-0" /> {reason}
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {(writes.evidence || []).length > 0 && (
-          <div className="mt-3 space-y-1">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Recorded evidence rows</p>
-            {writes.evidence.map(row => (
-              <p key={row.id} className="text-[10px] font-mono text-muted-foreground">
-                <span className={row.decision === 'justified' ? 'text-green-500' : 'text-yellow-500'}>{row.decision}</span>
-                {' · '}
-                {row.samples ?? '?'} sample(s), {row.falseReleases ?? '?'} false release(s)
-                {' · '}
-                {fmtTime(row.decided_ms)} by {row.decided_by || 'operator'}
-                {' · '}
-                {String(row.metrics_sha256 || '').slice(0, 12)}…
-              </p>
-            ))}
-          </div>
-        )}
-
-        <div className="flex flex-wrap items-center gap-2 mt-3">
-          <button onClick={measure} disabled={measuring || status?.enabled !== true}
-            className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[11px] hover:bg-muted/50 disabled:opacity-40"
-            title={status?.enabled !== true ? 'Autonomy is frozen, so there is no corpus to measure' : 'Measure the shadow corpus and record it as an evidence row'}>
-            <ClipboardCheck className={`w-3.5 h-3.5 ${measuring ? 'animate-pulse' : ''}`} />
-            Measure and record the corpus
-          </button>
-          <p className="text-[10px] text-muted-foreground max-w-md leading-relaxed">
-            A count alone can be rationalised; a single false release cannot. Recording an
-            insufficient measurement is not a failure — it is the history of having asked.
-          </p>
-        </div>
-
         {/* ------------------------------------------------------ going live
-            Recording the corpus is half of earning a rung; the other half is
-            the flip, and until this panel existed the only way to flip was an
-            environment variable and a restart — a switch that said nothing at
-            the moment you threw it. Everything here is read from the readiness
-            report, so the page and the guard cannot disagree. */}
+            Going live is a choice now, not an achievement: the readiness report
+            below says what it takes, and the flip is one click when every
+            condition holds. */}
         <div className="mt-3 rounded-lg border border-border/70 px-3 py-2.5">
           <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Going live</p>
           <p className="text-[11px] mt-1 leading-relaxed">
@@ -1948,8 +1872,8 @@ function Outbox({ status, onChanged }) {
                 the Governor judges one at a time.</>
             ) : (
               <>The outbox is <span className="font-mono">{mode}</span>: verdicts are recorded
-                and nothing is performed. Going live is a decision that has to be earned, and
-                this page will refuse it until it is.</>
+                and nothing is performed. Going live is your decision — every send is
+                still judged, and still needs your approval.</>
             )}
           </p>
 
@@ -2007,14 +1931,14 @@ function Outbox({ status, onChanged }) {
                 className="flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-2.5 py-1.5 text-[11px] disabled:opacity-40"
                 title={live?.ready
                   ? 'Every condition is met. A release verdict will now be performed.'
-                  : 'Not earned yet — every unmet condition is named above'}>
+                  : 'Not yet — every unmet condition is named above'}>
                 <Zap className={`w-3.5 h-3.5 ${flipping ? 'animate-pulse' : ''}`} /> Go live
               </button>
             )}
             <p className="text-[10px] text-muted-foreground max-w-md leading-relaxed">
               {status?.canSetOutboxMode === false
                 ? `This deployment has not handed the mode switch to this page (${status?.outboxRefusal?.message || 'set COGNOS_AUTONOMY_OUTBOX_UI_CONTROL=true'}).`
-                : 'Going live is refused until it is earned. Going back to shadow never is.'}
+                : 'Going live waits until every condition below is met. Going back to shadow never waits.'}
             </p>
           </div>
         </div>
@@ -2066,19 +1990,11 @@ function Outbox({ status, onChanged }) {
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button onClick={() => decide(effect.id, 'approve')} disabled={busy}
                             title={
-                              effect.tier === 'T4' && !writes.rungEnabled
-                                ? 'Rung 4 is off: this approval would be refused. The effect stays staged and judged in shadow.'
-                                : effect.tier === 'T5' && !irreversible.rungEnabled
-                                  ? 'Rung 6 is off: this approval would be refused. Irreversible effects release only by your approval of this exact action, and only after the rung is switched on.'
-                                  : effect.tier === 'T5'
-                                    ? 'Approve this exact irreversible effect. It releases one at a time, never by class, and only after the Action Governor also rules it safe.'
-                                    : 'Ask the Action Governor to release this effect'
+                              effect.tier === 'T5'
+                                ? 'Approve this exact irreversible effect. It releases one at a time, never by class, and only after the Action Governor also rules it safe.'
+                                : 'Ask the Action Governor to release this effect'
                             }
-                            className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] disabled:opacity-40 ${
-                              (effect.tier === 'T4' && !writes.rungEnabled) || (effect.tier === 'T5' && !irreversible.rungEnabled)
-                                ? 'border border-border text-muted-foreground'
-                                : 'bg-primary text-primary-foreground'
-                            }`}>
+                            className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] disabled:opacity-40 bg-primary text-primary-foreground">
                             <ThumbsUp className="w-3 h-3" /> Approve
                           </button>
                           <button onClick={() => decide(effect.id, 'refuse')} disabled={busy}
@@ -2147,7 +2063,7 @@ function Outbox({ status, onChanged }) {
 
 function Overview({ status, residents, goals, onTick, ticking, onToggle, toggling, bannerError,
   attention, attentionLoading, onJump, onDesign, onSeedArchivist, seedingArchivist,
-  onAutoAuthorize, autoAuthBusy, onRung, rungBusy }) {
+  onAutoAuthorize, autoAuthBusy }) {
   const ceilings = status?.ceilings || {};
   const counts = status?.counts || {};
   const skills = status?.skills || [];
@@ -2156,6 +2072,11 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
 
   return (
     <div className="space-y-3">
+      <div className="px-1 pt-1">
+        <p className="orbit-eyebrow">Overview</p>
+        <h2 className="orbit-page-title text-xl mt-1">Everything your residents are up to.</h2>
+        <p className="orbit-page-sub text-xs mt-1">One greeting, the whole story.</p>
+      </div>
       <StatusBanner
         status={status}
         busy={toggling}
@@ -2222,55 +2143,29 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
         </div>
       </Section>
 
-      {/* Phase 29 — the rung switches. The five sign-offs that decide which
-          tiers EXIST here used to be five Railway variables and a restart, so
-          the page could report "T4 is off" and offer nothing to do about it.
-          Each row says three things: is it on, did an operator pin it, and may
-          this page change it. A rung opens a door; it never signs a verdict. */}
-      <Section title="Rungs" subtitle="What this deployment may reach for — the sign-off that a tier exists here" icon={Lock}>
+      {/* Rungs are governance, presented — not switches to flip. What this
+          deployment may reach for, in plain words. The sign-off lives with the
+          operator; every effect still asks Jeremy. */}
+      <Section title="Rungs" subtitle="What this deployment may reach for" icon={Lock}>
         <div className="space-y-2">
           {RUNG_ROWS.map(({ key, label, hint }) => {
             const on = status?.settings?.rungs?.[key] === true;
             const pinned = status?.settings?.rungPinned?.[key] === true;
-            const refusal = status?.settings?.rungRefusals?.[key] || null;
-            const canSet = !refusal && status?.settings?.canSetRungs === true;
-            const busy = rungBusy === key;
             return (
               <div key={key} className="rounded-lg border border-border/70 px-3 py-2.5">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium flex items-center gap-2 flex-wrap">
-                      {label}
-                      {on ? <Pill tone="warn">on</Pill> : <Pill tone="muted">off</Pill>}
-                      {pinned && <Pill tone="info">pinned by an operator</Pill>}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{hint}</p>
-                  </div>
-                  <button
-                    role="switch"
-                    aria-checked={on}
-                    aria-label={label}
-                    disabled={!canSet || busy}
-                    onClick={() => onRung(key, !on)}
-                    className={`relative w-11 h-6 rounded-full transition-colors shrink-0 disabled:opacity-50 ${on ? 'bg-primary' : 'bg-muted-foreground/30'}`}
-                    title={canSet
-                      ? (on ? `Turn the ${key} rung off` : `Turn the ${key} rung on`)
-                      : (refusal?.message || 'The rung switches are not delegated to this page')}
-                  >
-                    <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-background shadow transition-transform ${on ? 'translate-x-5' : ''}`} />
-                  </button>
-                </div>
-                {refusal && (
-                  <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">{refusal.message}</p>
-                )}
+                <p className="text-xs font-medium flex items-center gap-2 flex-wrap">
+                  {label}
+                  {on ? <Pill tone="ok">available</Pill> : <Pill tone="muted">not available here</Pill>}
+                  {pinned && <Pill tone="info">pinned by an operator</Pill>}
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{hint}</p>
               </div>
             );
           })}
         </div>
         <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed max-w-2xl">
-          A rung is one of two gates. The other — the shadow corpus that earns a live
-          release, and a human approval for every irreversible effect — is not writable from
-          this page, so opening a rung never releases anything by itself.
+          A rung says a tier exists here. It never releases anything by itself —
+          every effect is still judged, and irreversible ones still need your approval.
         </p>
       </Section>
 
@@ -2433,7 +2328,6 @@ export default function Autonomy() {
   const [ticking, setTicking] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [autoAuthBusy, setAutoAuthBusy] = useState(false);
-  const [rungBusy, setRungBusy] = useState(null);
   const [error, setError] = useState('');
   const [bannerError, setBannerError] = useState('');
   const [designerOpen, setDesignerOpen] = useState(false);
@@ -2521,32 +2415,6 @@ export default function Autonomy() {
   };
 
   /**
-   * Phase 28 — the earned-corpus bypass. Same contract as the switch above: the
-   * server decides (a pin or no delegation answers 409), and the toggle flips
-   * back to the truth on refusal instead of staying where the click put it.
-   */
-  /**
-   * Phase 29 — flip one rung. Same contract as the switches above: the server
-   * decides (a pin or no delegation answers 409), and the toggle falls back to
-   * the truth on refusal instead of staying where the click put it. `rungBusy`
-   * holds the rung being flipped so only that row's toggle is disabled.
-   */
-  const handleRung = async (name, next) => {
-    if (rungBusy) return;
-    setRungBusy(name); setBannerError('');
-    try {
-      const out = await api.setRung(name, next);
-      await refreshAll();
-      if (out.changed === false) {
-        setBannerError(`The ${name} rung was already ${out.rungs?.[name] ? 'on' : 'off'}.`);
-      }
-    } catch (e) {
-      setBannerError(e?.message || `Could not change the ${name} rung.`);
-      await refreshAll();
-    } finally { setRungBusy(null); }
-  };
-
-  /**
    * One click to a first resident. It CREATES; it does not authorize. The goal
    * lands awaiting_authorization and stays there until a decision on the Goals
    * tab records consent in goal_authorizations — which is why this ends by
@@ -2597,7 +2465,7 @@ export default function Autonomy() {
   };
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="studio-orbit flex flex-col h-full min-h-0">
       <header
         className="flex items-center gap-2 px-3 md:px-4 py-3 border-b border-border shrink-0"
         style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
@@ -2606,9 +2474,9 @@ export default function Autonomy() {
           <Menu className="w-5 h-5" />
         </button>
         <Bot className="w-4 h-4 text-primary" />
-        <h2 className="text-sm font-medium">Autonomy</h2>
+        <h2 className="orbit-page-title text-base">Studio</h2>
         <span className="text-[10px] text-muted-foreground hidden sm:inline">
-          residents, goals, and the outbox — every effect judged before it happens
+          your team, their work, and everything waiting on you
         </span>
         <button
           onClick={() => setHelpOpen(true)}
@@ -2665,7 +2533,6 @@ export default function Autonomy() {
               onJump={setTab} onDesign={() => setDesignerOpen(true)}
               onSeedArchivist={seedArchivist} seedingArchivist={seedingArchivist}
               onAutoAuthorize={handleAutoAuthorize} autoAuthBusy={autoAuthBusy}
-              onRung={handleRung} rungBusy={rungBusy}
             />
           ) : tab === 'residents' ? (
             <Residents status={status} frozen={frozen} onDesign={() => setDesignerOpen(true)} onChanged={refreshAll} />

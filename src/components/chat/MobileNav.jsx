@@ -18,7 +18,7 @@ export default function MobileNav() {
     { to: chatTo, path: '/', label: 'Chat', icon: MessageSquare },
     { to: '/memory', path: '/memory', label: 'Memory', icon: Brain },
     { to: '/activity', path: '/activity', label: 'Activity', icon: ActivityIcon },
-    { to: '/autonomy', path: '/autonomy', label: 'Autonomy', icon: Bot },
+    { to: '/autonomy', path: '/autonomy', label: 'Studio', icon: Bot },
     { to: '/system', path: '/system', label: 'System', icon: Network },
     { to: '/settings', path: '/settings', label: 'Settings', icon: SettingsIcon },
   ];

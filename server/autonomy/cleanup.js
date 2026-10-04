@@ -503,9 +503,13 @@ export async function runCleanupAudit({ db, workspaceId, logger = null, nowMs = 
     tidied.old_notices = oldNotices?.length || 0;
 
     // ---- orphaned goal notes (review: the goal is gone) ------------------------
+    // goal_notes carries no workspace_id; scope through the note's agent.
     const orphanNotes = await db.query(
-      `SELECT id FROM goal_notes WHERE workspace_id = $1
-         AND goal_id IS NOT NULL AND goal_id NOT IN (SELECT id FROM autonomy_goals)
+      `SELECT n.id FROM goal_notes n
+         LEFT JOIN autonomy_agents a ON a.id = n.agent_id
+        WHERE n.goal_id IS NOT NULL
+          AND n.goal_id NOT IN (SELECT id FROM autonomy_goals)
+          AND (a.workspace_id = $1 OR a.id IS NULL)
        LIMIT 100`, [workspaceId]
     ).catch(() => []);
     if (orphanNotes?.length) {

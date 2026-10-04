@@ -12,6 +12,10 @@
 //     model) and chats otherwise.
 
 import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const repoRoot = new URL("../", import.meta.url);
+const readSrc = (p) => fs.readFileSync(new URL(p, repoRoot), "utf8");
 
 import {
   describeGoalEvent,
@@ -249,6 +253,72 @@ await test("residentChatTurn 404s an unknown resident", async () => {
   });
   assert.equal(out.ok, false);
   assert.equal(out.code, "not_found");
+});
+
+// ---------------------------------------------------------------------------
+// Talk drawer wiring (regression: the Talk button set chatResident state but
+// the drawer never rendered — ResidentChatDrawer returns null unless its
+// `open` prop is true, and the prop was never passed).
+// ---------------------------------------------------------------------------
+
+await test("Talk button passes open to ResidentChatDrawer", async () => {
+  const src = readSrc("src/pages/Autonomy.jsx");
+  const usage = src.match(/<ResidentChatDrawer[\s\S]*?\/>/);
+  assert.ok(usage, "ResidentChatDrawer is rendered in the Studio page");
+  assert.ok(/\bopen=/.test(usage[0]),
+    "Talk passes open so the drawer can render (missing open = dead button)");
+  assert.ok(/setChatResident\(resident\)/.test(src),
+    "the Talk button sets the chat resident");
+});
+
+// ---------------------------------------------------------------------------
+// Goal deletion: the goal row goes, its notes survive as orphans, and the
+// cleanup audit proposes them to Jeremy's review queue.
+// ---------------------------------------------------------------------------
+
+await test("DELETE /api/autonomy/goals/:id removes the goal; notes orphan to the cleanup queue", async () => {
+  const { bootHarness } = await import("./harness.mjs");
+  const h = await bootHarness({ COGNOS_AUTONOMY_ENABLED: "true" });
+  try {
+    const agent = (await h.raw("/api/autonomy/agents", {
+      method: "POST",
+      body: { name: "Deleter", slug: "deleter", purpose: "deletion test", brief: "v1", skill_allowlist: [] }
+    })).json;
+    const goal = (await h.raw("/api/autonomy/goals", {
+      method: "POST",
+      body: { title: "Doomed goal", objective: "Will be deleted.", agent_id: agent.id }
+    })).json.goal;
+
+    await h.sql(
+      `INSERT INTO goal_notes (id, goal_id, agent_id, ordinal, kind, body)
+       VALUES ('note-orphan-1', $1, $2, 1, 'finding', 'a note that will orphan')`,
+      [goal.id, agent.id]
+    );
+
+    const del = await h.raw(`/api/autonomy/goals/${goal.id}`, { method: "DELETE" });
+    assert.equal(del.status, 200, JSON.stringify(del.json));
+    assert.equal(del.json.deleted, true);
+
+    const gone = await h.raw(`/api/autonomy/goals/${goal.id}`);
+    assert.equal(gone.status, 404, "the goal row is gone");
+
+    const notes = await h.sql(`SELECT id, goal_id FROM goal_notes WHERE id = 'note-orphan-1'`);
+    assert.equal(notes.length, 1, "the note survives the deletion");
+    assert.equal(notes[0].goal_id, goal.id, "still pointing at the deleted goal");
+
+    const run = await h.raw("/api/autonomy/cleanup/run", { method: "POST" });
+    assert.equal(run.status, 200, JSON.stringify(run.json));
+    const proposals = await h.raw("/api/autonomy/cleanup/proposals");
+    assert.ok(
+      (proposals.json || []).some(p => p.kind === "orphan_note"),
+      "the orphaned note is proposed to the review queue"
+    );
+
+    const missing = await h.raw("/api/autonomy/goals/nope", { method: "DELETE" });
+    assert.equal(missing.status, 404);
+  } finally {
+    await h.stop();
+  }
 });
 
 console.log(`\nSTUDIO RESULT: ${passed} passed`);

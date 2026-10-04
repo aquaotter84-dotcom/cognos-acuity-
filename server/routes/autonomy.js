@@ -1015,6 +1015,22 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     res.json({ goal, events, steps, notes, approvals, outbox, subagents, promotions });
   }));
 
+  /**
+   * Delete a goal (Studio UI, user-confirmed). The goal row is removed; its
+   * notes stay behind as orphaned rows, which the cleanup agent's daily audit
+   * proposes to Jeremy's review queue — nothing of his vanishes silently.
+   * Goal events are never deleted (audit trail).
+   */
+  app.delete("/api/autonomy/goals/:id", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const goal = await db.AutonomyGoal.get(req.params.id);
+    if (!goal || goal.workspace_id !== ws.id) {
+      return res.status(404).json({ error: "Goal not found in this workspace" });
+    }
+    await db.AutonomyGoal.remove(goal.id);
+    res.json({ deleted: true, id: goal.id, title: goal.title });
+  }));
+
   app.post("/api/autonomy/goals", wrap(async (req, res) => {
     if (config().enabled !== true) {
       return res.status(409).json({ error: frozenError(), code: "autonomy_disabled" });

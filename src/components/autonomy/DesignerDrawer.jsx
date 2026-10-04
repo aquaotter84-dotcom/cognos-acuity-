@@ -364,7 +364,7 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
                         afterwards. Only attempts aimed at a granted destination fill the evidence corpus
                         {status?.liveDestination?.configured
                           ? `, and a live flip wants them aimed at this deployment's approved destination (${status.liveDestination.hostname})`
-                          : '; this deployment has no approved live destination set, so evidence can be earned but the live flip cannot'}.
+                          : '; this deployment has no approved live destination set, so a live flip is not available here'}.
                       </p>
                       <div className="space-y-1">
                         {grantDestinations.map(url => (

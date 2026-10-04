@@ -612,7 +612,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS goal_steps_idem_idx ON goal_steps (idempotency
 
 CREATE TABLE IF NOT EXISTS goal_notes (
   id                    TEXT PRIMARY KEY,
-  goal_id               TEXT NOT NULL REFERENCES autonomy_goals(id) ON DELETE RESTRICT,
+  -- No foreign key to autonomy_goals: a deleted goal's notes survive as
+  -- orphans for the cleanup agent's review queue (phase34b).
+  goal_id               TEXT NOT NULL,
   agent_id              TEXT,
   tick_id               TEXT,
   ordinal               INTEGER NOT NULL,
@@ -1340,6 +1342,29 @@ CREATE INDEX IF NOT EXISTS cleanup_runs_ws_idx
   ON cleanup_runs (workspace_id, finished_ms DESC);
 `;
 
+export const PHASE34B_SCHEMA = `
+-- 34.1 Goal deletion: a deleted goal's notes must survive as orphans so the
+-- cleanup agent's daily audit can propose them to Jeremy's review queue.
+-- The original goal_notes.goal_id foreign key was ON DELETE RESTRICT, which
+-- would block every deletion of a goal that has notes. Drop the constraint
+-- (by lookup, so it works regardless of the auto-generated name); the audit
+-- query already anticipates dangling goal_ids.
+DO $$
+DECLARE cname text;
+BEGIN
+  SELECT con.conname INTO cname
+  FROM pg_constraint con
+  JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = ANY(con.conkey)
+  WHERE con.conrelid = 'goal_notes'::regclass
+    AND con.contype = 'f'
+    AND att.attname = 'goal_id'
+  LIMIT 1;
+  IF cname IS NOT NULL THEN
+    EXECUTE 'ALTER TABLE goal_notes DROP CONSTRAINT ' || quote_ident(cname);
+  END IF;
+END $$;
+`;
+
 export const PHASE_SCHEMAS = [  { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },  { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
   { id: "0003", phase: 16, name: "phase16_latency_observability", sql: PHASE16_SCHEMA },
   { id: "0004", phase: 17, name: "phase17_sources_and_agents", sql: PHASE17_SCHEMA },
@@ -1360,7 +1385,8 @@ export const PHASE_SCHEMAS = [  { id: "0001", phase: 14, name: "phase14_dynamic_
   { id: "0019", phase: 30, name: "phase30_memory_embeddings", sql: PHASE30_SCHEMA },
   { id: "0020", phase: 31, name: "phase31_heartbeat_personality", sql: PHASE31_SCHEMA },
   { id: "0021", phase: 32, name: "phase32_personas", sql: PHASE32_SCHEMA },
-  { id: "0022", phase: 33, name: "phase33_cleanup_agent", sql: PHASE33_SCHEMA }
+  { id: "0022", phase: 33, name: "phase33_cleanup_agent", sql: PHASE33_SCHEMA },
+  { id: "0023", phase: 34, name: "phase34b_goal_deletion_fk", sql: PHASE34B_SCHEMA }
 ];
 
 // ---------------------------------------------------------------------------

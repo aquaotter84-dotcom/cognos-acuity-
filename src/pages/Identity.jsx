@@ -101,8 +101,7 @@ function statusFor(capability, runtime) {
       const writes = runtime?.autonomy?.externalWrites || {};
       if (!writes.built) return { label: 'not built', tone: 'muted' };
       if (writes.deliversNow) return { label: 'live deliveries on', tone: 'bad' };
-      if (writes.rungEnabled) return { label: `rung on · outbox ${runtime?.autonomy?.outboxMode || 'shadow'}`, tone: 'warn' };
-      return { label: 'off by default', tone: 'muted' };
+      return { label: `outbox ${runtime?.autonomy?.outboxMode || 'shadow'}`, tone: 'muted' };
     }
     default:
       return { label: 'built in', tone: 'ok' };
@@ -170,9 +169,7 @@ export default function Identity() {
       ['Built effect tiers', (r.autonomy?.builtTiers || []).join(', ')],
       ['External writes', r.autonomy?.externalWrites?.deliversNow
         ? 'LIVE'
-        : r.autonomy?.externalWrites?.rungEnabled
-          ? `rung on · ${r.autonomy?.outboxMode} (nothing delivered)`
-          : 'off by default'],
+        : `outbox ${r.autonomy?.outboxMode || 'shadow'}`],
       ['Writes from a chat turn', r.autonomy?.writesFromChatTurn ? 'enabled' : 'impossible'],
       ['Adaptive behavior', r.knowledge?.adaptiveMode],
       ['Database', r.persistence?.databaseConfigured ? 'configured' : 'not configured'],

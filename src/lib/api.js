@@ -153,6 +153,8 @@ export const api = {
   createGoal: (data) => req("/api/autonomy/goals", { method: "POST", body: data }),
   /** goal, events, steps, notes, approvals, outbox, subagents, promotions — the whole audit trail. */
   getGoal: (id) => req(`/api/autonomy/goals/${id}`),
+  /** Hard delete, user-confirmed. Notes orphan to the cleanup review queue; events stay as audit trail. */
+  deleteGoal: (id) => req(`/api/autonomy/goals/${id}`, { method: "DELETE" }),
   /** THE BARRIER: authorize | decline | pause | resume | cancel. */
   decideGoal: (id, body) => req(`/api/autonomy/goals/${id}/decision`, { method: "POST", body }),
 

@@ -37,7 +37,7 @@ export function Pill({ tone = 'muted', children }) {
     bad: 'bg-destructive/15 text-destructive',
     info: 'bg-primary/15 text-primary',
   };
-  return <span className={`px-1.5 py-0.5 rounded font-medium uppercase text-[10px] whitespace-nowrap ${tones[tone] || tones.muted}`}>{children}</span>;
+  return <span className={`shrink-0 px-1.5 py-0.5 rounded font-medium uppercase text-[10px] whitespace-nowrap ${tones[tone] || tones.muted}`}>{children}</span>;
 }
 
 export function Json({ value, className = '' }) {

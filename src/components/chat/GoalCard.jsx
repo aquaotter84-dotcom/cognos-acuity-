@@ -157,7 +157,7 @@ export default function GoalCard({ detail, busy, error, carried, onDecision, onP
                 ))}
               </ul>
               {findings.length > 5 && (
-                <p className="text-[10px] text-muted-foreground mt-1">+ {findings.length - 5} more on the Autonomy page.</p>
+                <p className="text-[10px] text-muted-foreground mt-1">+ {findings.length - 5} more on the Studio page.</p>
               )}
             </div>
           )}
