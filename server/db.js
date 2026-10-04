@@ -42,7 +42,7 @@ import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { newId, num } from "./db/util.js";
-import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA, PHASE24_SCHEMA, PHASE25_SCHEMA, PHASE22B_SCHEMA, PHASE22C_SCHEMA, PHASE26_SCHEMA, PHASE26B_SCHEMA, PHASE28_SCHEMA, PHASE29_SCHEMA, PHASE30_SCHEMA, PHASE31_SCHEMA, PHASE32_SCHEMA, PHASE33_SCHEMA, PHASE34B_SCHEMA } from "./db/schema.js";
+import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA, PHASE24_SCHEMA, PHASE25_SCHEMA, PHASE22B_SCHEMA, PHASE22C_SCHEMA, PHASE26_SCHEMA, PHASE26B_SCHEMA, PHASE28_SCHEMA, PHASE29_SCHEMA, PHASE30_SCHEMA, PHASE31_SCHEMA, PHASE32_SCHEMA, PHASE33_SCHEMA, PHASE34B_SCHEMA, PHASE35_SCHEMA, PHASE36_SCHEMA } from "./db/schema.js";
 import { appendEvent, snapshot } from "./knowledge/events.js";
 import {
   createKnowledgeStore, TRACKED_FIELDS,
@@ -233,7 +233,17 @@ CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events (created_date DESC)
 // evidence thresholds for corpus + external writing. This migration only
 // drops the RESTRICT foreign key from goal_notes.goal_id so a goal can be
 // deleted (its notes orphan to the cleanup review queue).
-+ PHASE34B_SCHEMA;
++ PHASE34B_SCHEMA
+// Phase 35 — Sapphire-style memory transplant: the memory graph (edges), the
+// librarian's day-guard state + run journal, one-shot boot markers, and the
+// additive memory columns (favorites, recall instrumentation, processing
+// marks, reversible retirement). The one-time backup+wipe is NOT here —
+// server/memory/transplant.js does it in boot code so the backup file can be
+// written and verified before anything is deleted.
++ PHASE35_SCHEMA
+// Phase 36 — resident tools: definitions, write-only secrets, per-resident
+// assignments (by slug), and the metadata-only run log.
++ PHASE36_SCHEMA;
 
 // Exported for the schema-boot regression test: every migration registered in
 // PHASE_SCHEMAS (server/db/schema.js) must be concatenated into SCHEMA above,
@@ -610,12 +620,12 @@ function createCoreStore(run) {
         const structured = normalizeMemoryFields(data);
         const confidence = num(data.confidence, null) ?? confidenceFromEvidence(data);
         const rows = await r(
-          `INSERT INTO memories (id, workspace_id, content, memory_type, memory_layer, memory_key, memory_value, memory_schema_version, expires_at, source, importance, evidence_level, volatility, last_confirmed, is_enabled, tags, confidence, confidence_as_of_ms)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
+          `INSERT INTO memories (id, workspace_id, content, memory_type, memory_layer, memory_key, memory_value, memory_schema_version, expires_at, source, importance, evidence_level, volatility, last_confirmed, is_enabled, is_favorite, tags, confidence, confidence_as_of_ms)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
           [id, data.workspace_id, structured.content, structured.memory_type, structured.memory_layer,
            structured.memory_key, JSON.stringify(structured.memory_value), structured.memory_schema_version,
            structured.expires_at, data.source || null, data.importance || 5, data.evidence_level || "inferred", data.volatility || "medium",
-           data.last_confirmed || new Date().toISOString(), data.is_enabled !== false,
+           data.last_confirmed || new Date().toISOString(), data.is_enabled !== false, data.is_favorite === true,
            data.tags ? JSON.stringify(data.tags) : null, confidence, ts]
         );
         const memory = rows[0];
@@ -713,7 +723,8 @@ function createCoreStore(run) {
         const { clause, values, next } = set(patch, [
           "content", "memory_type", "memory_layer", "memory_key", "memory_value",
           "memory_schema_version", "expires_at", "importance", "evidence_level",
-          "volatility", "is_enabled", "confidence"
+          "volatility", "is_enabled", "is_favorite", "recall_count", "last_recalled",
+          "processed_at", "retired_reason", "confidence"
         ]);
         if (!clause) return before;
         const rows = await r(`UPDATE memories SET ${clause}, updated_date = now() WHERE id = $${next} RETURNING *`, [...values, id]);
@@ -811,6 +822,108 @@ function createCoreStore(run) {
     }
   };
 
+  // Phase 35 — the memory graph (Sapphire-style edges: mentions,
+  // derived_from, structural). Edges are traversed by the priced recall
+  // walk; they are never popularity-ranked — see server/memory/recall.js.
+  const MemoryEdge = {
+    /** Idempotent: the unique index makes a repeated link a no-op returning null. */
+    async create({ workspace_id, from_memory_id, to_memory_id, edge_type = "mentions", metadata = null, created_by = null }) {
+      if (!["mentions", "derived_from", "structural"].includes(edge_type)) {
+        throw new Error(`unknown edge_type: ${edge_type}`);
+      }
+      if (!from_memory_id || from_memory_id === to_memory_id) {
+        throw new Error("an edge needs two distinct memory ids");
+      }
+      const rows = await run(
+        `INSERT INTO memory_edges (id, workspace_id, from_memory_id, to_memory_id, edge_type, metadata, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (workspace_id, from_memory_id, to_memory_id, edge_type) DO NOTHING
+         RETURNING *`,
+        [newId("edge"), workspace_id, from_memory_id, to_memory_id, edge_type,
+         metadata ? JSON.stringify(metadata) : null, created_by || null]
+      );
+      return rows[0] || null;
+    },
+    /** Every edge touching any of the given ids, either direction — the walk's adjacency. */
+    async listFor(workspace_id, memoryIds) {
+      if (!workspace_id || !memoryIds?.length) return [];
+      return run(
+        `SELECT * FROM memory_edges
+         WHERE workspace_id = $1 AND (from_memory_id = ANY($2) OR to_memory_id = ANY($2))`,
+        [workspace_id, memoryIds]
+      );
+    },
+    async count(workspace_id) {
+      const rows = await run(`SELECT COUNT(*)::int AS n FROM memory_edges WHERE workspace_id = $1`, [workspace_id]);
+      return rows[0]?.n ?? 0;
+    }
+  };
+
+  // Phase 35 — the librarian's day-guards and one-shot flags, one row per
+  // workspace. Each method upserts only its own column so a decay mark can
+  // never clobber the librarian's date or the announcement flag.
+  const MemoryTending = {
+    async get(workspace_id) {
+      const rows = await run(`SELECT * FROM memory_tending_state WHERE workspace_id = $1`, [workspace_id]);
+      return rows[0] || null;
+    },
+    async markDecay(workspace_id, dateStr) {
+      const rows = await run(
+        `INSERT INTO memory_tending_state (workspace_id, last_decay_date, updated_date)
+         VALUES ($1,$2,now())
+         ON CONFLICT (workspace_id) DO UPDATE SET last_decay_date = EXCLUDED.last_decay_date, updated_date = now()
+         RETURNING *`,
+        [workspace_id, dateStr]
+      );
+      return rows[0];
+    },
+    async markLibrarian(workspace_id, dateStr) {
+      const rows = await run(
+        `INSERT INTO memory_tending_state (workspace_id, last_librarian_date, updated_date)
+         VALUES ($1,$2,now())
+         ON CONFLICT (workspace_id) DO UPDATE SET last_librarian_date = EXCLUDED.last_librarian_date, updated_date = now()
+         RETURNING *`,
+        [workspace_id, dateStr]
+      );
+      return rows[0];
+    },
+    async setDecayAnnounced(workspace_id) {
+      const rows = await run(
+        `INSERT INTO memory_tending_state (workspace_id, decay_announced, updated_date)
+         VALUES ($1,TRUE,now())
+         ON CONFLICT (workspace_id) DO UPDATE SET decay_announced = TRUE, updated_date = now()
+         RETURNING *`,
+        [workspace_id]
+      );
+      return rows[0];
+    }
+  };
+
+  // Phase 35 — the librarian's journal: one row per nightly round.
+  const LibrarianRun = {
+    async start(workspace_id, started_ms) {
+      const rows = await run(
+        `INSERT INTO librarian_runs (id, workspace_id, started_ms) VALUES ($1,$2,$3) RETURNING *`,
+        [newId("lib"), workspace_id, started_ms]
+      );
+      return rows[0];
+    },
+    async finish(id, { passes = {}, decayed = 0, error = null, finished_ms = Date.now() } = {}) {
+      const rows = await run(
+        `UPDATE librarian_runs SET finished_ms = $2, passes = $3, decayed = $4, error = $5 WHERE id = $1 RETURNING *`,
+        [id, finished_ms, JSON.stringify(passes), decayed, error]
+      );
+      return rows[0] || null;
+    },
+    async last(workspace_id) {
+      const rows = await run(
+        `SELECT * FROM librarian_runs WHERE workspace_id = $1 ORDER BY started_ms DESC LIMIT 1`,
+        [workspace_id]
+      );
+      return rows[0] || null;
+    }
+  };
+
   const TaskContext = {
     // Phase 14.1: a task context is a goal, and goals are stored knowledge.
     async create(data, opts = {}) {
@@ -898,7 +1011,8 @@ function createCoreStore(run) {
     }
   };
 
-  return { Workspace, Conversation, Project, Message, Memory, TaskContext, AuditEvent };
+  return { Workspace, Conversation, Project, Message, Memory, TaskContext, AuditEvent,
+    MemoryEdge, MemoryTending, LibrarianRun };
 }
 
 // --- Composition root ------------------------------------------------------
@@ -936,6 +1050,11 @@ export const Message = db.Message;
 export const Memory = db.Memory;
 export const TaskContext = db.TaskContext;
 export const AuditEvent = db.AuditEvent;
+// Phase 35 — Sapphire-style memory transplant: the memory graph, the
+// librarian's day-guard state, and the nightly run journal.
+export const MemoryEdge = db.MemoryEdge;
+export const MemoryTending = db.MemoryTending;
+export const LibrarianRun = db.LibrarianRun;
 export const KnowledgeEvent = db.KnowledgeEvent;
 export const Belief = db.Belief;
 export const Relationship = db.Relationship;
@@ -980,6 +1099,8 @@ export const CleanupRun = db.CleanupRun;
 export const AutonomySettings = db.AutonomySettings;
 // Phase 26 — the delegated council switches (Critic, Governor).
 export const CouncilSettings = db.CouncilSettings;
+// Phase 36 — resident tools: definitions, write-only secrets, assignments, run log.
+export const ResidentTool = db.ResidentTool;
 // Phase 24 — accounts & multi-tenant workspaces.
 export const Accounts = db.Accounts;
 export const Groups = db.Groups;

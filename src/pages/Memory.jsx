@@ -4,14 +4,16 @@
 // workspaces, which no longer exist).
 
 import { useState, useEffect } from 'react';
-import { Brain, Search, Plus, Trash2, Edit2, Check, X, Menu } from 'lucide-react';
+import { Brain, Search, Plus, Trash2, Edit2, Check, X, Menu, Star } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
 
 const typeColors = {
-  episodic: 'bg-accent/15 text-accent',
-  semantic: 'bg-primary/15 text-primary',
-  working: 'bg-amber-500/15 text-amber-400',
+  self: 'bg-violet-500/15 text-violet-400',
+  events: 'bg-amber-500/15 text-amber-400',
+  entities: 'bg-cyan-500/15 text-cyan-400',
+  knowledge: 'bg-primary/15 text-primary',
+  goals: 'bg-green-500/15 text-green-400',
 };
 
 const evidenceColors = {
@@ -28,10 +30,11 @@ const volatilityColors = {
 };
 
 const layerColors = {
-  working: 'bg-cyan-500/15 text-cyan-400',
-  episodic: 'bg-accent/15 text-accent',
-  semantic: 'bg-primary/15 text-primary',
   self: 'bg-violet-500/15 text-violet-400',
+  events: 'bg-amber-500/15 text-amber-400',
+  entities: 'bg-cyan-500/15 text-cyan-400',
+  knowledge: 'bg-primary/15 text-primary',
+  goals: 'bg-green-500/15 text-green-400',
 };
 
 export default function Memory() {
@@ -42,7 +45,7 @@ export default function Memory() {
   const [editContent, setEditContent] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [newContent, setNewContent] = useState('');
-  const [newLayer, setNewLayer] = useState('semantic');
+  const [newLayer, setNewLayer] = useState('events');
   const [newKey, setNewKey] = useState('');
   const [newValue, setNewValue] = useState('');
   const [error, setError] = useState(null);
@@ -59,6 +62,19 @@ export default function Memory() {
       await api.updateMemory(mem.id, { is_enabled: next });
     } catch (e) {
       setMemories(prev => prev.map(m => m.id === mem.id ? { ...m, is_enabled: mem.is_enabled } : m));
+      setError(e.message);
+    }
+  };
+
+  // Favorites are shielded: the nightly librarian never prunes/atomizes them,
+  // and decay never touches them.
+  const handleFavorite = async (mem) => {
+    const next = !mem.is_favorite;
+    setMemories(prev => prev.map(m => m.id === mem.id ? { ...m, is_favorite: next } : m));
+    try {
+      await api.updateMemory(mem.id, { is_favorite: next });
+    } catch (e) {
+      setMemories(prev => prev.map(m => m.id === mem.id ? { ...m, is_favorite: mem.is_favorite } : m));
       setError(e.message);
     }
   };
@@ -98,7 +114,7 @@ export default function Memory() {
       setNewContent('');
       setNewKey('');
       setNewValue('');
-      setNewLayer('semantic');
+      setNewLayer('events');
       setIsAdding(false);
     } catch (e) { setError(e.message); }
   };
@@ -131,9 +147,10 @@ export default function Memory() {
                 className="w-full bg-transparent outline-none text-sm resize-none" />
               <div className="grid sm:grid-cols-2 gap-2">
                 <select value={newLayer} onChange={e => setNewLayer(e.target.value)} className="bg-muted/40 border border-border rounded-lg px-2 py-1.5 text-xs outline-none">
-                  <option value="semantic">semantic · durable fact</option>
-                  <option value="episodic">episodic · conversation event</option>
-                  <option value="working">working · short-lived context</option>
+                  <option value="events">events · things that happened (default)</option>
+                  <option value="knowledge">knowledge · durable reference</option>
+                  <option value="entities">entities · people, places, things</option>
+                  <option value="goals">goals · goals and progress</option>
                   <option value="self">self · the assistant's own inner life</option>
                 </select>
                 <input value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="stable key (optional)"
@@ -175,12 +192,15 @@ export default function Memory() {
                   </p>}
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${typeColors[mem.memory_type] || 'bg-muted'}`}>{mem.memory_type}</span>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${layerColors[mem.memory_layer || mem.memory_type] || 'bg-muted'}`}>{mem.memory_layer || mem.memory_type || 'semantic'} layer</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${layerColors[mem.memory_layer || mem.memory_type] || 'bg-muted'}`}>{mem.memory_layer || mem.memory_type || 'events'} layer</span>
                     {mem.memory_key && <span className="px-1.5 py-0.5 rounded text-[10px] font-mono text-muted-foreground bg-muted/60">{mem.memory_key}</span>}
                     {mem.evidence_level && <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${evidenceColors[mem.evidence_level] || 'bg-muted'}`}>{mem.evidence_level}</span>}
                     {mem.volatility && <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${volatilityColors[mem.volatility] || 'bg-muted'}`}>{mem.volatility}</span>}
                     <span className="text-[10px] text-muted-foreground">importance {mem.importance}</span>
                     <div className="ml-auto flex items-center gap-1">
+                      <button onClick={() => handleFavorite(mem)} title={mem.is_favorite ? "Unfavorite (removes its shield)" : "Favorite (shields it from pruning and fading)"} className={`p-1.5 rounded-lg hover:bg-muted ${mem.is_favorite ? "text-amber-400" : "text-muted-foreground"}`}>
+                        <Star className={`w-3.5 h-3.5 ${mem.is_favorite ? "fill-amber-400" : ""}`} />
+                      </button>
                       <button onClick={() => handleToggle(mem)} className="text-[10px] px-2 py-1 rounded-lg hover:bg-muted text-muted-foreground">
                         {mem.is_enabled ? 'Disable' : 'Enable'}
                       </button>

@@ -63,9 +63,15 @@ try {
     // live model catalog GET /api/settings/models, GET/POST/DELETE
     // /api/settings/fast-model-id and /api/settings/image-model-id, and
     // PATCH /api/autonomy/goals/:id for goal editing).
-    assert.equal(nonStatic.length, 165);
-    // +1 static route on top of the 165 API routes (was 163 = 162 + 1).
-    if (!process.env.VERCEL) assert.equal(routes.length, 166);
+    // Phase 36 added 10: the resident-tool routes (GET/POST
+    // /api/autonomy/tools, GET/PATCH/DELETE /api/autonomy/tools/:id,
+    // GET/POST /api/autonomy/agents/:id/tools, DELETE
+    // /api/autonomy/agents/:id/tools/:toolId, GET
+    // /api/autonomy/agents/:id/tool-runs, POST
+    // /api/autonomy/tools/:id/invoke).
+    assert.equal(nonStatic.length, 175);
+    // +1 static route on top of the 175 API routes (was 165 = 164 + 1).
+    if (!process.env.VERCEL) assert.equal(routes.length, 176);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",

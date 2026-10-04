@@ -231,6 +231,34 @@ export const SKILL_REGISTRY = Object.freeze({
     execute: postWebhook
   }),
 
+  // --- T4: resident tools (Phase 36) -----------------------------------------
+  // `tool.invoke` is the code-owned MECHANISM for invoking a user-defined
+  // HTTPS tool. The tool definitions themselves are Jeremy's hand-typed data
+  // (server/autonomy/residentTools.js), not skills: a definition grants
+  // nothing by existing. Invocation is per-resident assignment only, reads
+  // run freely, writes wait for Jeremy's per-effect approval in the outbox,
+  // and the master kill switch halts everything. The registry stays
+  // code-only; the data lives in resident_tools.
+  "tool.invoke": def({
+    tier: "T4",
+    effectType: "tool_call",
+    killSwitch: "COGNOS_SKILL_TOOL_INVOKE",
+    maxPayloadBytes: 40_960,
+    timeoutMs: 12_000,
+    summary: "Invoke an HTTPS tool Jeremy defined and assigned to this resident. Reads run freely; writes wait for Jeremy's approval.",
+    idempotencyRule: "keyed by (tool, goal, canonical args): the same call stages once however many times it is asked for",
+    args: {
+      toolId: { type: "string", max: 64, required: true },
+      args: { type: "object", required: false }
+    },
+    // Never executed through the step runner: invocation goes through
+    // residentTools.invokeTool, which checks the kill switch, the assignment,
+    // and the approval gate before anything is staged or sent.
+    execute: async () => {
+      throw new Error("tool.invoke runs through residentTools.invokeTool, not the step runner");
+    }
+  }),
+
   // --- T5: irreversible (Phase 22, autonomy row — second slice) -------------
   // The first act this loop may take that cannot be taken back: publishing
   // content to a granted destination. It is delivered with the same bounded

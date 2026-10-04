@@ -1,7 +1,7 @@
-// Dream recognition + Sapphire memory-layer alignment (v41).
+// Dream recognition + five-layer rail alignment (v46).
 // Dreams are the assistant's own inner life: written to the `self` layer with
 // provenance, recognized by key/source at recall, and rendered as their own
-// framed "your dreams" section — never as generic episodic rows.
+// framed "your dreams" section — never as generic events rows.
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -16,12 +16,15 @@ import { distillDream, dreamMemoryKey } from "../server/autonomy/personality.js"
 // ---------------------------------------------------------------------------
 // The self layer exists and normalizes; unknown layers still fall to semantic.
 // ---------------------------------------------------------------------------
-await test("self is a first-class layer, unknowns still fall back", async () => {
+await test("self is a first-class layer, unknowns fall to events", async () => {
   assert.ok(MEMORY_LAYERS.includes("self"), "self is on the rail");
   assert.equal(normalizeMemoryLayer("self"), "self");
   assert.equal(normalizeMemoryLayer("SELF"), "self");
-  assert.equal(normalizeMemoryLayer("bogus"), "semantic");
-  assert.equal(normalizeMemoryLayer("episodic"), "episodic");
+  assert.equal(normalizeMemoryLayer("bogus"), "events");
+  assert.equal(normalizeMemoryLayer("episodic"), "events", "episodic maps onto the rail");
+  assert.equal(normalizeMemoryLayer("semantic"), "knowledge", "semantic maps onto the rail");
+  assert.deepEqual(MEMORY_LAYERS.slice().sort(),
+    ["self", "events", "entities", "knowledge", "goals"].sort(), "the rail is exactly the five layers");
 });
 
 // ---------------------------------------------------------------------------
@@ -32,7 +35,7 @@ await test("dream recognition keys on the dream key and source", async () => {
   assert.equal(isDreamMemory({ memory_key: "dream.2026.10.02" }), true);
   assert.equal(isDreamMemory({ memory_key: "DREAM.2026.10.02" }), true);
   assert.equal(isDreamMemory({ source: "heartbeat.dream", memory_key: "other" }), true);
-  assert.equal(isDreamMemory({ memory_key: "user.preference.editor", memory_layer: "episodic" }), false);
+  assert.equal(isDreamMemory({ memory_key: "user.preference.editor", memory_layer: "events" }), false);
   assert.equal(isDreamMemory({ memory_layer: "self", memory_key: "self.note" }), false,
     "a future self-sheet note is self-layer material, not a dream");
   assert.equal(isDreamMemory({}), false);
@@ -61,7 +64,7 @@ await test("dreams sort newest first, undated sink", async () => {
 // ---------------------------------------------------------------------------
 const mkDream = (date, content) => ({
   memory_key: `dream.${date}`, source: "heartbeat.dream",
-  memory_layer: "self", memory_type: "episodic", content
+  memory_layer: "self", memory_type: "self", content
 });
 
 await test("the dreams section is framed as inner life, not fact", async () => {
@@ -98,7 +101,7 @@ await test("the dreams section caps at DREAM_SECTION_MAX and is empty when dream
 // ---------------------------------------------------------------------------
 await test("the system prompt separates dreams from ordinary memory", async () => {
   const memories = [
-    { memory_key: "user.preference.editor", memory_layer: "semantic",
+    { memory_key: "user.preference.editor", memory_layer: "knowledge",
       content: "Jeremy likes concise replies.", evidence_level: "direct" },
     mkDream("2026.10.02", "The heron stood in the river like a held breath.")
   ];
@@ -115,7 +118,7 @@ await test("the system prompt separates dreams from ordinary memory", async () =
 
 await test("no dreams means no dreams section; only dreams means no generic section", async () => {
   const plain = buildContextSystemPrompt(null,
-    [{ memory_key: "user.x", content: "y", memory_layer: "semantic" }], null);
+    [{ memory_key: "user.x", content: "y", memory_layer: "knowledge" }], null);
   assert.ok(!plain.includes("YOUR DREAMS"), "dreamless prompt has no dreams section");
   const onlyDreams = buildContextSystemPrompt(null, [mkDream("2026.10.02", "quiet night")], null);
   assert.ok(onlyDreams.includes("YOUR DREAMS"), "dreams section present");
@@ -126,7 +129,7 @@ await test("no dreams means no dreams section; only dreams means no generic sect
 // assembleContextWindow: dreams are partitioned inside the memory budget.
 // ---------------------------------------------------------------------------
 await test("the window carries dreamMemories inside the same budget", async () => {
-  const mk = (key, content, layer = "semantic") => ({
+  const mk = (key, content, layer = "knowledge") => ({
     id: key, memory_key: key, memory_layer: layer, memory_type: layer, content
   });
   const win = assembleContextWindow({
@@ -134,7 +137,7 @@ await test("the window carries dreamMemories inside the same budget", async () =
     memories: [
       mk("user.preference.editor", "Jeremy likes concise replies."),
       mk("dream.2026.10.02", "The heron stood in the river.", "self"),
-      mk("dream.2026.10.01", "The day held two memories.", "episodic")
+      mk("dream.2026.10.01", "The day held two memories.", "self")
     ],
     config: { memoryTokens: 8000 }
   });
@@ -175,7 +178,7 @@ await test("distillDream writes to the self layer with provenance", async () => 
   assert.equal(r.key, dreamMemoryKey("2026-09-30"));
   const row = db._created[0];
   assert.equal(row.memory_layer, "self", "the dream lives on the self layer");
-  assert.equal(row.memory_type, "episodic", "the type stays episodic");
+  assert.equal(row.memory_type, "self", "the type follows the five-layer rail");
   assert.deepEqual(row.memory_value.distilled_from, ["mem_a", "mem_b"],
     "Sapphire-style derived_from provenance, stored inline");
   assert.equal(row.memory_value.fragment_count, 2);

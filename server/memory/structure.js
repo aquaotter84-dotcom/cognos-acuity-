@@ -5,16 +5,27 @@
 // object while preserving the original free-form `content` field for display and
 // backwards compatibility.
 //
-// Layers follow Sapphire's rail (see docs/memory-alignment.md): working /
-// episodic / semantic for the shared record, plus `self` for the assistant's
-// own inner life — the dream journal, and one day a self sheet. The dream
-// entries are recognized by their stable `dream.<date>` key (and secondarily
-// by their `heartbeat.dream` source), never by layer alone: a future self
-// sheet is self-layer material that is not a dream.
+// Layers follow Sapphire's 5-layer rail (see docs/memory-alignment.md):
+// self / events / entities / knowledge / goals. The pre-transplant
+// working / episodic / semantic scheme was retired in the v46 transplant
+// (Jeremy-approved wipe); old values map onto the rail at every boundary:
+//
+//   working  -> events    (the layer is gone — chat history covers short-lived
+//                         context, and events is the default write target)
+//   episodic -> events    (same concept: things that happened)
+//   semantic -> knowledge (same concept: durable reference data)
+//   self     -> self      (unchanged: the assistant's own inner life)
+//
+// `entities` and `goals` were already covered by COGNOS's knowledge graph
+// and autonomy tables; the transplant made them first-class layers too.
+// Since the memories table was wiped and starts clean, no data migration of
+// old rows was needed — the new rail starts empty.
 
-export const MEMORY_LAYERS = Object.freeze(["working", "episodic", "semantic", "self"]);
-export const MEMORY_TYPES = Object.freeze(["working", "episodic", "semantic"]);
-export const MEMORY_SCHEMA_VERSION = 1;
+export const MEMORY_LAYERS = Object.freeze(["self", "events", "entities", "knowledge", "goals"]);
+export const MEMORY_TYPES = Object.freeze(["self", "events", "entities", "knowledge", "goals"]);
+export const MEMORY_SCHEMA_VERSION = 2;
+/** Sapphire's default write target: things that happened, the librarian's raw material. */
+export const DEFAULT_MEMORY_LAYER = "events";
 
 const MAX_KEY_LENGTH = 120;
 const MAX_VALUE_BYTES = 4096;
@@ -60,10 +71,12 @@ function normalizeExpiry(value) {
 }
 
 export function normalizeMemoryLayer(value, memoryType = null) {
-  const candidate = String(value || memoryType || "semantic").trim().toLowerCase().replace(/[ -]+/g, "_");
-  if (candidate === "short_term" || candidate === "shortterm" || candidate === "context") return "working";
-  if (candidate === "long_term" || candidate === "longterm" || candidate === "persistent") return "semantic";
-  return MEMORY_LAYERS.includes(candidate) ? candidate : "semantic";
+  const candidate = String(value || memoryType || DEFAULT_MEMORY_LAYER).trim().toLowerCase().replace(/[ -]+/g, "_");
+  // Retired pre-transplant layers, mapped onto the rail (documented above):
+  if (candidate === "working" || candidate === "short_term" || candidate === "shortterm" || candidate === "context") return "events";
+  if (candidate === "episodic") return "events";
+  if (candidate === "semantic" || candidate === "long_term" || candidate === "longterm" || candidate === "persistent") return "knowledge";
+  return MEMORY_LAYERS.includes(candidate) ? candidate : DEFAULT_MEMORY_LAYER;
 }
 
 export function normalizeMemoryType(value, layer = "semantic") {

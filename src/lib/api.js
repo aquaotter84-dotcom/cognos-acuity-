@@ -191,6 +191,24 @@ export const api = {
   /** Run one bounded slice now. No-op (frozen) when autonomy is disabled. */
   runTick: (body = {}) => req("/api/autonomy/tick", { method: "POST", body }),
 
+  // --- Phase 36: resident tools ------------------------------------------------
+  // Jeremy's hand-typed HTTPS tools, assigned per resident. Secrets are
+  // write-only: accepted on create/update, never returned by any of these.
+  listTools: () => req("/api/autonomy/tools"),
+  getTool: (id) => req(`/api/autonomy/tools/${id}`),
+  createTool: (body) => req("/api/autonomy/tools", { method: "POST", body }),
+  updateTool: (id, body) => req(`/api/autonomy/tools/${id}`, { method: "PATCH", body }),
+  deleteTool: (id) => req(`/api/autonomy/tools/${id}`, { method: "DELETE" }),
+  residentTools: (agentId) => req(`/api/autonomy/agents/${agentId}/tools`),
+  assignTool: (agentId, toolId) =>
+    req(`/api/autonomy/agents/${agentId}/tools`, { method: "POST", body: { toolId } }),
+  unassignTool: (agentId, toolId) =>
+    req(`/api/autonomy/agents/${agentId}/tools/${toolId}`, { method: "DELETE" }),
+  toolRuns: (agentId, params = {}) => req(`/api/autonomy/agents/${agentId}/tool-runs${qs(params)}`),
+  /** Reads run now; writes stage an approval in the inbox. */
+  invokeTool: (agentId, toolId, body = {}) =>
+    req(`/api/autonomy/agents/${agentId}/tools/${toolId}/invoke`, { method: "POST", body }),
+
   // --- Phase 31: heartbeat with personality ----------------------------------
   // The morning greeting (once per device-local day, in-app only — never a
   // push), the quiet dream journal, and rare gentle check-ins. All three are

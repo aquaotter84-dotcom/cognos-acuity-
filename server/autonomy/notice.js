@@ -145,6 +145,33 @@ export const NOTICE_TEMPLATES = Object.freeze({
       }
       return bits.length ? bits.join(" ") : "I did a housekeeping pass and everything already looks tidy.";
     }
+  }),
+
+  // Phase 35 — the memory transplant + decay announcements. Warm, plain,
+  // everyday language: these are the sentences Jeremy actually reads.
+  memory_decay_live: Object.freeze({
+    fields: Object.freeze({
+      fadedCount: "number"
+    }),
+    enums: Object.freeze({}),
+    severity: "info",
+    render: (f) => `Small change in how I remember things: memories now gently fade with time unless they're favorites or pinned.`
+      + ` Fleeting stuff — like what you were up to an hour ago — fades fastest; the durable things barely move.`
+      + (f.fadedCount > 0 ? ` Last night ${plural(f.fadedCount, "memory", "memories")} softened a little.` : "")
+  }),
+
+  memory_transplant_done: Object.freeze({
+    fields: Object.freeze({
+      backupDir: "string",
+      backupName: "string",
+      memoryCount: "number"
+    }),
+    enums: Object.freeze({}),
+    severity: "info",
+    render: (f) => `Your memory got a fresh architecture — same mind, better shelves.`
+      + ` I cleared the old shelves only after saving everything first:`
+      + ` ${plural(f.memoryCount, "memory", "memories")} backed up to ${f.backupDir}/${f.backupName}.`
+      + ` Nothing is lost; the backup is yours to keep.`
   })
 });
 

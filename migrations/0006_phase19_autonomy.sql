@@ -107,7 +107,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS goal_steps_idem_idx ON goal_steps (idempotency
 
 CREATE TABLE IF NOT EXISTS goal_notes (
   id                    TEXT PRIMARY KEY,
-  goal_id               TEXT NOT NULL REFERENCES autonomy_goals(id) ON DELETE RESTRICT,
+  -- No foreign key to autonomy_goals: a deleted goal's notes survive as
+  -- orphans for the cleanup agent's review queue (phase34b).
+  goal_id               TEXT NOT NULL,
   agent_id              TEXT,
   tick_id               TEXT,
   ordinal               INTEGER NOT NULL,

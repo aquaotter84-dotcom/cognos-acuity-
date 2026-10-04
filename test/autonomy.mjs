@@ -54,9 +54,17 @@ await test("exactly one externally-writing skill exists per tier, and both are a
   // Phase 21's whole external-write surface is one T4 adapter; Phase 22 adds
   // one T5 adapter. A second entry at either tier means a new way to touch the
   // world shipped without its own review.
+  // Phase 36 adds tool.invoke — the second T4 mechanism, and the first that
+  // ships with its own review baked in: it is Jeremy's per-resident tool
+  // mechanism (definitions are his data, invoked only when assigned to the
+  // resident, writes gated on per-effect approval exactly like T5). The
+  // invariant stands: T4's surface is these two, and no other tier-4 writer
+  // may appear without the same review.
   const writeTiers = SKILL_IDS.filter(id => Number(getSkill(id).tier.slice(1)) >= 4);
-  assert.deepEqual(writeTiers, ["webhook.post", "post.publish"]);
+  assert.deepEqual(writeTiers, ["webhook.post", "tool.invoke", "post.publish"]);
   assert.equal(getSkill("webhook.post").tier, "T4");
+  assert.equal(getSkill("tool.invoke").tier, "T4");
+  assert.equal(getSkill("tool.invoke").effectType, "tool_call");
   assert.equal(getSkill("post.publish").tier, "T5");
   assert.equal(getSkill("post.publish").effectType, "irreversible");
   assert.equal(tierAllowed("T3", autonomyConfig()), true);

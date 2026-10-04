@@ -28,7 +28,7 @@ import { renderNotice } from "../server/autonomy/notice.js";
 
 const mem = (id, content, extra = {}) => ({
   id, content,
-  memory_layer: "semantic",
+  memory_layer: "knowledge",
   memory_key: null,
   importance: 1,
   evidence_level: "inferred",
@@ -66,10 +66,10 @@ await test("pickCanonical keeps the most important, then the newest", async () =
 await test("near-duplicate pairs need embeddings and stay in-layer", async () => {
   const emb = (x) => JSON.stringify([x, 1 - x, 0.5]);
   const rows = [
-    mem("a", "the river is high today my friend", { embedding: emb(0.9), memory_layer: "episodic" }),
-    mem("b", "the river is high today my friend!", { embedding: emb(0.9), memory_layer: "episodic" }),
-    mem("c", "the river is high today my friend", { embedding: emb(0.9), memory_layer: "semantic" }),
-    mem("d", "totally unrelated content here", { embedding: emb(0.1), memory_layer: "episodic" }),
+    mem("a", "the river is high today my friend", { embedding: emb(0.9), memory_layer: "events" }),
+    mem("b", "the river is high today my friend!", { embedding: emb(0.9), memory_layer: "events" }),
+    mem("c", "the river is high today my friend", { embedding: emb(0.9), memory_layer: "knowledge" }),
+    mem("d", "totally unrelated content here", { embedding: emb(0.1), memory_layer: "events" }),
     mem("e", "no embedding at all")
   ];
   const { pairs } = findNearDuplicatePairs(rows, { threshold: NEAR_DUPE_THRESHOLD });
@@ -103,8 +103,8 @@ await test("subsumed pairs find the shorter row inside the longer", async () => 
 
 await test("fragments are tiny, low-importance, weakly-evidenced — and dreams are never fragments", async () => {
   const rows = [
-    mem("f1", "tiny note one", { importance: 2, evidence_level: "inferred", memory_layer: "episodic" }),
-    mem("f2", "tiny note two", { importance: 1, evidence_level: "assumed", memory_layer: "episodic" }),
+    mem("f1", "tiny note one", { importance: 2, evidence_level: "inferred", memory_layer: "events" }),
+    mem("f2", "tiny note two", { importance: 1, evidence_level: "assumed", memory_layer: "events" }),
     mem("big", "this is a much longer note that cannot be a fragment of anything", { importance: 1 }),
     mem("dream", "tiny dream line", {
       importance: 1, evidence_level: "inferred", memory_layer: "self",
@@ -255,7 +255,7 @@ await test("approve applies the disable synchronously; refuse stands", async () 
 
   const { proposal: p2 } = await proposeFinding(db, "ws1", {
     store: "memories", kind: "fragment_merge", title: "merge",
-    detail: { ids: ["keep", "dupe"], layer: "semantic" }, targetIds: ["keep", "dupe"]
+    detail: { ids: ["keep", "dupe"], layer: "knowledge" }, targetIds: ["keep", "dupe"]
   });
   const refused = await decideCleanupProposal({ db, proposalId: p2.id, decision: "refuse" });
   assert.equal(refused.ok, true);
@@ -271,14 +271,14 @@ await test("fragment merge writes one merged memory and disables the parts", asy
   db.Memory.update("f2", { is_enabled: true });
   const { proposal } = await proposeFinding(db, "ws1", {
     store: "memories", kind: "fragment_merge", title: "merge",
-    detail: { ids: ["f1", "f2"], layer: "episodic", previews: { f1: "alpha", f2: "beta" } },
+    detail: { ids: ["f1", "f2"], layer: "events", previews: { f1: "alpha", f2: "beta" } },
     targetIds: ["f1", "f2"]
   });
   const out = await decideCleanupProposal({ db, proposalId: proposal.id, decision: "approve" });
   assert.equal(out.ok, true);
   const merged = db.Memory.get(out.mergedId);
   assert.ok(merged, "a merged memory exists");
-  assert.equal(merged.memory_layer, "episodic");
+  assert.equal(merged.memory_layer, "events");
   assert.equal(merged.source, "cleanup.merge");
   assert.ok(String(merged.content).includes("alpha") && String(merged.content).includes("beta"));
   assert.equal(db.Memory.get("f1").is_enabled, false);

@@ -13,9 +13,10 @@
 // settings, authorize goals, or approve effects, and the prompt says so.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bot, Loader2, MessageCircle, Send, X } from 'lucide-react';
+import { Bot, Loader2, MessageCircle, Send, Wrench, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { ErrorNote } from '@/components/system/SystemUi';
+import { ToolRunCard } from '@/components/autonomy/ResidentTools';
 
 /** Suggested openers: the preferences that used to be switches, as sentences. */
 const SUGGESTIONS = [
@@ -71,6 +72,16 @@ export default function ResidentChatDrawer({ open, onClose, resident, goal = nul
         ...(goal?.id ? { goalId: goal.id } : {}),
       });
       setMessages(prev => [...prev, { role: 'assistant', content: out.reply || '…' }]);
+      // Phase 36 — tool calls the resident asked for, run and reported.
+      // Each run also joins the transcript as plain context, so the next
+      // turn can see what the tool answered.
+      if (out.toolRuns?.length) {
+        setMessages(prev => [...prev, ...out.toolRuns.map(tr => ({
+          role: 'tool',
+          toolRun: tr,
+          content: `[tool “${tr.toolName || tr.toolId}” ${tr.staged ? 'staged for approval' : tr.ok ? `answered ${tr.status ?? ''}` : 'failed'}${tr.output ? `: ${String(tr.output).slice(0, 500)}` : ''}${tr.message ? ` — ${tr.message}` : ''}]`,
+        }))]);
+      }
       // A preference or lifecycle change may have landed — refresh the page
       // behind the drawer so cards, pills, and the inbox tell the truth.
       if (out.actionsTaken?.length) onChanged?.();
@@ -121,6 +132,13 @@ export default function ResidentChatDrawer({ open, onClose, resident, goal = nul
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-2.5 min-h-0">
           {messages.map((m, i) => (
+            m.role === 'tool' && m.toolRun ? (
+              <div key={i} className="flex justify-start">
+                <div className="max-w-[85%] w-full">
+                  <ToolRunCard run={m.toolRun} />
+                </div>
+              </div>
+            ) : (
             <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[85%] rounded-xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap ${
                 m.role === 'user'
@@ -131,6 +149,7 @@ export default function ResidentChatDrawer({ open, onClose, resident, goal = nul
                 {m.failed && <span className="block text-[10px] mt-1 opacity-70">didn't send</span>}
               </div>
             </div>
+            )
           ))}
           {busy && (
             <div className="flex justify-start">

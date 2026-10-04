@@ -23,17 +23,21 @@ const structured = normalizeMemoryFields({
   memory_key: "user.preference.language",
   memory_value: { subject: "user", predicate: "prefers", value: "Python" }
 });
-assert.equal(structured.memory_layer, "semantic");
-assert.equal(structured.memory_type, "semantic");
+assert.equal(structured.memory_layer, "knowledge");
+assert.equal(structured.memory_type, "knowledge");
 assert.equal(structured.memory_key, "user.preference.language");
 assert.deepEqual(structured.memory_value, {
   subject: "user", predicate: "prefers", value: "Python"
 });
-assert.match(formatStructuredMemory(structured), /\[semantic:user\.preference\.language\]/);
-assert.equal(normalizeMemoryLayer("short-term"), "working");
+assert.match(formatStructuredMemory(structured), /\[knowledge:user\.preference\.language\]/);
+assert.equal(normalizeMemoryLayer("short-term"), "events");
+assert.equal(normalizeMemoryLayer("semantic"), "knowledge");
+assert.equal(normalizeMemoryLayer("episodic"), "events");
+assert.equal(normalizeMemoryLayer("working"), "events");
 
 const bounded = normalizeMemoryFields({ content: "bounded", memory_value: { text: "x".repeat(20_000) } });
-assert.equal(bounded.memory_schema_version, 1);
+assert.equal(bounded.memory_schema_version, 2);
+assert.equal(bounded.memory_layer, "events", "the default write target is events");
 assert.ok(JSON.stringify(bounded.memory_value).length <= 4_200, "structured values stay bounded at the write boundary");
 
 const config = normalizeContextWindowConfig({
@@ -80,8 +84,8 @@ const window = assembleContextWindow({
 
 assert.ok(window.metrics.estimatedInputTokens <= config.maxInputTokens, "assembled context stays within the declared budget");
 assert.ok(window.history.length < 20, "old history is admitted by token budget, not only row count");
-assert.equal(window.memories[0].memory_layer, "semantic");
-assert.equal(window.metrics.memoryLayers[0], "semantic");
+assert.equal(window.memories[0].memory_layer, "knowledge");
+assert.equal(window.metrics.memoryLayers[0], "knowledge");
 assert.ok(window.metrics.clipped, "the test window reports omission/clipping");
 assert.ok(estimateTokens(window.userMessage) <= config.maxUserTokens);
 assert.ok(estimateTokens(trimToTokens("a ".repeat(200), 10)) <= 10);

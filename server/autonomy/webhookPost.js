@@ -288,7 +288,10 @@ export function buildWebhookRequest({
 }
 
 /** A DNS-pinned POST. No automatic redirects: every hop is re-validated here. */
-export function pinnedTransport({ url, headers, body, records, timeoutMs, signal, maxResponseBytes }) {
+export function pinnedTransport({ url, headers, body, records, timeoutMs, signal, maxResponseBytes,
+  // Phase 36 — resident tools reuse this DNS-pinned transport for GET/PUT/
+  // PATCH/DELETE. The webhook path passes nothing and keeps POST.
+  method = "POST" }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       return reject(Object.assign(new Error("the webhook delivery was cancelled"), { name: "AbortError" }));
@@ -311,7 +314,7 @@ export function pinnedTransport({ url, headers, body, records, timeoutMs, signal
     };
 
     const req = https.request(target, {
-      method: "POST",
+      method,
       lookup,
       servername: target.hostname,
       headers: { ...headers, "content-length": String(Buffer.byteLength(body || "", "utf8")),

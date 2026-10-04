@@ -27,7 +27,7 @@
 import { createHash } from "node:crypto";
 import { cosineSimilarity, parseEmbedding } from "../memory/embeddings.js";
 import { retireNode, retireEdge } from "../knowledge/graph.js";
-import { isDreamMemory } from "../memory/structure.js";
+import { isDreamMemory, normalizeMemoryLayer } from "../memory/structure.js";
 import { buildNoticeFields } from "./notice.js";
 
 export const CLEANUP_SCAN_LIMIT = 1000;
@@ -96,7 +96,7 @@ export function findNearDuplicatePairs(rows = [], { threshold = NEAR_DUPE_THRESH
     for (let j = i + 1; j < withEmb.length && evaluated < maxPairs; j++) {
       const a = withEmb[i].row;
       const b = withEmb[j].row;
-      if ((a.memory_layer || "") !== (b.memory_layer || "")) continue;
+      if (normalizeMemoryLayer(a.memory_layer, a.memory_type) !== normalizeMemoryLayer(b.memory_layer, b.memory_type)) continue;
       const la = (a.content || "").length;
       const lb = (b.content || "").length;
       if (!la || !lb || Math.max(la, lb) > 2 * Math.min(la, lb)) continue;
@@ -161,7 +161,7 @@ export function findFragmentGroups(rows = []) {
   });
   const byLayer = new Map();
   for (const r of frags) {
-    const layer = r.memory_layer || "semantic";
+    const layer = normalizeMemoryLayer(r.memory_layer, r.memory_type);
     if (!byLayer.has(layer)) byLayer.set(layer, []);
     byLayer.get(layer).push(r.id);
   }
@@ -293,8 +293,8 @@ async function applyProposal(db, proposal) {
       const merged = await db.Memory.create({
         workspace_id: proposal.workspace_id,
         content: ids.map(id => detail.previews?.[id] || id).join("\n\n---\n\n"),
-        memory_type: "semantic",
-        memory_layer: detail.layer || "semantic",
+        memory_type: "knowledge",
+        memory_layer: normalizeMemoryLayer(detail.layer),
         memory_key: `cleanup.merged.${proposal.id}`,
         memory_value: { merged_from: ids, fragment_count: ids.length },
         source: "cleanup.merge",

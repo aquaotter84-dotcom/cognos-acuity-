@@ -38,6 +38,7 @@ import { describeLiveReadiness, setOutboxMode, listOutboxModeFlips } from "../au
 import { decidePromotion } from "../autonomy/promote.js";
 import { decideCleanupProposal, runCleanupAudit, cleanupDue } from "../autonomy/cleanup.js";
 import { buildFeed, residentChatTurn } from "../autonomy/studio.js";
+import { validateToolDefinition, validateSecretName, invokeTool } from "../autonomy/residentTools.js";
 import { describeSkills } from "../skills/index.js";
 import { publicNotice, NOTICE_TEMPLATE_IDS } from "../autonomy/notice.js";
 import { runTick } from "../autonomy/tick.js";
@@ -978,6 +979,171 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     res.json(outcome);
   }));
 
+  // --- Resident tools (Phase 36) --------------------------------------------
+  // Jeremy's hand-typed HTTPS tools, assigned per resident. Secrets are
+  // write-only: accepted on create/update, never returned by any route here.
+  const toolShape = (t) => {
+    if (!t) return null;
+    const { ...rest } = t;
+    return { ...rest, headers: parseJson(t.headers, {}) };
+  };
+
+  const checkSecrets = (secrets) => {
+    const problems = [];
+    const entries = secrets && typeof secrets === "object" && !Array.isArray(secrets) ? secrets : {};
+    for (const [sname, svalue] of Object.entries(entries)) {
+      if (!validateSecretName(sname)) {
+        problems.push(`secret name '${String(sname).slice(0, 40)}' must look like MY_TOKEN (A-Z, 0-9, _)`);
+      } else if (typeof svalue !== "string" || !svalue.trim()) {
+        problems.push(`secret '${sname}' is empty`);
+      } else if (svalue.length > 4000) {
+        problems.push(`secret '${sname}' is over 4000 characters`);
+      }
+    }
+    return { problems, entries };
+  };
+
+  app.get("/api/autonomy/tools", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const tools = await db.ResidentTool.list(ws.id);
+    res.json({ tools: tools.map(toolShape) });
+  }));
+
+  app.post("/api/autonomy/tools", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const body = req.body || {};
+    const v = validateToolDefinition(body);
+    if (!v.ok) return res.status(400).json({ error: v.errors[0], errors: v.errors });
+    const { problems, entries } = checkSecrets(body.secrets);
+    if (problems.length) return res.status(400).json({ error: problems[0], errors: problems });
+    const tool = await db.ResidentTool.create({
+      workspace_id: ws.id,
+      name: String(body.name).trim(),
+      description: safe(body.description, 500),
+      method: String(body.method || "GET").toUpperCase(),
+      url: String(body.url).trim(),
+      headers: body.headers || {},
+      body_template: String(body.body_template || ""),
+      timeout_ms: body.timeout_ms,
+      created_by: "ui",
+    });
+    for (const [sname, svalue] of Object.entries(entries)) {
+      await db.ResidentTool.setSecret(tool.id, sname, svalue);
+    }
+    res.status(201).json({ tool: toolShape(await db.ResidentTool.get(tool.id)) });
+  }));
+
+  app.get("/api/autonomy/tools/:id", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const tool = await db.ResidentTool.get(req.params.id);
+    if (!tool || tool.workspace_id !== ws.id) return res.status(404).json({ error: "Tool not found" });
+    res.json({ tool: toolShape(tool) });
+  }));
+
+  app.patch("/api/autonomy/tools/:id", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const tool = await db.ResidentTool.get(req.params.id);
+    if (!tool || tool.workspace_id !== ws.id) return res.status(404).json({ error: "Tool not found" });
+    const body = req.body || {};
+    const merged = {
+      name: body.name !== undefined ? body.name : tool.name,
+      method: body.method !== undefined ? body.method : tool.method,
+      url: body.url !== undefined ? body.url : tool.url,
+      headers: body.headers !== undefined ? body.headers : parseJson(tool.headers, {}),
+      body_template: body.body_template !== undefined ? body.body_template : tool.body_template,
+    };
+    const v = validateToolDefinition({ ...merged, description: body.description ?? tool.description });
+    if (!v.ok) return res.status(400).json({ error: v.errors[0], errors: v.errors });
+    const { problems, entries } = checkSecrets(body.secrets);
+    if (problems.length) return res.status(400).json({ error: problems[0], errors: problems });
+    const updated = await db.ResidentTool.update(tool.id, {
+      ...(body.name !== undefined ? { name: String(body.name).trim() } : {}),
+      ...(body.description !== undefined ? { description: safe(body.description, 500) } : {}),
+      ...(body.method !== undefined ? { method: String(body.method).toUpperCase() } : {}),
+      ...(body.url !== undefined ? { url: String(body.url).trim() } : {}),
+      ...(body.headers !== undefined ? { headers: body.headers } : {}),
+      ...(body.body_template !== undefined ? { body_template: String(body.body_template) } : {}),
+      ...(body.timeout_ms !== undefined ? { timeout_ms: body.timeout_ms } : {}),
+    });
+    for (const [sname, svalue] of Object.entries(entries)) {
+      await db.ResidentTool.setSecret(tool.id, sname, svalue);
+    }
+    for (const dname of (Array.isArray(body.deleteSecrets) ? body.deleteSecrets : [])) {
+      await db.ResidentTool.deleteSecret(tool.id, String(dname));
+    }
+    res.json({ tool: toolShape(updated) });
+  }));
+
+  app.delete("/api/autonomy/tools/:id", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const tool = await db.ResidentTool.get(req.params.id);
+    if (!tool || tool.workspace_id !== ws.id) return res.status(404).json({ error: "Tool not found" });
+    await db.ResidentTool.remove(tool.id);
+    res.json({ deleted: tool.id });
+  }));
+
+  // --- assignment: per resident, by tap --------------------------------------
+  const agentById = async (ws, id) => {
+    const agent = await db.AutonomyAgent.get(id);
+    return agent && agent.workspace_id === ws.id ? agent : null;
+  };
+
+  app.get("/api/autonomy/agents/:id/tools", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const agent = await agentById(ws, req.params.id);
+    if (!agent) return res.status(404).json({ error: "Resident not found" });
+    const tools = await db.ResidentTool.toolsForAgent(ws.id, agent.slug);
+    res.json({ tools: tools.map(toolShape), agent: { id: agent.id, slug: agent.slug, name: agent.name } });
+  }));
+
+  app.post("/api/autonomy/agents/:id/tools", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const agent = await agentById(ws, req.params.id);
+    if (!agent) return res.status(404).json({ error: "Resident not found" });
+    const tool = await db.ResidentTool.get(req.body?.toolId);
+    if (!tool || tool.workspace_id !== ws.id) return res.status(404).json({ error: "Tool not found" });
+    await db.ResidentTool.assign(tool.id, agent.slug, ws.id);
+    res.json({ assigned: { tool_id: tool.id, agent_slug: agent.slug } });
+  }));
+
+  app.delete("/api/autonomy/agents/:id/tools/:toolId", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const agent = await agentById(ws, req.params.id);
+    if (!agent) return res.status(404).json({ error: "Resident not found" });
+    await db.ResidentTool.unassign(req.params.toolId, agent.slug);
+    res.json({ unassigned: { tool_id: req.params.toolId, agent_slug: agent.slug } });
+  }));
+
+  app.get("/api/autonomy/agents/:id/tool-runs", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const agent = await agentById(ws, req.params.id);
+    if (!agent) return res.status(404).json({ error: "Resident not found" });
+    const runs = await db.ResidentTool.runsForAgent(ws.id, agent.slug, req.query.limit || 50);
+    res.json({ runs });
+  }));
+
+  // --- manual invocation: Jeremy tapping "run it" on a resident's tool -------
+  // Reads run now; writes stage an approval in the inbox. Same gates as chat.
+  app.post("/api/autonomy/agents/:id/tools/:toolId/invoke", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const agent = await agentById(ws, req.params.id);
+    if (!agent) return res.status(404).json({ error: "Resident not found" });
+    const out = await invokeTool({
+      db,
+      toolId: req.params.toolId,
+      agentId: agent.id,
+      goalId: typeof req.body?.goalId === "string" ? req.body.goalId : null,
+      args: req.body?.args && typeof req.body.args === "object" ? req.body.args : {},
+      config: config(),
+      invokedBy: "ui",
+    });
+    if (!out.ok) {
+      const status = out.code === "not_found" ? 404 : out.code === "killed" ? 409 : 400;
+      return res.status(status).json({ error: out.message, code: out.code });
+    }
+    res.json(out);
+  }));
+
   // --- Goals ----------------------------------------------------------------
   app.get("/api/autonomy/goals", wrap(async (req, res) => {
     const ws = await db.Workspace.ensureDefault();
@@ -1293,34 +1459,43 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
       return res.status(400).json({ error: "decision must be approve, refuse or revert" });
     }
 
+    // Phase 36 — tool calls may be goal-less (per-resident chat). Their trust
+    // basis is the assignment plus this approval, not a goal authorization.
+    const isToolCall = effect.effect_type === "tool_call";
     const goal = effect.goal_id ? await db.AutonomyGoal.get(effect.goal_id) : null;
-    if (!goal) return res.status(409).json({ error: "This effect has no goal" });
+    if (!goal && !isToolCall) return res.status(409).json({ error: "This effect has no goal" });
 
     // Phase 34 — the rung checks are gone with the rungs. Approving is the
     // human decision itself; there is no flag to consult first. What the
     // approval still cannot do is bypass the Governor: the decision below
     // judges the effect again, and a refusal there is still a refusal.
 
-    const authorization = await db.GoalAuthorization.current(goal.id, Date.now());
-    if (!authorization) return res.status(409).json({ error: "The goal has no unexpired authorization" });
+    let authorization = null;
+    if (goal) {
+      authorization = await db.GoalAuthorization.current(goal.id, Date.now());
+      if (!authorization) return res.status(409).json({ error: "The goal has no unexpired authorization" });
 
-    const scope = parseJson(goal.scope, {});
-    const budget = parseJson(goal.budget, {});
-    if (!authorizationCovers(authorization, { goalId: goal.id, scope, budget })) {
-      return res.status(409).json({
-        error: "The goal's scope or budget changed since authorization; re-authorize it"
-      });
+      const scope = parseJson(goal.scope, {});
+      const budget = parseJson(goal.budget, {});
+      if (!authorizationCovers(authorization, { goalId: goal.id, scope, budget })) {
+        return res.status(409).json({
+          error: "The goal's scope or budget changed since authorization; re-authorize it"
+        });
+      }
     }
 
     // Phase 22 (autonomy row) — per-effect human approval. Recorded BEFORE the
     // decision because the Action Governor's T5 rule is "a human approval row
     // names this exact outbox id". The row is append-only and the only writer
     // is this route, so the loop can never approve itself.
-    if (effect.tier === "T5") {
+    // Phase 36 — a tool write is approved exactly like a T5: a human approval
+    // row naming this exact outbox id, written by this route only. The Action
+    // Governor's tool_call branch reads it back. One approval story, not two.
+    if (effect.tier === "T5" || isToolCall) {
       await db.EffectApproval.append({
         workspace_id: ws.id,
         outbox_id: effect.id,
-        goal_id: goal.id,
+        goal_id: goal ? goal.id : null,
         agent_id: effect.agent_id || null,
         decision: "approve",
         scope_sha256: authorization?.scope_sha256 || null,

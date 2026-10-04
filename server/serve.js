@@ -22,6 +22,7 @@ import { refreshSettings } from "./autonomy/settings.js";
 import { startHeartbeat } from "./autonomy/heartbeat.js";
 import { createLogger } from "./shared/logging.js";
 import { bootLocalDatabase } from "./localdb.js";
+import { runMemoryTransplant } from "./memory/transplant.js";
 
 const logger = createLogger("server");
 const port = Number(process.env.PORT || 3000);
@@ -30,6 +31,25 @@ const port = Number(process.env.PORT || 3000);
 // (Android APK, internal storage), boot a file-backed PGlite before anything
 // touches the database layer. Inert everywhere else.
 await bootLocalDatabase(logger);
+
+// Phase 35 — the one-time memory transplant (Jeremy-approved wipe for the
+// Sapphire-style rebuild). Marker-guarded and fail-closed: it backs the
+// memories table up to <appDataDir>/backups/, verifies the backup, and only
+// then wipes. Runs exactly once; a failed attempt logs loudly and retries
+// next boot. Never throws — boot survives a transplant failure with the old
+// data intact.
+try {
+  const transplant = await runMemoryTransplant({ db, logger });
+  logger.info("memory transplant boot check", {
+    status: transplant.status,
+    backup_file: transplant.backup_file || null,
+    memory_count: transplant.memory_count ?? null
+  });
+} catch (error) {
+  logger.error("memory transplant boot check failed — memories untouched", {
+    error: String(error?.message || error).slice(0, 300)
+  });
+}
 
 const server = app.listen(port, "0.0.0.0", () => {
   const config = getSystemConfig();

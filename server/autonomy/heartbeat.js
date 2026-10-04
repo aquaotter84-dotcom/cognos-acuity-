@@ -18,6 +18,7 @@ import { runTick } from "./tick.js";
 import { autonomyConfig } from "./config.js";
 import { refreshSettings } from "./settings.js";
 import { cleanupDue, runCleanupAudit } from "./cleanup.js";
+import { librarianDue, runLibrarian } from "../memory/librarian.js";
 import { createLogger } from "../shared/logging.js";
 
 export function startHeartbeat({ db, logger = createLogger("autonomy.heartbeat"), intervalMs = null } = {}) {
@@ -65,6 +66,30 @@ export function startHeartbeat({ db, logger = createLogger("autonomy.heartbeat")
       } catch (cleanupError) {
         logger.warn("cleanup audit failed", {
           error: String(cleanupError?.message || cleanupError).slice(0, 300)
+        });
+      }
+      // Phase 35 — the memory librarian (nightly groundskeeper: decay tick
+      // first, then the dates/link/dedup/sort/self passes) rides the
+      // heartbeat too, day-guarded per workspace, behind the same kill
+      // switch. A failed night never kills the beat — it logs and the next
+      // day's beat tries again.
+      try {
+        const workspaces = await db.Workspace.list();
+        for (const ws of workspaces || []) {
+          try {
+            if (await librarianDue(db, ws.id)) {
+              await runLibrarian({ db, workspaceId: ws.id, logger });
+            }
+          } catch (tendingError) {
+            logger.warn("memory tending failed", {
+              workspaceId: ws?.id,
+              error: String(tendingError?.message || tendingError).slice(0, 300)
+            });
+          }
+        }
+      } catch (tendingListError) {
+        logger.warn("memory tending workspace list failed", {
+          error: String(tendingListError?.message || tendingListError).slice(0, 300)
         });
       }
     } catch (error) {

@@ -5,6 +5,7 @@
 
 import { cleanText } from "../sources/extract.js";
 import { embedTexts, parseEmbedding, rankMemoriesBySimilarity } from "../memory/embeddings.js";
+import { recordRecall } from "../memory/recall.js";
 
 export async function searchMemory({ db, goal, args }) {
   const limit = Math.max(1, Math.min(20, Number(args?.limit) || 5));
@@ -19,6 +20,13 @@ export async function searchMemory({ db, goal, args }) {
     volatility: m.volatility || null
   });
 
+  // Instrumentation only: record that these rows were recalled. Never used
+  // for ranking (Sapphire's restraint). Best-effort — never fails the search.
+  const note = (rows) => {
+    const qf = typeof db?.query === "function" ? db.query : null;
+    if (qf && rows?.length) recordRecall(qf, rows.map(m => m.id)).catch(() => {});
+  };
+
   // Semantic ranking when the pool has real embedding coverage.
   if (query) {
     try {
@@ -28,6 +36,7 @@ export async function searchMemory({ db, goal, args }) {
         if (vecs && vecs[0] && vecs[0].length > 0) {
           const ranked = rankMemoriesBySimilarity(vecs[0], embedded, limit);
           if (ranked.length > 0) {
+            note(ranked);
             return { ok: true, output: { count: ranked.length, memories: ranked.map(toPreview), ranked_by: "semantic" } };
           }
         }
@@ -40,5 +49,6 @@ export async function searchMemory({ db, goal, args }) {
     .filter(m => !needle || String(m.content || "").toLowerCase().includes(needle))
     .slice(0, limit)
     .map(toPreview);
+  note(hits);
   return { ok: true, output: { count: hits.length, memories: hits, ranked_by: "substring" } };
 }

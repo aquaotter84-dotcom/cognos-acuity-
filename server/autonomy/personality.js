@@ -330,11 +330,11 @@ export async function distillDream({ db, workspaceId, dateStr, compose = null } 
       await db.Memory.create({
         workspace_id: workspaceId,
         content: text,
-        memory_type: "episodic",
-        // The assistant's own inner life lives on Sapphire's `self` layer;
-        // the type stays episodic (it distills the day's events). Historical
-        // rows were written as episodic/episodic and are still recognized by
-        // their `dream.<date>` key at recall time.
+        // The assistant's own inner life lives on the `self` layer; the type
+        // follows the five-layer rail (it distills the day's events).
+        // Historical rows were written as episodic/episodic and are still
+        // recognized by their `dream.<date>` key at recall time.
+        memory_type: "self",
         memory_layer: "self",
         memory_key: key,
         memory_value: {

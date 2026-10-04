@@ -182,7 +182,7 @@ const isoDaysAgo = (n) => new Date(NOW - n * 86400_000).toISOString();
   ok(db._created.length === 1, "exactly one dream memory created");
   const row = db._created[0];
   ok(row.memory_key === "dream.2026.09.30", "dream stored under the dream key");
-  ok(row.memory_type === "episodic" && row.memory_layer === "self", "dream is episodic, on the self layer");
+  ok(row.memory_type === "self" && row.memory_layer === "self", "dream is self, on the self layer");
   ok(row.source === "heartbeat.dream", "dream source labeled");
   ok(typeof row.content === "string" && row.content.length > 0, "dream has content");
   const second = await distillDream({ db, workspaceId: "ws1", dateStr: DAY, compose: null });

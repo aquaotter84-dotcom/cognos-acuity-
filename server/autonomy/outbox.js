@@ -19,6 +19,7 @@ import { searchWeb } from "../council/webSearch.js";
 // Phase 21 — the T4 adapter. It reads `isPublicAddress` from safeFetch and
 // nothing from the autonomy tree, so this edge cannot cycle back either.
 import { buildWebhookRequest, deliverWebhook } from "./webhookPost.js";
+import { performToolEffect } from "./residentTools.js";
 
 export { canonicalize };
 
@@ -134,7 +135,15 @@ const EXECUTORS = Object.freeze({
   // bounded: DNS-pinned, re-checked per redirect, one attempt plus one bounded
   // retry, and a receipt that digests the response instead of keeping it.
   external_write: externalWriteExecutor(),
-  irreversible: externalWriteExecutor()
+  irreversible: externalWriteExecutor(),
+
+  // Phase 36 — resident tool calls. The ONLY performer: invokeTool stages the
+  // write, the Action Governor judges it (kill switch, assignment, origin,
+  // per-effect human approval), and only a live verdict reaches this.
+  // Receipts are metadata only, like every other executor here.
+  async tool_call({ db, effect, config, signal = null }) {
+    return performToolEffect({ db, effect, config, signal });
+  }
 });
 
 /** The T4/T5 socket executor. Shared; see the two keys above. */
@@ -377,10 +386,11 @@ export async function decideEffect({ db, effectId, goal, authorization = null, c
     // T5_NEEDS_HUMAN falls through and is judged again — with the approval
     // row, if one now names it; without one, it refuses again for the same
     // named reason.
-    const awaitingApproval = effect.status === "refused" && effect.tier === "T5"
+    const awaitingApproval = effect.status === "refused"
+      && (effect.tier === "T5" || effect.effect_type === "tool_call")
       && Array.isArray(verdictOf?.failed)
       && verdictOf.failed.length > 0
-      && verdictOf.failed.every(f => f?.rule === "T5_NEEDS_HUMAN");
+      && verdictOf.failed.every(f => f?.rule === "T5_NEEDS_HUMAN" || f?.rule === "TOOL_WRITE_NEEDS_APPROVAL");
     if (!awaitingApproval) {
       return {
         ok: true,

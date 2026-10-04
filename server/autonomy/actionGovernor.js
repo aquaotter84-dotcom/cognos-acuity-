@@ -36,6 +36,8 @@ import { tierAllowed, budgetLineExhausted, insideQuietHours, liveDestinationCove
 import { authorizationCovers } from "./authorize.js";
 import { urlAllowedByScope, destinationsForScope, scopeEntryFor } from "./scopeUrl.js";
 import { checkWebhookUrl, checkWebhookHeaders, resolveSecretRef } from "./webhookPost.js";
+import { isAllowedHeaderName } from "./webhookPost.js";
+import { effectiveEnabled } from "./settings.js";
 
 /** Every rule, so a refusal names what fired instead of just "no".
  *
@@ -75,7 +77,15 @@ export const RULES = Object.freeze({
   EVIDENCE_UNREADABLE: "the evidence ledger couldn't be read, so the check couldn't run",
   APPROVAL_UNREADABLE: "the approval ledger couldn't be read, so the approval check couldn't run",
   CONFIG_UNREADABLE: "the autonomy settings couldn't be read, so nothing can be judged safe",
-  BODY_REQUIRED: "the message needs a body"
+  BODY_REQUIRED: "the message needs a body",
+  // Phase 36 — resident tools. Plain language for the approvals inbox.
+  AUTONOMY_DISABLED: "autonomy is off — the master switch is down, so nothing runs",
+  TOOL_UNKNOWN: "that tool doesn't exist anymore",
+  TOOL_NOT_ASSIGNED: "that tool isn't assigned to this resident",
+  TOOL_URL_UNSAFE: "the tool's address didn't pass the safety check",
+  TOOL_DESTINATION_MISMATCH: "the request goes somewhere the tool's definition doesn't name",
+  TOOL_METHOD_MISMATCH: "the method doesn't match the tool's definition",
+  TOOL_WRITE_NEEDS_APPROVAL: "a write needs your approval first — it's waiting in the inbox"
 });
 
 /**
@@ -235,6 +245,125 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
     } else {
       passed.push("payload within the skill's size limit");
     }
+  }
+
+  // --- Phase 36: resident tool calls ---------------------------------------
+  // A tool_call is judged on its own terms, not the goal-scope machinery: the
+  // destination's authority is Jeremy's hand-typed tool definition, and there
+  // may be no goal at all (per-resident chat). The Governor still enforces the
+  // kill switch, the assignment, the URL's shape and origin, the method, the
+  // header allowlist, the body cap, and no credentials outside {{secret:…}} —
+  // and for writes, a per-effect human approval naming this exact outbox id.
+  // That is the same EffectApproval story as T5: one coherent approval story,
+  // not two. Budgets are goal concepts; the approval is the gate for tools.
+  if (effect.effect_type === "tool_call") {
+    const tp = payload;
+
+    if (!effectiveEnabled()) {
+      fail("AUTONOMY_DISABLED", "phase19.autonomy_default_off");
+    } else {
+      passed.push("autonomy is on — the master switch is up");
+    }
+
+    const tool = await db.ResidentTool.get(tp.toolId).catch(() => null);
+    if (!tool) {
+      fail("TOOL_UNKNOWN", "pin.effect_staged", "the tool definition is gone");
+    } else {
+      passed.push("the tool definition exists");
+    }
+
+    const agent = effect.agent_id
+      ? await db.AutonomyAgent.get(effect.agent_id).catch(() => null)
+      : null;
+    const slug = tp.agentSlug || agent?.slug;
+    const assigned = tool && agent && slug
+      ? await db.ResidentTool.isAssigned(tp.toolId, slug).catch(() => false)
+      : false;
+    if (!assigned) {
+      fail("TOOL_NOT_ASSIGNED", "pin.effect_staged",
+        "the tool is not assigned to the resident that staged this call");
+    } else {
+      passed.push("the tool is assigned to this resident");
+    }
+
+    if (tool && tp.method !== tool.method) {
+      fail("TOOL_METHOD_MISMATCH", "pin.effect_staged",
+        `staged as ${tp.method || "(none)"}, defined as ${tool.method}`);
+    } else if (tool) {
+      passed.push("the method matches the tool's definition");
+    }
+
+    if (tp.url_origin) {
+      const shaped = checkWebhookUrl(`${tp.url_origin}/`);
+      if (!shaped.ok) {
+        fail("TOOL_URL_UNSAFE", "pin.effect_staged", shaped.reason);
+      } else {
+        passed.push("the destination passes the structural safety check");
+        let defOrigin = null;
+        try {
+          defOrigin = new URL(String(tool?.url || "").replace(/\{\{[^}]*\}\}/g, "x")).origin;
+        } catch { defOrigin = null; }
+        if (tool && defOrigin && tp.url_origin !== defOrigin) {
+          fail("TOOL_DESTINATION_MISMATCH", "pin.effect_staged",
+            "the staged destination is not the tool's own origin");
+        } else if (tool && defOrigin) {
+          passed.push("the destination is the tool's own origin");
+        }
+      }
+    } else {
+      fail("TOOL_URL_UNSAFE", "pin.effect_staged", "the staged call names no destination");
+    }
+
+    for (const hname of (Array.isArray(tp.header_names) ? tp.header_names : [])) {
+      const lname = String(hname || "").toLowerCase();
+      if (lname === "x-api-key" || isAllowedHeaderName(lname)
+          || lname.startsWith("x-cognos-") || lname === "user-agent" || lname === "content-type") continue;
+      fail("HEADER_NOT_ALLOWED", "pin.secrets_env_only", `header '${lname}' is not allowlisted`);
+      break;
+    }
+    if (!failed.some((f) => f.rule === "HEADER_NOT_ALLOWED")) {
+      passed.push("every header name is allowlisted");
+    }
+
+    const bodyChars = Number(tp.body_chars || 0);
+    if (bodyChars > 32_768) {
+      fail("BODY_TOO_LARGE", "pin.effect_staged", `${bodyChars} bytes > the 32768 byte cap`);
+    } else {
+      passed.push("the body is within the cap");
+    }
+
+    // Writes need Jeremy, one at a time, by exact effect id — the T5 story.
+    // Reads run freely.
+    if (tool && tp.method !== "GET") {
+      let approval = null;
+      let approvalError = false;
+      if (typeof db?.EffectApproval?.current === "function") {
+        try { approval = await db.EffectApproval.current(effect.id); }
+        catch { approvalError = true; }
+      }
+      if (approvalError) {
+        fail("APPROVAL_UNREADABLE", "pin.irreversible_human_approval");
+      } else if (!approval) {
+        fail("TOOL_WRITE_NEEDS_APPROVAL", "pin.irreversible_human_approval",
+          "no human approval row names this exact effect id");
+      } else {
+        passed.push("a human approval row names this exact effect id");
+      }
+    } else if (tool) {
+      passed.push("a read runs freely — no approval needed");
+    }
+
+    const refuse = failed.length > 0;
+    return {
+      decision: refuse ? "refuse" : "release",
+      passed,
+      failed,
+      mode: effectiveMode,
+      stagedMode: effect.mode || "shadow",
+      tier,
+      judgedAt: new Date(nowMs).toISOString(),
+      law: refuse ? failed[0].law : "pin.effect_staged",
+    };
   }
 
   // --- scope ---------------------------------------------------------------

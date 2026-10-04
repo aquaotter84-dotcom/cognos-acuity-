@@ -23,6 +23,7 @@ import { publicNotice } from "./notice.js";
 import { getPersonalitySettings, updatePersonalitySettings } from "./personality.js";
 import { setOutboxMode } from "./liveOutbox.js";
 import { autonomyConfig } from "./config.js";
+import { invokeTool } from "./residentTools.js";
 import { scopeHashes } from "./authorize.js";
 
 const clean = (v, max = 400) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -349,6 +350,22 @@ const RESIDENT_CHAT_SCHEMA = {
   required: ["reply"],
   properties: {
     reply: { type: "string", maxLength: 1200 },
+    // Phase 36 — the model may REQUEST tool calls, never perform them. Each
+    // request is re-verified server-side (assignment, kill switch); reads run
+    // and their results come back with the reply, writes stage an approval.
+    tool_calls: {
+      type: "array",
+      maxItems: 2,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["toolId"],
+        properties: {
+          toolId: { type: "string", maxLength: 64 },
+          args: { type: "object", maxProperties: 50 },
+        },
+      },
+    },
   },
 };
 
@@ -367,9 +384,11 @@ const boundedTranscript = (messages = []) =>
  * call). Everything else goes to the model with the resident's brief, its
  * goals, recent notes, findings, preferences, and governance state.
  *
- * The model is read-only conversation: it can discuss, explain, and suggest,
- * but it cannot change settings, authorize goals, or approve effects. The
- * prompt says so, and there is no tool for it to call.
+ * The model is conversation with one structured power: it may REQUEST tool
+ * calls (tool_calls in its JSON), which the route verifies and runs. Reads run
+ * and their results come back; writes stage a per-effect approval for Jeremy.
+ * It cannot change settings, authorize goals, or approve effects — the prompt
+ * says so, and the approval gate is server-side, never the model's to grant.
  */
 export async function residentChatTurn({
   db, config: cfg = {}, residentId, goalId = null,
@@ -411,6 +430,12 @@ export async function residentChatTurn({
 
   // --- otherwise: converse over live state ----------------------------------
   const notes = scopedGoal ? await db.GoalNote.digest(scopedGoal.id, 12) : [];
+  // Phase 36 — the resident's assigned tools. The model may request calls;
+  // the route verifies and runs them. Never shown to other residents.
+  const assignedTools = await db.ResidentTool.toolsForAgent(ws.id, resident.slug).catch(() => []);
+  const toolLines = (assignedTools || []).slice(0, 12).map((t) =>
+    `- ${t.name}: ${clean(t.description, 140) || "no description"} [${t.method}]`
+  ).join("\n");
   const findings = parseJson(scopedGoal?.findings, {});
   const prefs = await getPersonalitySettings(db, ws.id).catch(() => ({}));
   const c = cfg && cfg.outboxMode ? cfg : autonomyConfig();
@@ -432,6 +457,10 @@ export async function residentChatTurn({
     "",
     `YOUR BRIEF (what you were told to do):`,
     clean(resident.brief, 900) || "(no brief recorded)",
+    "",
+    toolLines
+      ? `YOUR TOOLS (Jeremy gave these to YOU — no other resident has them):\n${toolLines}\nIf Jeremy asks you to use one, put a tool_calls entry in your reply JSON with its toolId (the id, not the name) and args. Reads run right away; writes wait for Jeremy's approval and you say so plainly.`
+      : "",
     "",
     `YOUR GOALS:`,
     goalLines || "(none yet)",
@@ -486,8 +515,49 @@ export async function residentChatTurn({
   const reply = clean(result?.reply, 1200)
     || "I heard you, but I couldn't put the reply together. Say it again?";
 
+  // Phase 36 — run the model's requested tool calls. Every request is
+  // re-verified: the tool must exist and be assigned to THIS resident, or it
+  // is refused with a plain message. Reads return their results; writes stage
+  // an approval and the reply says so.
+  const toolRuns = [];
+  const requested = Array.isArray(result?.tool_calls) ? result.tool_calls.slice(0, 2) : [];
+  const assignedIds = new Set((assignedTools || []).map((t) => t.id));
+  for (const tc of requested) {
+    const toolId = typeof tc?.toolId === "string" ? tc.toolId : "";
+    if (!toolId || !assignedIds.has(toolId)) {
+      toolRuns.push({
+        ok: false, toolId: toolId || "(none)",
+        message: "I don't have that tool — Jeremy assigns my tools, and that one isn't mine.",
+      });
+      continue;
+    }
+    const args = tc?.args && typeof tc.args === "object" && !Array.isArray(tc.args) ? tc.args : {};
+    try {
+      const out = await invokeTool({
+        db, toolId, agentId: resident.id,
+        goalId: scopedGoal?.id || null, args,
+        config: cfg, signal, invokedBy: "resident-chat",
+      });
+      const tool = (assignedTools || []).find((t) => t.id === toolId);
+      toolRuns.push({
+        ok: out.ok, toolId, toolName: tool?.name || toolId,
+        method: tool?.method || null,
+        staged: out.staged === true, outboxId: out.outboxId || null,
+        runId: out.runId || null,
+        status: out.status ?? null,
+        output: typeof out.output === "string" ? out.output.slice(0, 2000) : null,
+        message: out.message || null,
+      });
+    } catch (error) {
+      toolRuns.push({
+        ok: false, toolId,
+        message: `That tool call failed: ${clean(error?.message || String(error), 160)}`,
+      });
+    }
+  }
+
   return {
-    ok: true, reply, actionsTaken: [],
+    ok: true, reply, actionsTaken: [], toolRuns,
     resident: { id: resident.id, name: resident.name },
     goal: scopedGoal ? { id: scopedGoal.id, title: scopedGoal.title, status: scopedGoal.status } : null,
   };

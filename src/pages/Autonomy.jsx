@@ -27,7 +27,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Activity, AlertTriangle, Bell, Bot, Check, ChevronDown, ChevronRight, ClipboardCheck,
   Clock, Copy, Gauge, Heart, HelpCircle, Inbox, Lock, Menu, Pause, Pencil, Play, Plus, RefreshCw, ScrollText,
-  Send, ShieldAlert, ShieldCheck, Snowflake, Sparkles, Sprout, MessageCircle, Trash2, ThumbsDown, ThumbsUp, Undo2, X, Zap
+  Send, ShieldAlert, ShieldCheck, Snowflake, Sparkles, Sprout, MessageCircle, Trash2, ThumbsDown, ThumbsUp, Undo2, X, Zap, Wrench
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { noteLocator } from '@/components/chat/GoalCard';
@@ -36,6 +36,7 @@ import { Pill, Empty, ErrorNote } from '@/components/system/SystemUi';
 import DesignerDrawer from '@/components/autonomy/DesignerDrawer';
 import ResidentChatDrawer from '@/components/autonomy/ResidentChatDrawer';
 import AuthorizeConsent from '@/components/autonomy/AuthorizeConsent';
+import ToolsTab, { ResidentToolPicker, ToolRunHistory } from '@/components/autonomy/ResidentTools';
 import { ARCHIVIST } from '@/lib/archivist';
 import {
   GLOSSARY, TIER_LABEL, effectStatusLabel, goalStatusLabel,
@@ -45,6 +46,7 @@ import {
 const TABS = [
   { id: 'overview', label: 'Overview', icon: Gauge },
   { id: 'residents', label: 'Residents', icon: Bot },
+  { id: 'tools', label: 'Tools', icon: Wrench },
   { id: 'goals', label: 'Goals', icon: ScrollText },
   { id: 'activity', label: 'Activity', icon: Activity },
   { id: 'notices', label: 'Notices', icon: Inbox },
@@ -723,6 +725,9 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
                       <span className="text-[10px] text-muted-foreground/70">no skills allowed yet</span>
                     )}
                   </div>
+                  {/* Phase 36 — per-resident tool assignment, by tap. */}
+                  <ResidentToolPicker resident={resident} onChanged={refresh} />
+                  <ToolRunHistory residentId={resident.id} limit={3} />
                   {resident.brief && (
                     <p className="text-[10px] text-muted-foreground/70 mt-1.5 line-clamp-2 whitespace-pre-wrap">
                       {resident.brief}
@@ -2611,6 +2616,8 @@ export default function Autonomy() {
             />
           ) : tab === 'residents' ? (
             <Residents status={status} frozen={frozen} onDesign={() => setDesignerOpen(true)} onChanged={refreshAll} />
+          ) : tab === 'tools' ? (
+            <ToolsTab residents={residents} onChanged={refreshAll} />
           ) : tab === 'goals' ? (
             <Goals status={status} frozen={frozen} residents={residents} onChanged={refreshAttention} />
           ) : tab === 'activity' ? (

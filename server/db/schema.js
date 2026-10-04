@@ -1365,8 +1365,178 @@ BEGIN
 END $$;
 `;
 
-export const PHASE_SCHEMAS = [  { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },  { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },
-  { id: "0003", phase: 16, name: "phase16_latency_observability", sql: PHASE16_SCHEMA },
+// ---------------------------------------------------------------------------
+// Phase 35 — Sapphire-style memory transplant (Jeremy-approved full rebuild).
+// ---------------------------------------------------------------------------
+// Additive and inert: every statement is CREATE TABLE IF NOT EXISTS /
+// ADD COLUMN IF NOT EXISTS. The memories table keeps its rows through this
+// migration — the one-time backup+wipe lives in server/memory/transplant.js
+// (in-app boot code, marker-guarded, fail-closed), because a SQL migration
+// cannot write the backup file on a hosted database.
+//
+// New relations:
+//   memory_edges        — the graph between memories (mentions, derived_from,
+//                         structural). The priced recall walk traverses these.
+//   memory_tending_state — one row per workspace: the librarian's and the
+//                         decay tick's day-guards, plus the decay-announced
+//                         flag so the "memories now fade" notice fires once.
+//   librarian_runs      — one row per nightly round: per-pass outcomes, the
+//                         librarian's journal.
+//   schema_markers      — one-shot boot markers (the transplant's exactly-once
+//                         guard lives here).
+//
+// New memory columns:
+//   is_favorite    — the shield: favorites refuse prune/atomize, never decay.
+//   recall_count / last_recalled — instrumentation ONLY. Never used for
+//                         ranking (Sapphire's restraint, honored in code).
+//   processed_at   — the librarian's mark_processed verb.
+//   retired_reason — why a row was soft-retired; NULL means live. Prune never
+//                         hard-deletes, so retirement is always reversible.
+export const PHASE35_SCHEMA = `
+-- 35.1 Edges: the memory graph the priced recall walk traverses.
+CREATE TABLE IF NOT EXISTS memory_edges (
+  id              TEXT PRIMARY KEY,
+  workspace_id    TEXT NOT NULL,
+  from_memory_id  TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  to_memory_id    TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  edge_type       TEXT NOT NULL DEFAULT 'mentions',
+  metadata        JSONB,
+  created_by      TEXT,
+  created_date    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT memory_edges_no_self_loop CHECK (from_memory_id <> to_memory_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS memory_edges_unique_idx
+  ON memory_edges (workspace_id, from_memory_id, to_memory_id, edge_type);
+CREATE INDEX IF NOT EXISTS memory_edges_from_idx
+  ON memory_edges (workspace_id, from_memory_id);
+CREATE INDEX IF NOT EXISTS memory_edges_to_idx
+  ON memory_edges (workspace_id, to_memory_id);
+
+-- 35.2 Tending state: day-guards and one-shot announcement flags, per workspace.
+CREATE TABLE IF NOT EXISTS memory_tending_state (
+  workspace_id        TEXT PRIMARY KEY,
+  last_decay_date     TEXT,
+  last_librarian_date TEXT,
+  decay_announced     BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_date        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 35.3 Librarian runs: the nightly journal — one row per round.
+CREATE TABLE IF NOT EXISTS librarian_runs (
+  id            TEXT PRIMARY KEY,
+  workspace_id  TEXT NOT NULL,
+  started_ms    BIGINT NOT NULL,
+  finished_ms   BIGINT,
+  passes        JSONB,
+  decayed       INTEGER NOT NULL DEFAULT 0,
+  error         TEXT,
+  created_date  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS librarian_runs_ws_idx
+  ON librarian_runs (workspace_id, started_ms DESC);
+
+-- 35.4 One-shot boot markers.
+CREATE TABLE IF NOT EXISTS schema_markers (
+  key           TEXT PRIMARY KEY,
+  value         JSONB,
+  created_date  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 35.5 Additive memory columns: favorites, recall instrumentation (never for
+-- ranking), librarian processing marks, reversible retirement.
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS recall_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS last_recalled TIMESTAMPTZ;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ;
+ALTER TABLE memories ADD COLUMN IF NOT EXISTS retired_reason TEXT;
+CREATE INDEX IF NOT EXISTS memories_favorite_idx ON memories (workspace_id, is_favorite) WHERE is_favorite;
+`;
+
+// ---------------------------------------------------------------------------
+// Phase 36 -- resident tools (Orbit-style assignable HTTPS tools).
+// ---------------------------------------------------------------------------
+// User-created HTTPS tools Jeremy defines by hand: name, method, URL, headers,
+// body template. Assignment is per resident (by slug, so it survives brief
+// versioning). Secrets live in resident_tool_secrets and are write-only -- no
+// API ever returns a value, and the executor resolves them at send time only.
+// Run history keeps metadata (digests, status codes, latency), never bodies,
+// never secret values (pin.receipt_metadata_only, extended to tools).
+export const PHASE36_SCHEMA = `
+-- 36.1 Tool definitions: Jeremy's hand-typed HTTPS endpoints.
+CREATE TABLE IF NOT EXISTS resident_tools (
+  id              TEXT PRIMARY KEY,
+  workspace_id    TEXT NOT NULL,
+  name            TEXT NOT NULL,
+  description     TEXT NOT NULL DEFAULT '',
+  method          TEXT NOT NULL DEFAULT 'GET',
+  url             TEXT NOT NULL,
+  headers         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  body_template   TEXT NOT NULL DEFAULT '',
+  timeout_ms      INTEGER NOT NULL DEFAULT 10000,
+  created_by      TEXT,
+  created_date    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_date    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT resident_tools_method_check
+    CHECK (method IN ('GET','POST','PUT','PATCH','DELETE'))
+);
+CREATE INDEX IF NOT EXISTS resident_tools_ws_idx
+  ON resident_tools (workspace_id, created_date DESC);
+
+-- 36.2 Write-only secrets. The value column is never selected by any list/get
+-- accessor; only the executor's resolve path reads it, at send time.
+CREATE TABLE IF NOT EXISTS resident_tool_secrets (
+  id            TEXT PRIMARY KEY,
+  tool_id       TEXT NOT NULL REFERENCES resident_tools(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  value         TEXT NOT NULL,
+  created_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT resident_tool_secrets_unique UNIQUE (tool_id, name),
+  CONSTRAINT resident_tool_secrets_name_check CHECK (name ~ '^[A-Z0-9_]{1,64}$')
+);
+
+-- 36.3 Assignment: which resident may invoke which tool. By slug, so a brief
+-- change (a new agent row) does not silently drop the resident's tools.
+CREATE TABLE IF NOT EXISTS resident_tool_assignments (
+  tool_id       TEXT NOT NULL REFERENCES resident_tools(id) ON DELETE CASCADE,
+  agent_slug    TEXT NOT NULL,
+  workspace_id  TEXT NOT NULL,
+  created_date  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT resident_tool_assignments_unique UNIQUE (tool_id, agent_slug)
+);
+CREATE INDEX IF NOT EXISTS resident_tool_assignments_slug_idx
+  ON resident_tool_assignments (workspace_id, agent_slug);
+
+-- 36.4 Run history: metadata only. No request/response bodies, no secret
+-- values, no query strings (args may carry secrets) -- origin only.
+CREATE TABLE IF NOT EXISTS resident_tool_runs (
+  id              TEXT PRIMARY KEY,
+  workspace_id    TEXT NOT NULL,
+  tool_id         TEXT NOT NULL,
+  tool_name       TEXT NOT NULL,
+  agent_id        TEXT,
+  agent_slug      TEXT,
+  goal_id         TEXT,
+  outbox_id       TEXT,
+  method          TEXT NOT NULL,
+  url_origin      TEXT NOT NULL,
+  status          TEXT NOT NULL,
+  status_code     INTEGER,
+  latency_ms      INTEGER,
+  request_digest  TEXT,
+  response_digest TEXT,
+  response_chars  INTEGER,
+  error           TEXT,
+  created_date    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT resident_tool_runs_status_check
+    CHECK (status IN ('succeeded','failed','awaiting_approval','refused','staged'))
+);
+CREATE INDEX IF NOT EXISTS resident_tool_runs_tool_idx
+  ON resident_tool_runs (tool_id, created_date DESC);
+CREATE INDEX IF NOT EXISTS resident_tool_runs_agent_idx
+  ON resident_tool_runs (workspace_id, agent_slug, created_date DESC);
+`;
+
+export const PHASE_SCHEMAS = [  { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },  { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },  { id: "0003", phase: 16, name: "phase16_latency_observability", sql: PHASE16_SCHEMA },
   { id: "0004", phase: 17, name: "phase17_sources_and_agents", sql: PHASE17_SCHEMA },
   { id: "0005", phase: 18, name: "phase18_research_projects_images", sql: PHASE18_SCHEMA },
   { id: "0006", phase: 19, name: "phase19_autonomy", sql: PHASE19_SCHEMA },
@@ -1386,7 +1556,9 @@ export const PHASE_SCHEMAS = [  { id: "0001", phase: 14, name: "phase14_dynamic_
   { id: "0020", phase: 31, name: "phase31_heartbeat_personality", sql: PHASE31_SCHEMA },
   { id: "0021", phase: 32, name: "phase32_personas", sql: PHASE32_SCHEMA },
   { id: "0022", phase: 33, name: "phase33_cleanup_agent", sql: PHASE33_SCHEMA },
-  { id: "0023", phase: 34, name: "phase34b_goal_deletion_fk", sql: PHASE34B_SCHEMA }
+  { id: "0023", phase: 34, name: "phase34b_goal_deletion_fk", sql: PHASE34B_SCHEMA },
+  { id: "0024", phase: 35, name: "phase35_sapphire_memory_transplant", sql: PHASE35_SCHEMA },
+  { id: "0025", phase: 36, name: "phase36_resident_tools", sql: PHASE36_SCHEMA }
 ];
 
 // ---------------------------------------------------------------------------

@@ -1244,6 +1244,276 @@ export function createAutonomyStore(run) {
     }
   };
 
+
+  // -------------------------------------------------------------------------
+  // Resident tools (Phase 36). User-created HTTPS tools, assigned per resident
+  // by slug. Secrets are write-only: no accessor here ever SELECTs the value
+  // column except resolveSecrets, which is server-only (executor send path).
+  // -------------------------------------------------------------------------
+  const ResidentTool = {
+    async create(data) {
+      const id = data.id || newId("tool");
+      const rows = await run(
+        `INSERT INTO resident_tools
+          (id, workspace_id, name, description, method, url, headers,
+           body_template, timeout_ms, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         RETURNING id, workspace_id, name, description, method, url, headers,
+                   body_template, timeout_ms, created_by, created_date, updated_date`,
+        [id, data.workspace_id, data.name, data.description || "",
+         data.method || "GET", data.url,
+         json(data.headers, {}), data.body_template || "",
+         num(data.timeout_ms, 10000) > 0 ? int(data.timeout_ms, 10000) : 10000,
+         data.created_by || null]
+      );
+      return rows[0];
+    },
+
+    /** One tool, with secret NAMES only — never values. */
+    async get(id) {
+      const rows = await run(
+        `SELECT t.id, t.workspace_id, t.name, t.description, t.method, t.url,
+                t.headers, t.body_template, t.timeout_ms, t.created_by,
+                t.created_date, t.updated_date,
+                COALESCE(
+                  (SELECT json_agg(s.name ORDER BY s.name)
+                     FROM resident_tool_secrets s WHERE s.tool_id = t.id),
+                  '[]'::json) AS secret_names
+           FROM resident_tools t WHERE t.id = $1`,
+        [id]
+      );
+      if (!rows[0]) return null;
+      return { ...rows[0], secret_names: parse(rows[0].secret_names, []) };
+    },
+
+    /**
+     * SERVER ONLY. The tool row plus a {name: value} secrets map, for the
+     * executor's send path. Never call from a route that returns to the
+     * client; never log the result.
+     */
+    async getWithSecrets(id) {
+      const tool = await this.get(id);
+      if (!tool) return null;
+      const secrets = await this.resolveSecrets(id);
+      return { ...tool, secrets };
+    },
+
+    async list(workspaceId, limit = 100) {
+      const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100));
+      const rows = await run(
+        `SELECT t.id, t.workspace_id, t.name, t.description, t.method, t.url,
+                t.headers, t.body_template, t.timeout_ms, t.created_by,
+                t.created_date, t.updated_date,
+                COALESCE(
+                  (SELECT json_agg(s.name ORDER BY s.name)
+                     FROM resident_tool_secrets s WHERE s.tool_id = t.id),
+                  '[]'::json) AS secret_names,
+                COALESCE(
+                  (SELECT json_agg(a.agent_slug ORDER BY a.agent_slug)
+                     FROM resident_tool_assignments a WHERE a.tool_id = t.id),
+                  '[]'::json) AS assigned_slugs
+           FROM resident_tools t
+          WHERE t.workspace_id = $1
+          ORDER BY t.created_date DESC
+          LIMIT $2`,
+        [workspaceId, safeLimit]
+      );
+      return (rows || []).map(r => ({
+        ...r,
+        secret_names: parse(r.secret_names, []),
+        assigned_slugs: parse(r.assigned_slugs, []),
+      }));
+    },
+
+    async update(id, fields = {}) {
+      const sets = [];
+      const params = [id];
+      const set = (col, val) => { params.push(val); sets.push(`${col}=$${params.length}`); };
+      if (fields.name !== undefined) set("name", String(fields.name));
+      if (fields.description !== undefined) set("description", String(fields.description || ""));
+      if (fields.method !== undefined) set("method", String(fields.method));
+      if (fields.url !== undefined) set("url", String(fields.url));
+      if (fields.headers !== undefined) set("headers", json(fields.headers, {}));
+      if (fields.body_template !== undefined) set("body_template", String(fields.body_template || ""));
+      if (fields.timeout_ms !== undefined) {
+        const ms = int(fields.timeout_ms, 10000);
+        set("timeout_ms", ms > 0 ? ms : 10000);
+      }
+      if (!sets.length) return this.get(id);
+      sets.push(`updated_date=now()`);
+      const rows = await run(
+        `UPDATE resident_tools SET ${sets.join(", ")} WHERE id=$1
+         RETURNING id`,
+        params
+      );
+      return rows[0] ? this.get(id) : null;
+    },
+
+    /** Delete the definition, its secrets, and its assignments. Run history
+     *  keeps its rows (tool_name is denormalized there). */
+    async remove(id) {
+      const rows = await run(`DELETE FROM resident_tools WHERE id=$1 RETURNING id`, [id]);
+      return Boolean(rows[0]);
+    },
+
+    /** Write-only secret upsert. The value is never readable through get/list. */
+    async setSecret(toolId, name, value) {
+      const id = newId("tsec");
+      await run(
+        `INSERT INTO resident_tool_secrets (id, tool_id, name, value)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (tool_id, name)
+         DO UPDATE SET value=EXCLUDED.value`,
+        [id, toolId, name, value]
+      );
+      return { tool_id: toolId, name };
+    },
+
+    async deleteSecret(toolId, name) {
+      const rows = await run(
+        `DELETE FROM resident_tool_secrets WHERE tool_id=$1 AND name=$2 RETURNING id`,
+        [toolId, name]
+      );
+      return Boolean(rows[0]);
+    },
+
+    async secretNames(toolId) {
+      const rows = await run(
+        `SELECT name FROM resident_tool_secrets WHERE tool_id=$1 ORDER BY name`,
+        [toolId]
+      );
+      return (rows || []).map(r => r.name);
+    },
+
+    /** SERVER ONLY. Resolve every secret for a tool into a {name: value} map. */
+    async resolveSecrets(toolId) {
+      const rows = await run(
+        `SELECT name, value FROM resident_tool_secrets WHERE tool_id=$1`,
+        [toolId]
+      );
+      const map = {};
+      for (const r of rows || []) map[r.name] = r.value;
+      return map;
+    },
+
+    async assign(toolId, agentSlug, workspaceId) {
+      await run(
+        `INSERT INTO resident_tool_assignments (tool_id, agent_slug, workspace_id)
+         VALUES ($1,$2,$3)
+         ON CONFLICT (tool_id, agent_slug) DO NOTHING`,
+        [toolId, agentSlug, workspaceId]
+      );
+      return { tool_id: toolId, agent_slug: agentSlug };
+    },
+
+    async unassign(toolId, agentSlug) {
+      const rows = await run(
+        `DELETE FROM resident_tool_assignments
+          WHERE tool_id=$1 AND agent_slug=$2 RETURNING tool_id`,
+        [toolId, agentSlug]
+      );
+      return Boolean(rows[0]);
+    },
+
+    async isAssigned(toolId, agentSlug) {
+      const rows = await run(
+        `SELECT 1 FROM resident_tool_assignments WHERE tool_id=$1 AND agent_slug=$2`,
+        [toolId, agentSlug]
+      );
+      return Boolean(rows[0]);
+    },
+
+    /** Tools assigned to one resident (by slug), secret names only. */
+    async toolsForAgent(workspaceId, agentSlug) {
+      const rows = await run(
+        `SELECT t.id, t.workspace_id, t.name, t.description, t.method, t.url,
+                t.headers, t.body_template, t.timeout_ms,
+                COALESCE(
+                  (SELECT json_agg(s.name ORDER BY s.name)
+                     FROM resident_tool_secrets s WHERE s.tool_id = t.id),
+                  '[]'::json) AS secret_names
+           FROM resident_tools t
+           JOIN resident_tool_assignments a
+             ON a.tool_id = t.id AND a.agent_slug = $2 AND a.workspace_id = $1
+          WHERE t.workspace_id = $1
+          ORDER BY t.name ASC`,
+        [workspaceId, agentSlug]
+      );
+      return (rows || []).map(r => ({ ...r, secret_names: parse(r.secret_names, []) }));
+    },
+
+    async assignedSlugs(toolId) {
+      const rows = await run(
+        `SELECT agent_slug FROM resident_tool_assignments WHERE tool_id=$1 ORDER BY agent_slug`,
+        [toolId]
+      );
+      return (rows || []).map(r => r.agent_slug);
+    },
+
+    /** Append-only run log. Metadata only — callers must never pass bodies or
+     *  secret values here. */
+    async recordRun(data) {
+      const id = data.id || newId("trun");
+      const rows = await run(
+        `INSERT INTO resident_tool_runs
+          (id, workspace_id, tool_id, tool_name, agent_id, agent_slug, goal_id,
+           outbox_id, method, url_origin, status, status_code, latency_ms,
+           request_digest, response_digest, response_chars, error)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+         RETURNING *`,
+        [id, data.workspace_id, data.tool_id, data.tool_name,
+         data.agent_id || null, data.agent_slug || null, data.goal_id || null,
+         data.outbox_id || null, data.method, data.url_origin, data.status,
+         data.status_code ?? null, data.latency_ms ?? null,
+         data.request_digest || null, data.response_digest || null,
+         data.response_chars ?? null,
+         data.error ? String(data.error).slice(0, 500) : null]
+      );
+      return rows[0];
+    },
+
+    async updateRun(id, fields = {}) {
+      const sets = [];
+      const params = [id];
+      const set = (col, val) => { params.push(val); sets.push(`${col}=$${params.length}`); };
+      if (fields.status !== undefined) set("status", String(fields.status));
+      if (fields.status_code !== undefined) set("status_code", fields.status_code);
+      if (fields.latency_ms !== undefined) set("latency_ms", fields.latency_ms);
+      if (fields.request_digest !== undefined) set("request_digest", fields.request_digest);
+      if (fields.response_digest !== undefined) set("response_digest", fields.response_digest);
+      if (fields.response_chars !== undefined) set("response_chars", fields.response_chars);
+      if (fields.outbox_id !== undefined) set("outbox_id", fields.outbox_id);
+      if (fields.error !== undefined) {
+        set("error", fields.error ? String(fields.error).slice(0, 500) : null);
+      }
+      if (!sets.length) return null;
+      const rows = await run(
+        `UPDATE resident_tool_runs SET ${sets.join(", ")} WHERE id=$1 RETURNING *`,
+        params
+      );
+      return rows[0] || null;
+    },
+
+    async runsForTool(toolId, limit = 50) {
+      const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+      return run(
+        `SELECT * FROM resident_tool_runs WHERE tool_id=$1
+         ORDER BY created_date DESC LIMIT $2`,
+        [toolId, safeLimit]
+      );
+    },
+
+    async runsForAgent(workspaceId, agentSlug, limit = 50) {
+      const safeLimit = Math.max(1, Math.min(200, Number(limit) || 50));
+      return run(
+        `SELECT * FROM resident_tool_runs
+          WHERE workspace_id=$1 AND agent_slug=$2
+          ORDER BY created_date DESC LIMIT $3`,
+        [workspaceId, agentSlug, safeLimit]
+      );
+    },
+  };
+
   return {
     AutonomyAgent,
     AutonomyGoal,
@@ -1262,6 +1532,7 @@ export function createAutonomyStore(run) {
     RungEvidence,
     AutonomySettings,
     EffectApproval,
-    CouncilSettings
+    CouncilSettings,
+    ResidentTool
   };
 }
