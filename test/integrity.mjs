@@ -76,9 +76,12 @@ try {
     // the ledger edit/delete routes (PATCH/DELETE /api/knowledge/events/:id).
     // Stored-data cleanup added 3: GET /api/data/cleanup/counts, POST
     // /api/data/cleanup/:category, POST /api/data/cleanup/all.
-    assert.equal(nonStatic.length, 188);
-    // +1 static route on top of the 188 API routes (was 175 = 174 + 1).
-    if (!process.env.VERCEL) assert.equal(routes.length, 189);
+    // Daily Insights added 6: GET/POST /api/insights/email, DELETE
+    // /api/insights/email/password, POST /api/insights/email/schedule,
+    // POST /api/insights/email/test, POST /api/insights/email/run.
+    assert.equal(nonStatic.length, 194);
+    // +1 static route on top of the 194 API routes (was 175 = 174 + 1).
+    if (!process.env.VERCEL) assert.equal(routes.length, 195);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",
@@ -154,7 +157,13 @@ try {
       "post:/api/settings/image-model-id",
       "get:/api/data/cleanup/counts",
       "post:/api/data/cleanup/:category",
-      "post:/api/data/cleanup/all"
+      "post:/api/data/cleanup/all",
+      "get:/api/insights/email",
+      "post:/api/insights/email",
+      "delete:/api/insights/email/password",
+      "post:/api/insights/email/schedule",
+      "post:/api/insights/email/test",
+      "post:/api/insights/email/run"
     ]) assert.ok(routes.includes(route), `missing ${route}`);
   });
 
