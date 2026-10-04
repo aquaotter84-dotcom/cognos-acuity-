@@ -23,6 +23,7 @@ import { startHeartbeat } from "./autonomy/heartbeat.js";
 import { createLogger } from "./shared/logging.js";
 import { bootLocalDatabase } from "./localdb.js";
 import { runMemoryTransplant } from "./memory/transplant.js";
+import { reconcileOutboxAtBoot } from "./autonomy/outbox.js";
 
 const logger = createLogger("server");
 const port = Number(process.env.PORT || 3000);
@@ -47,6 +48,18 @@ try {
   });
 } catch (error) {
   logger.error("memory transplant boot check failed — memories untouched", {
+    error: String(error?.message || error).slice(0, 300)
+  });
+}
+
+// Phase 37 — honest restarts. Any effect left `executing` across a restart
+// becomes `outcome_unknown` (never assumed failed or succeeded), with a notice
+// telling Jeremy to check the provider before retrying. Never throws.
+try {
+  const recon = await reconcileOutboxAtBoot({ db, logger });
+  logger.info("outbox reconciliation boot check", { reconciled: recon.reconciled });
+} catch (error) {
+  logger.error("outbox reconciliation boot check failed", {
     error: String(error?.message || error).slice(0, 300)
   });
 }
@@ -92,6 +105,51 @@ if (autonomy.enabled === true || autonomy.uiControl === true) {
     note: "phase19.autonomy_default_off — set COGNOS_AUTONOMY_ENABLED=true to enable a rung, "
       + "or COGNOS_AUTONOMY_UI_CONTROL=true to hand the switch to the UI"
   });
+}
+
+// --- Durable task maintenance (Phase 37) -------------------------------------
+// Every 60s: reclaim expired leases (crashed workers → requeue), schedule due
+// watch checks, and expire stale approvals. Never throws; a missed pass is
+// just a late one.
+{
+  const { createWorkflowStore } = await import("./autonomy/workflowStore.js");
+  const { createTaskRunner } = await import("./autonomy/leaseRunner.js");
+  const { createWatchRunner } = await import("./autonomy/watches.js");
+  const { query } = await import("./db.js");
+  const store = createWorkflowStore(query);
+  const taskRunner = createTaskRunner(store, async (owner, task) => {
+    if (task.kind === "watch_check") {
+      const wr = createWatchRunner({ db, store, taskRunner: null });
+      return wr.checkWatch(owner, task);
+    }
+    return { status: "succeeded", skipped: "unknown kind" };
+  });
+  const watchRunner = createWatchRunner({ db, store, taskRunner });
+  let maintenanceRunning = false;
+  const maintenancePass = async () => {
+    if (maintenanceRunning) return;
+    maintenanceRunning = true;
+    try {
+      await taskRunner.maintain();
+      await watchRunner.scheduleDue();
+      // Run any due durable tasks (queued watches, ideas).
+      const ws = await db.Workspace.ensureDefault().catch(() => null);
+      if (ws) {
+        const due = await store.list(ws.id, "durable_tasks", { status: "queued", limit: 10 });
+        for (const task of due) {
+          await taskRunner.run(ws.id, task.id).catch(() => {});
+        }
+      }
+    } catch (error) {
+      logger.warn("durable maintenance pass failed", { error: String(error?.message || error).slice(0, 200) });
+    } finally {
+      maintenanceRunning = false;
+    }
+  };
+  // Start after a short delay so boot isn't blocked; then every 60s.
+  setTimeout(maintenancePass, 15000).unref?.();
+  setInterval(maintenancePass, 60000).unref?.();
+  logger.info("durable task maintenance started", { intervalMs: 60000 });
 }
 
 // --- Graceful shutdown ------------------------------------------------------

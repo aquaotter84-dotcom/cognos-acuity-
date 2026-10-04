@@ -371,7 +371,10 @@ export async function decideEffect({ db, effectId, goal, authorization = null, c
 
   // Replay safety: an effect that already reached a terminal state returns its
   // prior verdict instead of running again. One delivery, not two.
-  if (["released", "would_release", "refused", "reverted"].includes(effect.status)) {
+  // Phase 37: outcome_unknown is terminal in the honest sense — the bytes may
+  // or may not have gone out, and this row will never execute again on its
+  // own. The operator checks the provider, then stages a NEW effect if needed.
+  if (["released", "would_release", "refused", "reverted", "outcome_unknown", "executing"].includes(effect.status)) {
     // The verdict column may come back from the DB as a JSON string rather
     // than an object — normalize before reading it, or the T5 check below
     // silently takes the wrong branch.
@@ -392,6 +395,19 @@ export async function decideEffect({ db, effectId, goal, authorization = null, c
       && verdictOf.failed.length > 0
       && verdictOf.failed.every(f => f?.rule === "T5_NEEDS_HUMAN" || f?.rule === "TOOL_WRITE_NEEDS_APPROVAL");
     if (!awaitingApproval) {
+      // Phase 37: an outcome_unknown row gets honest guidance, not a bare
+      // replay. The operator's move is: check the provider, then stage a new
+      // effect if the bytes never went out. This row never executes again.
+      if (effect.status === "outcome_unknown") {
+        return {
+          ok: true,
+          replayed: true,
+          row: effect,
+          verdict: verdictOf || { decision: "replay", failed: [], passed: [] },
+          outcomeUnknown: true,
+          guidance: "Outcome unknown: the delivery may or may not have gone out before the interruption. Check the provider (was it sent?), then stage a new effect if needed. This row will never execute on its own."
+        };
+      }
       return {
         ok: true,
         replayed: true,
@@ -472,6 +488,16 @@ export async function decideEffect({ db, effectId, goal, authorization = null, c
   }
 
   try {
+    // Phase 37: mark executing BEFORE the bytes go out. If the process dies
+    // here, the boot reconciliation flips this to outcome_unknown — honestly
+    // unknown, never assumed failed or succeeded.
+    // Note: no OutboxEvent for this transition — `executing` is a transient
+    // crash-recovery marker, not a meaningful business event. The ledger
+    // shows staged → released (or staged → outcome_unknown after a crash).
+    await db.AutonomyOutbox.setVerdict(effect.id, {
+      status: "executing",
+      verdict,
+    });
     const settled = await executor.perform({ db, effect, signal, config, transport, resolve });
     const { receipt, output } = splitExecutorResult(settled);
     const row = await db.AutonomyOutbox.setVerdict(effect.id, {
@@ -694,4 +720,72 @@ export async function shadowCorpus(db, workspaceId, limit = 500) {
     reverted: byStatus.reverted || 0,
     recent: (recent || []).slice(0, 25)
   };
+}
+
+/**
+ * Phase 37 — boot-time reconciliation (OpenMuse's honest-restart discipline).
+ *
+ * Any effect left in `executing` across a restart becomes `outcome_unknown`:
+ * the bytes may or may not have gone out, and COGNOS refuses to guess. A
+ * notice tells Jeremy to check the provider before retrying. Never throws —
+ * boot must survive a reconciliation failure.
+ *
+ * Returns { reconciled: <count> }.
+ */
+export async function reconcileOutboxAtBoot({ db, logger = null }) {
+  const log = logger || { info: () => {}, warn: () => {}, error: () => {} };
+  try {
+    const ws = await db.Workspace.ensureDefault();
+    const stuck = await db.AutonomyOutbox.list(ws.id, { status: "executing", limit: 200 });
+    if (!stuck.length) {
+      log.info("outbox reconciliation: nothing stuck in executing", {});
+      return { reconciled: 0 };
+    }
+    let reconciled = 0;
+    for (const effect of stuck) {
+      try {
+        const row = await db.AutonomyOutbox.setVerdict(effect.id, {
+          status: "outcome_unknown",
+          verdict: effect.verdict || { decision: "unknown", failed: [], passed: [] },
+          error: "Server restarted during execution. Check the provider before creating another action."
+        });
+        await db.OutboxEvent.append({
+          outbox_id: effect.id,
+          from_status: "executing",
+          to_status: "outcome_unknown",
+          detail: { note: "boot reconciliation — honestly unknown, never assumed" }
+        });
+        await goalEvent(db, effect, "effect_outcome_unknown", row, {
+          note: "interrupted in flight; check the provider before retrying"
+        });
+        reconciled++;
+      } catch (error) {
+        log.warn("outbox reconciliation: failed to flip one row", {
+          outbox_id: effect.id, error: String(error?.message || error).slice(0, 200)
+        });
+      }
+    }
+    // One notice for the batch, not one per row.
+    if (reconciled > 0) {
+      try {
+        await db.AutonomyNotice.create({
+          workspace_id: ws.id,
+          template_id: "outbox_reconciled",
+          fields: { unknownCount: reconciled },
+          severity: "warning"
+        });
+      } catch (error) {
+        log.warn("outbox reconciliation: notice failed", {
+          error: String(error?.message || error).slice(0, 200)
+        });
+      }
+    }
+    log.info("outbox reconciliation complete", { reconciled, found: stuck.length });
+    return { reconciled };
+  } catch (error) {
+    log.error("outbox reconciliation failed — boot continues", {
+      error: String(error?.message || error).slice(0, 300)
+    });
+    return { reconciled: 0, error: String(error?.message || error).slice(0, 200) };
+  }
 }

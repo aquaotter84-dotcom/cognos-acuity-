@@ -43,7 +43,7 @@ import { normalizeMemoryFields } from "./memory/structure.js";
 import { embedTexts, parseEmbedding, rankMemoriesBySimilarity, scheduleEmbeddingRefresh } from "./memory/embeddings.js";
 import { pricedRecallWalk, supersedeTransientClaims, recordRecall } from "./memory/recall.js";
 import { assembleContextWindow, normalizeContextWindowConfig, trimToTokens } from "./contextWindow.js";
-import { formatGraphContext } from "./knowledge/graph.js";
+import { formatGraphContext, sanitizeGraphOutput } from "./knowledge/graph.js";
 
 const rootLogger = createLogger("chatOrchestrate");
 
@@ -1194,6 +1194,12 @@ async function executeCouncilTurn(body, options = {}, run = {}) {
   // passed the Critic/revision loop and the Governor/revision loop. A veto can
   // release only its fixed deterministic refusal; the rejected draft remains
   // entirely server-side and is represented later by length + SHA-256 only.
+  //
+  // Phase 37: strip graph internals (node IDs, seals, query fragments) from
+  // the user-facing text. The Governor already audited the raw draft's
+  // citations above; Jeremy hears plain language, never [graph_...] read
+  // aloud by TTS.
+  finalResponseText = sanitizeGraphOutput(finalResponseText);
   const releaseStarted = Date.now();
   recorder.setPerformance?.({
     orchestration: { governedReadyMs: Math.max(0, releaseStarted - startTime) }

@@ -388,7 +388,7 @@ await test("the next turn consults the atlas before drafting", async () => {
   assert.ok(critics[critics.length - 1].content.includes("KNOWLEDGE GRAPH"), "the critic read the same slice");
 });
 
-await test("a citation to a loaded truth-bearing node ships untouched", async () => {
+await test("a citation to a loaded truth-bearing node is verified, then sanitized for the user", async () => {
   const seed = await h.raw("/api/graph/nodes", {
     method: "POST",
     body: { type: "concept", label: "Harbor lighthouse charter", content: "The harbor lighthouse charter dedicates the light to safe passage.", trust: "trusted" }
@@ -399,7 +399,11 @@ await test("a citation to a loaded truth-bearing node ships untouched", async ()
   assert.ok(r.ok && r.done);
   const flags = r.done?.council?.governor?.flags || [];
   assert.ok(!flags.includes("graph_citation_unverifiable"), `no graph flag for a loaded citation (${JSON.stringify(flags)})`);
-  assert.ok(r.tokens.includes(seedId), "the verified citation reached the answer intact");
+  // Phase 37: the Governor verifies the citation on the draft, but the
+  // user-facing text ships in plain language — no raw graph IDs for Jeremy
+  // to hear read aloud. The answer content survives; the ID does not.
+  assert.ok(!r.tokens.includes(seedId), "the raw graph ID is sanitized from user-facing text");
+  assert.ok(r.tokens.includes("the light stays lit"), "the answer content ships intact");
 });
 
 await test("an invented graph citation is flagged and never reaches the answer", async () => {

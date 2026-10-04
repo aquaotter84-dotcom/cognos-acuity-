@@ -28,7 +28,42 @@ export function createKnowledgeStore(run) {
       count: (filter = {}) => countEvents(run, filter),
       countForRun: (runId) => countEvents(run, { runId }),
       transitions: () => Object.keys(TRANSITIONS),
-      isTransition
+      isTransition,
+      /** One row, workspace-scoped. Null when the id is unknown here. */
+      async getScoped(id, workspaceId) {
+        const rows = await run(
+          `SELECT * FROM knowledge_events WHERE id = $1 AND workspace_id = $2`,
+          [String(id), workspaceId]
+        );
+        return rows[0] ?? null;
+      },
+      /** Merge a patch over an event's delta/to_state. Returns the stored row, or null. */
+      async update(id, patch = {}) {
+        const rows = await run(`SELECT * FROM knowledge_events WHERE id = $1`, [String(id)]);
+        const row = rows[0];
+        if (!row) return null;
+        const merge = (existing, incoming) => {
+          if (incoming === undefined || incoming === null) return parse(existing) ?? null;
+          const cur = parse(existing);
+          if (cur && typeof cur === "object" && !Array.isArray(cur) &&
+              incoming && typeof incoming === "object" && !Array.isArray(incoming)) {
+            return { ...cur, ...incoming };
+          }
+          return incoming;
+        };
+        const delta = merge(row.delta, patch.delta);
+        const toState = merge(row.to_state, patch.to_state);
+        const updated = await run(
+          `UPDATE knowledge_events SET delta = $2::jsonb, to_state = $3::jsonb WHERE id = $1 RETURNING *`,
+          [String(id), delta === null ? null : JSON.stringify(delta), toState === null ? null : JSON.stringify(toState)]
+        );
+        return updated[0] ?? null;
+      },
+      /** Hard delete. True when a row was removed. */
+      async remove(id) {
+        const rows = await run(`DELETE FROM knowledge_events WHERE id = $1 RETURNING id`, [String(id)]);
+        return rows.length > 0;
+      }
     },
 
     // --- 14.2 state reconstruction ----------------------------------------

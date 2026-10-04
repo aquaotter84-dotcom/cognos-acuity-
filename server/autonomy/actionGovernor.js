@@ -38,6 +38,7 @@ import { urlAllowedByScope, destinationsForScope, scopeEntryFor } from "./scopeU
 import { checkWebhookUrl, checkWebhookHeaders, resolveSecretRef } from "./webhookPost.js";
 import { isAllowedHeaderName } from "./webhookPost.js";
 import { effectiveEnabled } from "./settings.js";
+import { validateApproval } from "./approvalHardening.js";
 
 /** Every rule, so a refusal names what fired instead of just "no".
  *
@@ -333,7 +334,8 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
     }
 
     // Writes need Jeremy, one at a time, by exact effect id — the T5 story.
-    // Reads run freely.
+    // Reads run freely. Phase 37: the approval must also be live (not rotted)
+    // and bound to these exact bytes.
     if (tool && tp.method !== "GET") {
       let approval = null;
       let approvalError = false;
@@ -343,11 +345,13 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
       }
       if (approvalError) {
         fail("APPROVAL_UNREADABLE", "pin.irreversible_human_approval");
-      } else if (!approval) {
-        fail("TOOL_WRITE_NEEDS_APPROVAL", "pin.irreversible_human_approval",
-          "no human approval row names this exact effect id");
       } else {
-        passed.push("a human approval row names this exact effect id");
+        const check = validateApproval(approval, effect, nowMs, "TOOL_WRITE_NEEDS_APPROVAL");
+        if (!check.ok) {
+          fail(check.rule, "pin.irreversible_human_approval", check.detail);
+        } else {
+          passed.push("a live human approval row names this exact effect id and these exact bytes");
+        }
       }
     } else if (tool) {
       passed.push("a read runs freely — no approval needed");
@@ -578,6 +582,9 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
     // authorizable by class, never by the loop — the only writer of an
     // approval row is the outbox decision route, which is a human click.
     // A lookup error is its own rule, never "no approval".
+    // Phase 37: the approval must also be live (not rotted past its TTL) and
+    // bound to the exact payload bytes — a scope change or a payload drift
+    // both send Jeremy back to the inbox.
     let approval = null;
     let approvalError = false;
     if (typeof db?.EffectApproval?.current === "function") {
@@ -587,18 +594,18 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
     }
     if (approvalError) {
       fail("APPROVAL_UNREADABLE", "pin.irreversible_human_approval");
-    } else if (!approval) {
-      fail("T5_NEEDS_HUMAN", "pin.irreversible_human_approval",
-        "no human approval row names this exact effect id");
     } else {
-      // The approval is bound to the scope it was made under: an approval must
-      // not outlive the authorization it was recorded against.
-      if (approval.scope_sha256 && authorization?.scope_sha256
+      const check = validateApproval(approval, effect, nowMs, "T5_NEEDS_HUMAN");
+      if (!check.ok) {
+        fail(check.rule, "pin.irreversible_human_approval", check.detail);
+      } else if (approval.scope_sha256 && authorization?.scope_sha256
           && approval.scope_sha256 !== authorization.scope_sha256) {
+        // The approval is bound to the scope it was made under: an approval must
+        // not outlive the authorization it was recorded against.
         fail("T5_NEEDS_HUMAN", "pin.irreversible_human_approval",
           "the approval names this effect but was recorded under a different scope");
       } else {
-        passed.push("a human approval row names this exact effect id");
+        passed.push("a live human approval row names this exact effect id and these exact bytes");
       }
     }
   }

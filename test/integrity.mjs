@@ -69,9 +69,14 @@ try {
     // /api/autonomy/agents/:id/tools/:toolId, GET
     // /api/autonomy/agents/:id/tool-runs, POST
     // /api/autonomy/tools/:id/invoke).
-    assert.equal(nonStatic.length, 175);
-    // +1 static route on top of the 175 API routes (was 165 = 164 + 1).
-    if (!process.env.VERCEL) assert.equal(routes.length, 176);
+    // Phase 37 added 10: the ideas routes (GET /api/autonomy/ideas, POST
+    // /api/autonomy/ideas/:id/accept, POST /api/autonomy/ideas/:id/dismiss,
+    // POST /api/autonomy/ideas/refresh), the watch routes (GET/POST
+    // /api/autonomy/watches, PATCH/DELETE /api/autonomy/watches/:id), and
+    // the ledger edit/delete routes (PATCH/DELETE /api/knowledge/events/:id).
+    assert.equal(nonStatic.length, 185);
+    // +1 static route on top of the 185 API routes (was 175 = 174 + 1).
+    if (!process.env.VERCEL) assert.equal(routes.length, 186);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",

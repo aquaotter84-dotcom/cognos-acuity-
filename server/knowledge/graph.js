@@ -1314,3 +1314,42 @@ export async function projectExchange(run, {
 
   return { nodes, edges, events };
 }
+
+/**
+ * Phase 37 — sanitize graph internals out of user-facing text.
+ *
+ * The council sees node IDs (for the Governor's citation audit), but Jeremy
+ * should never hear them — not in chat, and especially not read aloud by TTS.
+ * This strips:
+ *   - [graph_...] and [gedge_...] citation markers (bracketed or bare)
+ *   - seal/run fragments like "(seal abc123, run xyz)"
+ *   - version markers like "(v3)"
+ *   - query-ish fragments (SELECT/WHERE/MATCH leftovers, should never appear)
+ *
+ * Runs AFTER the Governor approves the draft (the audit sees the raw text),
+ * BEFORE the text is released to the user. Idempotent and safe on text that
+ * has nothing to strip.
+ */
+export function sanitizeGraphOutput(text) {
+  if (!text || typeof text !== "string") return text;
+  let out = text;
+  // Bracketed citations: [graph_abc123], [gedge_xyz789]
+  out = out.replace(/\[(graph|gedge)_[a-z0-9]+\]/gi, "");
+  // Bare IDs that slipped out of brackets: graph_abc123
+  out = out.replace(/\b(graph|gedge)_[a-z0-9]{6,}\b/gi, "");
+  // Seal/run fragments: (seal abc123...), (, run xyz), (v3, seal ...)
+  out = out.replace(/\(\s*(v\d+\s*,\s*)?seal\s+[a-z0-9]+\s*(,\s*run\s+[a-z0-9_\-]+\s*)?\)/gi, "");
+  out = out.replace(/,\s*run\s+[a-z0-9_\-]{6,}/gi, "");
+  // Leftover trust-annotation scaffolding the model sometimes echoes
+  out = out.replace(/\(truth-bearing\)/gi, "");
+  out = out.replace(/NOT truth-bearing until user-approved/gi, "");
+  // Query syntax that should never reach a human
+  out = out.replace(/\b(SELECT|WHERE|MATCH|RETURN|MERGE|CREATE|DELETE)\b\s+[^\n]{0,120}/gi, "");
+  // Tidy up: collapse the gaps the stripping leaves behind
+  out = out.replace(/[ \t]{2,}/g, " ");
+  out = out.replace(/\n{3,}/g, "\n\n");
+  out = out.replace(/\(\s*\)/g, "");
+  out = out.replace(/ ,/g, ",");
+  out = out.replace(/ \./g, ".");
+  return out.trim();
+}

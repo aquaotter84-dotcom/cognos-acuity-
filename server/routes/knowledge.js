@@ -11,6 +11,11 @@ export function registerKnowledgeRoutes(app, { wrap, db, logger }) {
   // Phase 14 — Dynamic Systems. Read-only query surfaces over the event ledger.
   // Bare JSON, as the phase allows: these are instruments for an operator, not a
   // UI. Nothing here writes, and nothing here is on the send path.
+  //
+  // Phase 37d adds operator-owned mutation: PATCH and DELETE on
+  // /api/knowledge/events/:id, so Jeremy can edit or remove ledger entries.
+  // These are the only write routes in this module. They are workspace-scoped
+  // and validate before they touch anything.
   // ===========================================================================
 
   const hydrateEvent = (e) => ({
@@ -35,6 +40,40 @@ export function registerKnowledgeRoutes(app, { wrap, db, logger }) {
       limit: Number(req.query.limit || 100)
     });
     res.json({ count: rows.length, appendOnly: true, transitions: db.KnowledgeEvent.transitions(), events: rows.map(hydrateEvent) });
+  }));
+
+  // --- Phase 37d — operator-owned ledger: edit / delete ---------------------
+  // Jeremy's record, his call. Workspace-scoped; 404 when the id is unknown
+  // or belongs to another workspace; 400 when delta/to_state are not objects.
+  const ledgerEditFields = ["delta", "to_state"];
+  const asObjectField = (name, value) => {
+    if (value === undefined || value === null) return { skip: true };
+    if (typeof value !== "object" || Array.isArray(value)) {
+      return { error: `${name} must be a JSON object.` };
+    }
+    return { value };
+  };
+
+  app.patch("/api/knowledge/events/:id", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const existing = await db.KnowledgeEvent.getScoped(req.params.id, ws.id);
+    if (!existing) return res.status(404).json({ error: "No ledger entry with that id in this workspace." });
+    const patch = {};
+    for (const name of ledgerEditFields) {
+      const parsed = asObjectField(name, (req.body || {})[name]);
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      if (!parsed.skip) patch[name] = parsed.value;
+    }
+    const updated = await db.KnowledgeEvent.update(req.params.id, patch);
+    res.json({ event: hydrateEvent(updated) });
+  }));
+
+  app.delete("/api/knowledge/events/:id", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const existing = await db.KnowledgeEvent.getScoped(req.params.id, ws.id);
+    if (!existing) return res.status(404).json({ error: "No ledger entry with that id in this workspace." });
+    await db.KnowledgeEvent.remove(req.params.id);
+    res.json({ deleted: req.params.id });
   }));
 
   app.get("/api/knowledge/overview", wrap(async (req, res) => {

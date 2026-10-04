@@ -166,6 +166,12 @@ export const api = {
   listNotices: (params = {}) => req(`/api/autonomy/notices${qs(params)}`),
   ackNotice: (id) => req(`/api/autonomy/notices/${id}/ack`, { method: "POST" }),
 
+  /** Phase 37 — Ideas: rule-based, evidence-linked suggestions. */
+  listIdeas: (params = {}) => req(`/api/autonomy/ideas${qs(params)}`),
+  acceptIdea: (id) => req(`/api/autonomy/ideas/${id}/accept`, { method: "POST" }),
+  dismissIdea: (id) => req(`/api/autonomy/ideas/${id}/dismiss`, { method: "POST" }),
+  refreshIdeas: () => req(`/api/autonomy/ideas/refresh`, { method: "POST" }),
+
   /** Staged effects plus the shadow corpus that earns the next rung. */
   listOutbox: (params = {}) => req(`/api/autonomy/outbox${qs(params)}`),
   decideEffect: (id, body) => req(`/api/autonomy/outbox/${id}/decision`, { method: "POST", body }),
@@ -309,8 +315,12 @@ export const api = {
   setCouncilSwitch: (which, enabled, body = {}) =>
     req("/api/council/settings", { method: "POST", body: { switch: which, enabled, ...body } }),
 
-  // --- Phase 14: the knowledge layer (read-only) ---------------------------
+  // --- Phase 14: the knowledge layer (read + Phase 37d operator-owned edit/delete) --
   knowledgeEvents: (params = {}) => req(`/api/knowledge/events${qs(params)}`),
+  /** Phase 37d: merge {delta, to_state} over a ledger entry. Returns the updated event. */
+  knowledgeUpdateEvent: (id, body = {}) => req(`/api/knowledge/events/${encodeURIComponent(id)}`, { method: "PATCH", body }),
+  /** Phase 37d: hard-delete a ledger entry. Returns {deleted: id}. */
+  knowledgeDeleteEvent: (id) => req(`/api/knowledge/events/${encodeURIComponent(id)}`, { method: "DELETE" }),
   knowledgeOverview: () => req("/api/knowledge/overview"),
   knowledgeAnalytics: (params = {}) => req(`/api/knowledge/analytics${qs(params)}`),
   knowledgeBeliefs: (params = {}) => req(`/api/knowledge/beliefs${qs(params)}`),

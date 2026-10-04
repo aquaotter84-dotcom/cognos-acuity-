@@ -1536,6 +1536,94 @@ CREATE INDEX IF NOT EXISTS resident_tool_runs_agent_idx
   ON resident_tool_runs (workspace_id, agent_slug, created_date DESC);
 `;
 
+// ---------------------------------------------------------------------------
+// Phase 37 -- OpenMuse steals: approval expiry + hash binding, outcome_unknown,
+// ideas surface, durable workflow store (leases), resident watches.
+// ---------------------------------------------------------------------------
+// Borrowed engineering discipline (MIT), reimplemented in COGNOS idioms:
+// approvals rot (a Tuesday approval never executes Friday) and bind to a hash
+// of the exact payload; crashed executions are outcome_unknown, never assumed;
+// ideas are rule-based suggestions with evidence; workflow state lives in one
+// kind-keyed table with CAS transitions; watches give residents schedules.
+export const PHASE37_SCHEMA = `
+-- 37.1 Approval expiry + payload hash binding. An approval names the exact
+-- effect AND the exact bytes it approved, and it dies after its window.
+ALTER TABLE effect_approvals ADD COLUMN IF NOT EXISTS expires_ms BIGINT;
+ALTER TABLE effect_approvals ADD COLUMN IF NOT EXISTS payload_sha256 TEXT;
+CREATE INDEX IF NOT EXISTS effect_approvals_expiry_idx
+  ON effect_approvals (outbox_id, expires_ms DESC);
+
+-- 37.2 Ideas surface. Rule-based suggestions with source evidence. IDs are
+-- content hashes so the same idea can never be created twice.
+CREATE TABLE IF NOT EXISTS cognos_ideas (
+  id              TEXT PRIMARY KEY,
+  workspace_id    TEXT NOT NULL,
+  title           TEXT NOT NULL,
+  reason          TEXT NOT NULL,
+  evidence        JSONB NOT NULL DEFAULT '[]',
+  prompt          TEXT NOT NULL,
+  kind            TEXT NOT NULL,
+  input           JSONB NOT NULL DEFAULT '{}',
+  status          TEXT NOT NULL DEFAULT 'new',
+  task_id         TEXT,
+  source_kind     TEXT,
+  source_id       TEXT,
+  created_ms      BIGINT NOT NULL,
+  updated_ms      BIGINT NOT NULL,
+  created_date    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT cognos_ideas_status_check
+    CHECK (status IN ('new','accepted','dismissed','expired'))
+);
+CREATE INDEX IF NOT EXISTS cognos_ideas_ws_status_idx
+  ON cognos_ideas (workspace_id, status, created_ms DESC);
+CREATE INDEX IF NOT EXISTS cognos_ideas_source_idx
+  ON cognos_ideas (workspace_id, source_kind, source_id);
+
+-- 37.3 Generic workflow store. One kind-keyed table with JSONB for all
+-- workflow state (durable tasks, watches, ideas-in-flight). Transitions are
+-- atomic via compare-and-swap; leases, not locks.
+CREATE TABLE IF NOT EXISTS workflow_records (
+  owner       TEXT NOT NULL,
+  kind        TEXT NOT NULL,
+  id          TEXT NOT NULL,
+  data        JSONB NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (owner, kind, id)
+);
+CREATE INDEX IF NOT EXISTS workflow_records_kind_idx
+  ON workflow_records (kind, updated_at);
+
+-- 37.4 Resident watches. "Every morning, check X and tell me" — URL +
+-- condition + interval, hash-deduped, with backoff and pause/resume.
+CREATE TABLE IF NOT EXISTS resident_watches (
+  id                  TEXT PRIMARY KEY,
+  workspace_id        TEXT NOT NULL,
+  resident_id         TEXT NOT NULL,
+  name                TEXT NOT NULL,
+  url                 TEXT NOT NULL,
+  condition           TEXT NOT NULL,
+  condition_value     TEXT,
+  interval_minutes    INT NOT NULL DEFAULT 1440,
+  last_hash           TEXT,
+  last_check_ms       BIGINT,
+  last_change_ms      BIGINT,
+  checks              INT NOT NULL DEFAULT 0,
+  consecutive_errors  INT NOT NULL DEFAULT 0,
+  status              TEXT NOT NULL DEFAULT 'active',
+  created_ms          BIGINT NOT NULL,
+  updated_ms          BIGINT NOT NULL,
+  created_date        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT resident_watches_condition_check
+    CHECK (condition IN ('change','contains','price_below')),
+  CONSTRAINT resident_watches_status_check
+    CHECK (status IN ('active','paused','stopped','error'))
+);
+CREATE INDEX IF NOT EXISTS resident_watches_resident_idx
+  ON resident_watches (workspace_id, resident_id, status);
+CREATE INDEX IF NOT EXISTS resident_watches_due_idx
+  ON resident_watches (status, last_check_ms);
+`;
+
 export const PHASE_SCHEMAS = [  { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },  { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },  { id: "0003", phase: 16, name: "phase16_latency_observability", sql: PHASE16_SCHEMA },
   { id: "0004", phase: 17, name: "phase17_sources_and_agents", sql: PHASE17_SCHEMA },
   { id: "0005", phase: 18, name: "phase18_research_projects_images", sql: PHASE18_SCHEMA },
@@ -1558,7 +1646,8 @@ export const PHASE_SCHEMAS = [  { id: "0001", phase: 14, name: "phase14_dynamic_
   { id: "0022", phase: 33, name: "phase33_cleanup_agent", sql: PHASE33_SCHEMA },
   { id: "0023", phase: 34, name: "phase34b_goal_deletion_fk", sql: PHASE34B_SCHEMA },
   { id: "0024", phase: 35, name: "phase35_sapphire_memory_transplant", sql: PHASE35_SCHEMA },
-  { id: "0025", phase: 36, name: "phase36_resident_tools", sql: PHASE36_SCHEMA }
+  { id: "0025", phase: 36, name: "phase36_resident_tools", sql: PHASE36_SCHEMA },
+  { id: "0026", phase: 37, name: "phase37_openmuse_steals", sql: PHASE37_SCHEMA }
 ];
 
 // ---------------------------------------------------------------------------

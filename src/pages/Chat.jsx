@@ -11,11 +11,17 @@
 // chat itself does not require them. Attachments and vision are Phase 17/18.
 // Browser-native speech output can auto-speak only the governed final answer.
 // Style selector and the web-search toggle remain.
+//
+// Phase 37c — follow-up queue (ported from OpenMuse's conversation-queue.ts,
+// MIT): the composer stays live while a reply streams; messages sent
+// mid-stream wait in a visible queue and flush in order when the turn
+// finishes, unless paused (the stop button pauses).
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Bot, Folder, Menu, Globe, Volume2, VolumeX } from 'lucide-react';
 import { api, sendMessage } from '@/lib/api';
+import { ConversationQueue } from '@/lib/conversationQueue';
 import { useCognos } from '@/lib/cognosContext';
 import { useVoice } from '@/lib/voiceContext';
 import ChatMessage from '@/components/chat/ChatMessage';
@@ -192,6 +198,12 @@ export default function Chat() {
 
   const abortRef = useRef(null);
   const messagesEndRef = useRef(null);
+  // Phase 37c — the follow-up queue: one stable instance for the life of the
+  // page. flushQueueRef is assigned further below, once handleSend exists;
+  // handleSend's finally block calls it at runtime only.
+  const queueRef = useRef(null);
+  if (!queueRef.current) queueRef.current = new ConversationQueue();
+  const flushQueueRef = useRef(() => {});
 
   useEffect(() => {
     setActiveConversationId(conversationId);
@@ -271,8 +283,11 @@ export default function Chat() {
     ? researchRun.run.id : null;
 
   // --- THE SEND PATH -------------------------------------------------------
+  // Phase 37c — handleSend no longer guards on isProcessing: the router
+  // (sendOrQueue) decides between sending now and queueing, and the queue's
+  // flush drives this same function for each queued turn, one at a time.
   const handleSend = useCallback(async (text, options = {}) => {
-    if (!activeWorkspace || isProcessing) return;
+    if (!activeWorkspace) return;
     const turnSources = Array.isArray(options.sources) ? options.sources : [];
     const turnAgentMode = options.agentMode || 'research';
     // Phase 18 — after the user decides a research plan, the next message in the
@@ -390,10 +405,18 @@ export default function Chat() {
       setDraft(null);
       setIsProcessing(false);
       abortRef.current = null;
+      // Phase 37c — when a turn finishes, drain the follow-up queue in
+      // order (unless paused). A no-op when the queue is empty or paused.
+      flushQueueRef.current();
     }
-  }, [activeWorkspace, isProcessing, conversationId, style, webSearch, setSearchParams, setActiveConversationId, refreshConversations, speakAutomatically, stopSpeaking, decidedResearchRunId, goalId, goalDetached, refreshGoal]);
+  }, [activeWorkspace, conversationId, style, webSearch, setSearchParams, setActiveConversationId, refreshConversations, speakAutomatically, stopSpeaking, decidedResearchRunId, goalId, goalDetached, refreshGoal]);
 
-  const handleStop = () => abortRef.current?.abort();
+  // Phase 37c — stop halts the reply AND pauses the follow-up queue. Nothing
+  // queued is lost, and the composer's draft is untouched.
+  const handleStop = () => {
+    abortRef.current?.abort();
+    queueRef.current.pause();
+  };
 
   // --- OFFLINE OUTBOX ----------------------------------------------------------
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -401,6 +424,25 @@ export default function Chat() {
   const flushRef = useRef(false);
   const handleSendRef = useRef(handleSend);
   handleSendRef.current = handleSend;
+
+  // Phase 37c — drain the follow-up queue through the one send path, one
+  // turn at a time. A failed queued turn pauses the queue (never resends)
+  // and its error bubble is already in the transcript.
+  const flushQueue = useCallback(() => {
+    queueRef.current.flush(async (queued) => {
+      await handleSendRef.current(queued.text, queued.options || {});
+    }).catch(() => { /* the queue paused itself; the turn already reported */ });
+  }, []);
+  flushQueueRef.current = flushQueue;
+
+  // Phase 37c — the queue strip's "Send queued": resume and drain in order.
+  // When a turn is still streaming, resume only: the in-flight turn's
+  // finally block drains the queue, and starting a second send here would
+  // race the live stream.
+  const resumeQueue = useCallback(() => {
+    queueRef.current.resume();
+    if (!abortRef.current) flushQueueRef.current();
+  }, []);
   const isProcessingRef = useRef(isProcessing);
   isProcessingRef.current = isProcessing;
   const workspaceRef = useRef(activeWorkspace);
@@ -411,13 +453,23 @@ export default function Chat() {
     setOutbox(q);
   }, []);
 
-  // Sending while offline queues the message instead of failing.
+  // Phase 37c — the router. Offline goes to the persisted outbox. A message
+  // sent while a reply is streaming waits in the visible follow-up queue:
+  // abortRef is set synchronously by the in-flight send, so this check has
+  // no render-lag race. Everything else sends immediately, exactly as before.
   const sendOrQueue = useCallback((text, options = {}) => {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       persistOutbox([...loadOutbox(), {
         id: `q_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         text, options, ts: Date.now(),
       }]);
+      return;
+    }
+    if (abortRef.current) {
+      queueRef.current.enqueue({
+        id: `fq_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        text, options,
+      });
       return;
     }
     handleSend(text, options);
@@ -639,7 +691,7 @@ export default function Chat() {
 
       <ChatInput
         onSend={sendOrQueue}
-        disabled={isProcessing}
+        disabled={!activeWorkspace}
         isProcessing={isProcessing}
         onStop={handleStop}
         conversationId={conversationId}
@@ -647,6 +699,8 @@ export default function Chat() {
         onSourcesChange={setSelectedSources}
         agentMode={agentMode}
         onAgentModeChange={handleAgentModeChange}
+        queue={queueRef.current}
+        onQueueResume={resumeQueue}
       />
 
       <DesignerDrawer open={designerOpen} onClose={() => setDesignerOpen(false)} />

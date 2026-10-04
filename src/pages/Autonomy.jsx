@@ -26,7 +26,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Activity, AlertTriangle, Bell, Bot, Check, ChevronDown, ChevronRight, ClipboardCheck,
-  Clock, Copy, Gauge, Heart, HelpCircle, Inbox, Lock, Menu, Pause, Pencil, Play, Plus, RefreshCw, ScrollText,
+  Clock, Copy, Gauge, Heart, HelpCircle, Inbox, Lightbulb, Lock, Menu, Pause, Pencil, Play, Plus, RefreshCw, ScrollText,
   Send, ShieldAlert, ShieldCheck, Snowflake, Sparkles, Sprout, MessageCircle, Trash2, ThumbsDown, ThumbsUp, Undo2, X, Zap, Wrench
 } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -37,6 +37,7 @@ import DesignerDrawer from '@/components/autonomy/DesignerDrawer';
 import ResidentChatDrawer from '@/components/autonomy/ResidentChatDrawer';
 import AuthorizeConsent from '@/components/autonomy/AuthorizeConsent';
 import ToolsTab, { ResidentToolPicker, ToolRunHistory } from '@/components/autonomy/ResidentTools';
+import IdeasTab from '@/components/studio/IdeasTab';
 import { ARCHIVIST } from '@/lib/archivist';
 import {
   GLOSSARY, TIER_LABEL, effectStatusLabel, goalStatusLabel,
@@ -49,6 +50,7 @@ const TABS = [
   { id: 'tools', label: 'Tools', icon: Wrench },
   { id: 'goals', label: 'Goals', icon: ScrollText },
   { id: 'activity', label: 'Activity', icon: Activity },
+  { id: 'ideas', label: 'Ideas', icon: Lightbulb },
   { id: 'notices', label: 'Notices', icon: Inbox },
   { id: 'outbox', label: 'Outbox', icon: ShieldCheck },
   { id: 'promotions', label: 'Promotions', icon: Sprout },
@@ -2622,6 +2624,8 @@ export default function Autonomy() {
             <Goals status={status} frozen={frozen} residents={residents} onChanged={refreshAttention} />
           ) : tab === 'activity' ? (
             <ActivityTab />
+          ) : tab === 'ideas' ? (
+            <IdeasTab />
           ) : tab === 'notices' ? (
             <Notices onChanged={refreshAttention} />
           ) : tab === 'promotions' ? (

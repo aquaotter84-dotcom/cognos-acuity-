@@ -16,6 +16,8 @@
 //      multi-replica mechanism, and it is one UPDATE, not a read-then-write.
 
 import { newId, num, int } from "../db/util.js";
+import { encryptSecret, decryptSecret, isEncrypted, getVaultKey } from "./vault.js";
+import { createWorkflowStore } from "./workflowStore.js";
 // Phase 29 — the rung key -> column map. The store builds its one-column upsert
 // from this frozen map, so the SQL has five possible shapes and no request text
 // ever reaches the statement.
@@ -1073,12 +1075,14 @@ export function createAutonomyStore(run) {
       const rows = await run(
         `INSERT INTO effect_approvals
           (id, workspace_id, outbox_id, goal_id, agent_id, decision,
-           scope_sha256, reason, decided_by, decided_ms)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+           scope_sha256, reason, decided_by, decided_ms, expires_ms, payload_sha256)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
         [id, data.workspace_id, data.outbox_id, data.goal_id || null,
          data.agent_id || null, data.decision, data.scope_sha256 || null,
          data.reason || null, data.decided_by || "operator",
-         num(data.decided_ms, Date.now())]
+         num(data.decided_ms, Date.now()),
+         data.expires_ms != null ? num(data.expires_ms, null) : null,
+         data.payload_sha256 || null]
       );
       return rows[0];
     },
@@ -1356,15 +1360,24 @@ export function createAutonomyStore(run) {
       return Boolean(rows[0]);
     },
 
-    /** Write-only secret upsert. The value is never readable through get/list. */
+    /** Write-only secret upsert. The value is never readable through get/list.
+     *  Phase 37: encrypted at rest (AES-256-GCM). The API discipline is
+     *  unchanged — write-only, never returned. */
     async setSecret(toolId, name, value) {
       const id = newId("tsec");
+      let stored = value;
+      try {
+        stored = encryptSecret(value, getVaultKey());
+      } catch (error) {
+        // Fail closed: never store a plaintext secret because the vault broke.
+        throw new Error(`secret vault unavailable: ${error.message}`);
+      }
       await run(
         `INSERT INTO resident_tool_secrets (id, tool_id, name, value)
          VALUES ($1,$2,$3,$4)
          ON CONFLICT (tool_id, name)
          DO UPDATE SET value=EXCLUDED.value`,
-        [id, toolId, name, value]
+        [id, toolId, name, stored]
       );
       return { tool_id: toolId, name };
     },
@@ -1385,14 +1398,33 @@ export function createAutonomyStore(run) {
       return (rows || []).map(r => r.name);
     },
 
-    /** SERVER ONLY. Resolve every secret for a tool into a {name: value} map. */
+    /** SERVER ONLY. Resolve every secret for a tool into a {name: value} map.
+     *  Phase 37: decrypts at read time. Legacy plaintext rows (pre-vault) are
+     *  decrypted as-is and opportunistically re-encrypted. */
     async resolveSecrets(toolId) {
       const rows = await run(
         `SELECT name, value FROM resident_tool_secrets WHERE tool_id=$1`,
         [toolId]
       );
       const map = {};
-      for (const r of rows || []) map[r.name] = r.value;
+      let key = null;
+      const vaultKey = () => {
+        if (!key) key = getVaultKey();
+        return key;
+      };
+      for (const r of rows || []) {
+        if (isEncrypted(r.value)) {
+          map[r.name] = decryptSecret(r.value, vaultKey());
+        } else {
+          // Legacy plaintext: still works, and gets re-encrypted on the way out.
+          map[r.name] = r.value;
+          try {
+            const enc = encryptSecret(r.value, vaultKey());
+            await run(`UPDATE resident_tool_secrets SET value=$1 WHERE tool_id=$2 AND name=$3`,
+              [enc, toolId, r.name]);
+          } catch { /* best effort — the plaintext still resolves */ }
+        }
+      }
       return map;
     },
 
@@ -1533,6 +1565,9 @@ export function createAutonomyStore(run) {
     AutonomySettings,
     EffectApproval,
     CouncilSettings,
-    ResidentTool
+    ResidentTool,
+    // Phase 37 — the generic workflow store (durable tasks, CAS). One
+    // kind-keyed table for workflow state; leases, not locks.
+    Workflow: createWorkflowStore(run)
   };
 }

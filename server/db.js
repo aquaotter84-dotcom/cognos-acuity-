@@ -42,7 +42,7 @@ import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import ws from "ws";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { newId, num } from "./db/util.js";
-import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA, PHASE24_SCHEMA, PHASE25_SCHEMA, PHASE22B_SCHEMA, PHASE22C_SCHEMA, PHASE26_SCHEMA, PHASE26B_SCHEMA, PHASE28_SCHEMA, PHASE29_SCHEMA, PHASE30_SCHEMA, PHASE31_SCHEMA, PHASE32_SCHEMA, PHASE33_SCHEMA, PHASE34B_SCHEMA, PHASE35_SCHEMA, PHASE36_SCHEMA } from "./db/schema.js";
+import { PHASE14_SCHEMA, PHASE15_SCHEMA, PHASE16_SCHEMA, PHASE17_SCHEMA, PHASE18_SCHEMA, PHASE19_SCHEMA, PHASE20_SCHEMA, PHASE21_SCHEMA, PHASE22_SCHEMA, PHASE23_SCHEMA, PHASE24_SCHEMA, PHASE25_SCHEMA, PHASE22B_SCHEMA, PHASE22C_SCHEMA, PHASE26_SCHEMA, PHASE26B_SCHEMA, PHASE28_SCHEMA, PHASE29_SCHEMA, PHASE30_SCHEMA, PHASE31_SCHEMA, PHASE32_SCHEMA, PHASE33_SCHEMA, PHASE34B_SCHEMA, PHASE35_SCHEMA, PHASE36_SCHEMA, PHASE37_SCHEMA } from "./db/schema.js";
 import { appendEvent, snapshot } from "./knowledge/events.js";
 import {
   createKnowledgeStore, TRACKED_FIELDS,
@@ -243,7 +243,10 @@ CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events (created_date DESC)
 + PHASE35_SCHEMA
 // Phase 36 — resident tools: definitions, write-only secrets, per-resident
 // assignments (by slug), and the metadata-only run log.
-+ PHASE36_SCHEMA;
++ PHASE36_SCHEMA
+// Phase 37 — OpenMuse steals: approval expiry/hash, ideas, workflow store,
+// resident watches.
++ PHASE37_SCHEMA;
 
 // Exported for the schema-boot regression test: every migration registered in
 // PHASE_SCHEMAS (server/db/schema.js) must be concatenated into SCHEMA above,

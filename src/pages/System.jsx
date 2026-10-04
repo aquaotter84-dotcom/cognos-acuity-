@@ -1,5 +1,6 @@
-// PHASE 14/15 ADDITION — the System page. A read-only window onto what the
-// system knows about itself: the append-only event ledger, state replay,
+// PHASE 14/15 ADDITION — the System page. A window onto what the
+// system knows about itself: the event ledger (editable and deletable by the
+// operator since Phase 37d), state replay,
 // coherence reports, beliefs, per-run reasoning telemetry, the law layer and the
 // Improvement Ledger.
 //
@@ -10,7 +11,7 @@
 // not change a model, a schema or the send path at runtime.
 
 import { useCallback, useEffect, useState } from 'react';
-import { Menu, Network, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Menu, Network, RefreshCw, ShieldCheck, Edit2, Trash2, Check, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useCognos } from '@/lib/cognosContext';
 import { Card, Empty, ErrorNote, Json, Pill, SYSTEM_TABS, fmtMoney, fmtMs, fmtNum, fmtTime } from '@/components/system/SystemUi';
@@ -27,6 +28,11 @@ export default function System() {
   const [events, setEvents] = useState([]);
   const [transitions, setTransitions] = useState([]);
   const [filter, setFilter] = useState({ transition: '', entityType: '', runId: '', limit: 50 });
+
+  // ledger edit / delete (Phase 37d — Jeremy's record, his call)
+  const [editingId, setEditingId] = useState(null);
+  const [editDeltaText, setEditDeltaText] = useState('');
+  const [editError, setEditError] = useState(null);
 
   // replay
   const [replay, setReplay] = useState(null);
@@ -98,8 +104,42 @@ export default function System() {
     finally { setBusy(false); }
   };
 
-  const openRun = async (runId) => {
+  // --- Phase 37d: ledger edit / delete ------------------------------------
+  const startEdit = (e) => {
+    setEditingId(e.id);
+    setEditDeltaText(JSON.stringify(e.delta ?? {}, null, 2));
+    setEditError(null);
+  };
+
+  const saveEdit = async (id) => {
+    let delta;
+    try { delta = JSON.parse(editDeltaText); }
+    catch { setEditError("That isn't valid JSON — fix it and try again."); return; }
+    if (delta === null || typeof delta !== 'object' || Array.isArray(delta)) {
+      setEditError('The delta needs to be a JSON object, like {"confidence": 0.8}.');
+      return;
+    }
+    setBusy(true); setEditError(null);
+    try {
+      await api.knowledgeUpdateEvent(id, { delta });
+      setEditingId(null);
+      await load();
+    } catch (err) { setEditError(err.message || String(err)); }
+    finally { setBusy(false); }
+  };
+
+  const handleLedgerDelete = async (id) => {
+    if (!window.confirm("Delete this ledger entry? It's your call — but replaying this entity's history won't show it anymore.")) return;
     setBusy(true); setError(null);
+    try {
+      await api.knowledgeDeleteEvent(id);
+      if (editingId === id) setEditingId(null);
+      await load();
+    } catch (err) { setError(err.message || String(err)); }
+    finally { setBusy(false); }
+  };
+
+  const openRun = async (runId) => {    setBusy(true); setError(null);
     try { setRunDetail(await api.telemetryRun(runId)); }
     catch (e) { setError(e.message || String(e)); setRunDetail(null); }
     finally { setBusy(false); }
@@ -169,7 +209,7 @@ export default function System() {
             <>
               <Card
                 title="Event ledger"
-                subtitle="Append-only. Nothing is deleted: retiring is a transition. Every row here was written in the same transaction as the knowledge it describes."
+                subtitle="Your record. Edit or delete any entry — deleting removes it from history replays too."
               >
                 <div className="flex flex-wrap gap-2 mb-3">
                   <select
@@ -207,8 +247,42 @@ export default function System() {
                           >
                             {e.entity_type}:{String(e.entity_id).slice(0, 18)}
                           </button>
-                          <span className="ml-auto tabular-nums text-muted-foreground/60">{fmtTime(e.at)}</span>
+                          <span className="ml-auto flex items-center gap-0.5">
+                            {editingId !== e.id && (
+                              <>
+                                <button
+                                  onClick={() => startEdit(e)}
+                                  title="Edit this entry's delta"
+                                  className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground"
+                                ><Edit2 className="w-3.5 h-3.5" /></button>
+                                <button
+                                  onClick={() => handleLedgerDelete(e.id)}
+                                  title="Delete this entry"
+                                  className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-destructive"
+                                ><Trash2 className="w-3.5 h-3.5" /></button>
+                              </>
+                            )}
+                            <span className="tabular-nums text-muted-foreground/60 pl-1">{fmtTime(e.at)}</span>
+                          </span>
                         </div>
+                        {editingId === e.id ? (
+                          <div className="mt-2">
+                            <textarea
+                              rows={6}
+                              className="w-full bg-background border border-border rounded px-2 py-1.5 text-[11px] font-mono"
+                              value={editDeltaText}
+                              onChange={(ev) => setEditDeltaText(ev.target.value)}
+                              spellCheck={false}
+                            />
+                            {editError && <div className="mt-1 text-[11px] text-destructive">{editError}</div>}
+                            <div className="mt-1.5 flex gap-2">
+                              <button onClick={() => saveEdit(e.id)} className="px-3 py-1.5 rounded-lg bg-primary/15 text-primary text-xs hover:bg-primary/25 flex items-center gap-1"><Check className="w-3.5 h-3.5" />Save</button>
+                              <button onClick={() => { setEditingId(null); setEditError(null); }} className="px-3 py-1.5 rounded-lg bg-muted/50 text-muted-foreground text-xs hover:bg-muted flex items-center gap-1"><X className="w-3.5 h-3.5" />Cancel</button>
+                            </div>
+                            <div className="mt-1 text-[10px] text-muted-foreground/60">Changes this entry's delta only — the rest of the ledger stays exactly as it was.</div>
+                          </div>
+                        ) : (
+                        <>
                         {(e.from_state || e.to_state || e.delta) && (
                           <div className="mt-1.5 grid sm:grid-cols-3 gap-1.5 text-[10px]">
                             <div><span className="text-muted-foreground/60">from </span><Json value={e.from_state} /></div>
@@ -222,6 +296,8 @@ export default function System() {
                           <span>source {e.source_kind || '—'}</span>
                           <span>reversible: {e.reversible ? 'yes' : 'no'}</span>
                         </div>
+                        </>
+                        )}
                       </div>
                     ))}
                   </div>

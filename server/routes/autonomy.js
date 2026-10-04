@@ -34,6 +34,8 @@ import { designTurn, clampDraft, emptyDraft, DESIGNER_LIMITS, firstGoalScope, cl
 import { scopeHashes, authorizationCovers, isTightening } from "../autonomy/authorize.js";
 import { validateDestinationGrant } from "../autonomy/scopeUrl.js";
 import { decideEffect, revertEffect, refuseEffect, shadowCorpus } from "../autonomy/outbox.js";
+import { approvalStamp } from "../autonomy/approvalHardening.js";
+import { createWatchRunner } from "../autonomy/watches.js";
 import { describeLiveReadiness, setOutboxMode, listOutboxModeFlips } from "../autonomy/liveOutbox.js";
 import { decidePromotion } from "../autonomy/promote.js";
 import { decideCleanupProposal, runCleanupAudit, cleanupDue } from "../autonomy/cleanup.js";
@@ -1082,6 +1084,70 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     res.json({ deleted: tool.id });
   }));
 
+  // --- watches: "every morning, check X and tell me" (Phase 37) ---------------
+  // A resident watches a URL for a condition on an interval. Hash-deduped,
+  // backoff on errors, pause/resume. Firings arrive as notices.
+  const watchRunner = () => createWatchRunner({ db, store: db.Workflow, taskRunner: null });
+
+  app.get("/api/autonomy/watches", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const watches = await watchRunner().listWatches(ws.id, {
+      residentId: req.query.residentId || null,
+      status: req.query.status || null
+    });
+    res.json({ watches });
+  }));
+
+  app.post("/api/autonomy/watches", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const body = req.body || {};
+    const { residentId, name, url, condition, conditionValue, intervalMinutes } = body;
+    if (!residentId || !name || !url || !condition) {
+      return res.status(400).json({ error: "residentId, name, url, and condition are required" });
+    }
+    try { new URL(url); } catch {
+      return res.status(400).json({ error: "url must be a valid URL (https only)" });
+    }
+    if (!url.startsWith("https://")) {
+      return res.status(400).json({ error: "watches only fetch public https URLs" });
+    }
+    const agent = await agentById(ws, residentId);
+    if (!agent) return res.status(404).json({ error: "Resident not found" });
+    try {
+      const watch = await watchRunner().createWatch({
+        workspaceId: ws.id, residentId: agent.id, name, url, condition,
+        conditionValue: conditionValue || null,
+        intervalMinutes: intervalMinutes || 1440
+      });
+      res.json({ watch });
+    } catch (error) {
+      res.status(400).json({ error: String(error.message || error).slice(0, 300) });
+    }
+  }));
+
+  app.patch("/api/autonomy/watches/:id", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const runner = watchRunner();
+    const watch = await runner.getWatch(req.params.id);
+    if (!watch || watch.workspace_id !== ws.id) return res.status(404).json({ error: "Watch not found" });
+    const { status } = req.body || {};
+    if (!status) return res.status(400).json({ error: "status is required (active, paused, stopped)" });
+    try {
+      res.json({ watch: await runner.setStatus(watch.id, status) });
+    } catch (error) {
+      res.status(400).json({ error: String(error.message || error).slice(0, 300) });
+    }
+  }));
+
+  app.delete("/api/autonomy/watches/:id", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const runner = watchRunner();
+    const watch = await runner.getWatch(req.params.id);
+    if (!watch || watch.workspace_id !== ws.id) return res.status(404).json({ error: "Watch not found" });
+    await runner.deleteWatch(watch.id);
+    res.json({ deleted: watch.id });
+  }));
+
   // --- assignment: per resident, by tap --------------------------------------
   const agentById = async (ws, id) => {
     const agent = await db.AutonomyAgent.get(id);
@@ -1491,7 +1557,9 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     // Phase 36 — a tool write is approved exactly like a T5: a human approval
     // row naming this exact outbox id, written by this route only. The Action
     // Governor's tool_call branch reads it back. One approval story, not two.
+    // Phase 37 — the stamp binds the exact payload and rots after the TTL.
     if (effect.tier === "T5" || isToolCall) {
+      const stamp = approvalStamp(effect);
       await db.EffectApproval.append({
         workspace_id: ws.id,
         outbox_id: effect.id,
@@ -1500,7 +1568,9 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
         decision: "approve",
         scope_sha256: authorization?.scope_sha256 || null,
         reason: safe(req.body?.reason, 300) || null,
-        decided_by: "operator"
+        decided_by: "operator",
+        expires_ms: stamp.expires_ms,
+        payload_sha256: stamp.payload_sha256
       });
     }
 
@@ -1514,6 +1584,29 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     // "already decided in shadow, performed nothing", which is the one thing an
     // operator clicking approve on Rung 4 must not be allowed to believe.
     if (out?.replayed && out?.row?.status !== "released") {
+      // Phase 37 (incident): a promise died here before — the resident said it
+      // would send, but the approval couldn't execute, and nothing told Jeremy
+      // why or what to do next. Now the inbox shows it AND a notice lands.
+      const why = out.row.status === "would_release"
+        ? "it was planned in rehearsal mode, where plans are recorded but never sent"
+        : `it was already decided as '${out.row.status}'`;
+      // Plain-language "what" for the notice: no ids, no internals.
+      const what = (() => {
+        const p = effect.payload || {};
+        if (effect.effect_type === "tool_call") return `“${p.toolName || "tool"}” run`;
+        if (effect.destination) return `message to ${String(effect.destination).slice(0, 60)}`;
+        return "action";
+      })();
+      try {
+        await db.AutonomyNotice.create({
+          workspace_id: ws.id,
+          agent_id: effect.agent_id || null,
+          goal_id: effect.goal_id || null,
+          template_id: "approval_blocked",
+          fields: { what, why },
+          severity: "warning"
+        });
+      } catch { /* notice failure never blocks the response */ }
       return res.status(409).json({
         error: `This effect was already judged '${out.row.status}' and this approval delivered nothing. `
           + (out.row.status === "would_release"
@@ -1531,10 +1624,26 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     }
     // An approval is a request, not a guarantee: the Action Governor still
     // judges the effect, and a refusal is a 409 naming the rules rather than a
-    // 200 with a refused row buried in the body.
+    // 200 with a refused row buried in the body. Phase 37: the refusal also
+    // lands as a notice so the promise never dies silently.
     if (out?.row?.status === "refused") {
+      const rules = (out.verdict?.failed || []).map(f => f.rule).join(", ");
+      const p = effect.payload || {};
+      const what = effect.effect_type === "tool_call"
+        ? `“${p.toolName || "tool"}” run`
+        : effect.destination ? `message to ${String(effect.destination).slice(0, 60)}` : "action";
+      try {
+        await db.AutonomyNotice.create({
+          workspace_id: ws.id,
+          agent_id: effect.agent_id || null,
+          goal_id: effect.goal_id || null,
+          template_id: "approval_blocked",
+          fields: { what, why: `the safety check refused it (${rules})` },
+          severity: "warning"
+        });
+      } catch { /* notice failure never blocks the response */ }
       return res.status(409).json({
-        error: `The Action Governor refused this effect: ${(out.verdict?.failed || []).map(f => f.rule).join(", ")}`,
+        error: `The Action Governor refused this effect: ${rules}`,
         verdict: out.verdict,
         row: out.row
       });

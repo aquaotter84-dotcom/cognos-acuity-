@@ -172,6 +172,38 @@ export const NOTICE_TEMPLATES = Object.freeze({
       + ` I cleared the old shelves only after saving everything first:`
       + ` ${plural(f.memoryCount, "memory", "memories")} backed up to ${f.backupDir}/${f.backupName}.`
       + ` Nothing is lost; the backup is yours to keep.`
+  }),
+
+  outbox_reconciled: Object.freeze({
+    fields: Object.freeze({
+      unknownCount: "number"
+    }),
+    enums: Object.freeze({}),
+    severity: "warning",
+    render: (f) => `Heads up: the app restarted while ${plural(f.unknownCount, "delivery was", "deliveries were")} in flight.`
+      + ` I marked ${f.unknownCount === 1 ? "it" : "them"} honestly unknown — the bytes may or may not have gone out.`
+      + ` Check with the provider before sending again, and I'll never guess on your behalf.`
+  }),
+
+  approval_blocked: Object.freeze({
+    fields: Object.freeze({
+      what: "string",
+      why: "string"
+    }),
+    enums: Object.freeze({}),
+    severity: "warning",
+    render: (f) => `That ${f.what} couldn't be approved — ${f.why}.`
+      + ` Nothing was sent. If you still want it, ask me to set it up fresh and I'll stage a new one.`
+  }),
+
+  watch_fired: Object.freeze({
+    fields: Object.freeze({
+      watchName: "string",
+      detail: "string"
+    }),
+    enums: Object.freeze({}),
+    severity: "info",
+    render: (f) => `Heads up from your watch "${f.watchName}": ${f.detail}.`
   })
 });
 
