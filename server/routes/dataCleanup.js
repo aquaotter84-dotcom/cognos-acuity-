@@ -65,7 +65,7 @@ const CATEGORIES = {
   outbox: {
     title: "Outbox & approvals",
     description: "Staged effects, approval decisions, and outbox history.",
-    tables: ["outbox_events", "effect_approvals", "agent_approvals", "autonomy_outbox"],
+    tables: ["outbox_events", "effect_approvals", "agent_approvals", "note_promotions", "autonomy_outbox"],
   },
   watches: {
     title: "Watches",

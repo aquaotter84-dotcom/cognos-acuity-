@@ -115,10 +115,11 @@ try {
     await h.sql(`INSERT INTO projects (id, workspace_id, name) VALUES ('p1', $1, 'proj')`, [ws.id]);
     await h.sql(`INSERT INTO conversations (id, workspace_id, title) VALUES ('c1', $1, 'c')`, [ws.id]);
     await h.sql(`INSERT INTO messages (id, conversation_id, workspace_id, role, content) VALUES ('msg1', 'c1', $1, 'user', 'hi')`, [ws.id]);
+    await h.sql(`INSERT INTO note_promotions (id, workspace_id, goal_id, note_id, target, status) VALUES ('np1', $1, 'g1', 'n1', 'knowledge', 'pending')`, [ws.id]);
     const r = await h.raw("/api/data/cleanup/all", { method: "POST", body: { confirm: "CLEAR EVERYTHING" } });
     assert.equal(r.status, 200, JSON.stringify(r.json)?.slice(0, 300));
     assert.equal(r.json.cleared, true);
-    for (const t of ["cognos_ideas", "projects", "conversations", "messages", "telemetry_model_calls"]) {
+    for (const t of ["cognos_ideas", "projects", "conversations", "messages", "note_promotions", "telemetry_model_calls"]) {
       const left = await h.sql(`SELECT COUNT(*)::int AS n FROM ${t}`);
       assert.equal(left[0].n, 0, `${t} is empty after clear-everything`);
     }
