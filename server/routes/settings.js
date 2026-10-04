@@ -1,16 +1,18 @@
 // On-device settings routes.
 //
-// The model API key lives in <COGNOS_DATA_DIR>/bluesminds_api_key.txt on-device
-// (written by the APK boot page); server deploys keep it in env vars instead.
-// These routes let the Settings page change or remove the key without
-// reinstalling the app. server/llm.js reads process.env on every call, so
-// updating both the file and the env var takes effect immediately — no
-// restart needed. The key value itself is never returned by any route.
+// Jeremy's boundary: API keys and endpoint URLs stay keyed in — they are
+// configuration, never UI. No route here reads, writes, or returns them; the
+// key lives in <COGNOS_DATA_DIR>/bluesminds_api_key.txt (written by the APK
+// boot page) and server deploys keep it in env vars instead.
+// These routes let the Settings page change model selection and other
+// user-meaningful choices without reinstalling the app. server/llm.js reads
+// process.env on every call, so updating both the file and the env var takes
+// effect immediately — no restart needed.
 
 import fs from "node:fs";
 import path from "node:path";
-import { diagnoseAiConnection, DIAGNOSE_DEFAULT_BASE_URL } from "../ai-diagnose.js";
-import { resolveModel } from "../llm.js";
+import { diagnoseAiConnection } from "../ai-diagnose.js";
+import { resolveModel, providerApiConfig } from "../llm.js";
 import { envFlag } from "../autonomy/settings.js";
 import {
   AUTONOMY_DELEGATION_FILES,
@@ -18,24 +20,14 @@ import {
   readDelegationFile,
 } from "../delegation-files.mjs";
 
-const KEY_FILE = "bluesminds_api_key.txt";
 const DB_URL_FILE = "database_url.txt";
-const BASE_URL_FILE = "bluesminds_api_url.txt";
 const MODEL_FILE = "cognos_model.txt";
-
-function deviceKeyPath() {
-  const dir = process.env.COGNOS_DATA_DIR;
-  return dir ? path.join(dir, KEY_FILE) : null;
-}
+const FAST_MODEL_FILE = "cognos_fast_model.txt";
+const IMAGE_MODEL_FILE = "cognos_image_model.txt";
 
 function deviceDbUrlPath() {
   const dir = process.env.COGNOS_DATA_DIR;
   return dir ? path.join(dir, DB_URL_FILE) : null;
-}
-
-function deviceBaseUrlPath() {
-  const dir = process.env.COGNOS_DATA_DIR;
-  return dir ? path.join(dir, BASE_URL_FILE) : null;
 }
 
 function deviceModelPath() {
@@ -43,47 +35,61 @@ function deviceModelPath() {
   return dir ? path.join(dir, MODEL_FILE) : null;
 }
 
+function deviceFastModelPath() {
+  const dir = process.env.COGNOS_DATA_DIR;
+  return dir ? path.join(dir, FAST_MODEL_FILE) : null;
+}
+
+function deviceImageModelPath() {
+  const dir = process.env.COGNOS_DATA_DIR;
+  return dir ? path.join(dir, IMAGE_MODEL_FILE) : null;
+}
+
+// Live model-catalog cache: one hour, shared across requests.
+const MODELS_CACHE_TTL_MS = 60 * 60 * 1000;
+let modelsCache = { at: 0, models: [] };
+
+/** Shared POST/DELETE logic for the three model-id settings (main, fast,
+ *  image). `envVar` is the COGNOS_* variable the choice overrides. */
+function writeModelFile({ filePath, envVar, logger, what }) {
+  return async (req, res) => {
+    if (!filePath) {
+      return res.status(400).json({
+        error: `The ${what} is managed by the server environment on this install — it can't be changed from Settings.`,
+      });
+    }
+    const raw = typeof req.body?.model === "string" ? req.body.model.trim() : "";
+    if (!raw) {
+      try { fs.unlinkSync(filePath); } catch { /* already absent */ }
+      delete process.env[envVar];
+      if (logger) logger.info("settings", `${what} reset to default from Settings page`);
+      return res.json({ ok: true, reset: true, value: resolveModel() });
+    }
+    const problem = validateModelId(raw);
+    if (problem) return res.status(400).json({ error: problem });
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, raw, { mode: 0o600, encoding: "utf8" });
+    process.env[envVar] = raw;
+    if (logger) logger.info("settings", `${what} updated from Settings page`);
+    res.json({ ok: true, value: raw });
+  };
+}
+
+function clearModelFile({ filePath, envVar, logger, what }) {
+  return async (req, res) => {
+    if (!filePath) {
+      return res.status(400).json({
+        error: `The ${what} is managed by the server environment on this install.`,
+      });
+    }
+    try { fs.unlinkSync(filePath); } catch { /* already absent */ }
+    delete process.env[envVar];
+    if (logger) logger.info("settings", `${what} reset to default from Settings page`);
+    res.json({ ok: true, reset: true, value: resolveModel() });
+  };
+}
+
 export function registerSettingsRoutes(app, { wrap, logger }) {
-  app.get("/api/settings/model-key", wrap(async (req, res) => {
-    res.json({
-      configured: Boolean(process.env.BLUESMINDS_API_KEY || process.env.OPENAI_API_KEY),
-      // "device": the key file lives in app-internal storage and can be
-      // changed here. "environment": a server deploy — managed by env vars.
-      managed: deviceKeyPath() ? "device" : "environment",
-    });
-  }));
-
-  app.post("/api/settings/model-key", wrap(async (req, res) => {
-    const keyPath = deviceKeyPath();
-    if (!keyPath) {
-      return res.status(400).json({
-        error: "The model key is managed by the server environment on this install — it can't be changed from Settings.",
-      });
-    }
-    const key = typeof req.body?.key === "string" ? req.body.key.trim() : "";
-    if (!key) return res.status(400).json({ error: "Enter an API key first." });
-    if (key.length > 500) return res.status(400).json({ error: "That key looks too long to be valid — check for extra characters." });
-    fs.mkdirSync(path.dirname(keyPath), { recursive: true });
-    fs.writeFileSync(keyPath, key, { mode: 0o600, encoding: "utf8" });
-    // llm.js reads process.env per call, so this applies immediately.
-    process.env.BLUESMINDS_API_KEY = key;
-    if (logger) logger.info("settings", "model key updated from Settings page");
-    res.json({ ok: true, configured: true });
-  }));
-
-  app.delete("/api/settings/model-key", wrap(async (req, res) => {
-    const keyPath = deviceKeyPath();
-    if (!keyPath) {
-      return res.status(400).json({
-        error: "The model key is managed by the server environment on this install.",
-      });
-    }
-    try { fs.unlinkSync(keyPath); } catch { /* already absent */ }
-    delete process.env.BLUESMINDS_API_KEY;
-    if (logger) logger.info("settings", "model key removed from Settings page");
-    res.json({ ok: true, configured: Boolean(process.env.OPENAI_API_KEY) });
-  }));
-
   // --- External database URL (Supabase etc.) --------------------------------
   // Same device-file pattern as the model key: <COGNOS_DATA_DIR>/database_url.txt
   // (written by the APK boot page or the Settings page below). entry.mjs reads
@@ -140,70 +146,84 @@ export function registerSettingsRoutes(app, { wrap, logger }) {
 
   // Staged AI-connection self-test: replays the model provider connection in
   // observable stages (key sanity, DNS, TCP, TLS, HTTPS) so a failing stage
-  // names the real cause. Never returns key material — see server/ai-diagnose.js.
+  // names the real cause. Never returns key material or the endpoint URL —
+  // see server/ai-diagnose.js. The route scrubs the endpoint from the result
+  // before it reaches the app: Jeremy's boundary is that keys and endpoint
+  // URLs stay keyed in, never surfaced in the UI.
   app.get("/api/settings/diagnose-ai", wrap(async (req, res) => {
     const result = await diagnoseAiConnection();
-    res.json(result);
+    const { baseUrl: _b, host: _h, port: _p, ...safe } = result;
+    safe.stages = (safe.stages || []).map((s) => ({
+      ...s,
+      detail: String(s.detail || "").replace(
+        /TCP connection to \S+ opened successfully\./,
+        "TCP connection to the AI provider opened successfully."
+      ),
+    }));
+    res.json(safe);
   }));
 
-  // AI provider base URL. Points COGNOS at any OpenAI-compatible endpoint —
-  // e.g. Gemini's https://generativelanguage.googleapis.com/v1beta/openai
-  // (llm.js appends /chat/completions, which is exactly Gemini's documented
-  // path). Stored in bluesminds_api_url.txt on-device (mode 600); llm.js reads
-  // BLUESMINDS_API_URL from process.env on every call, so updating both the
-  // file and the env var takes effect immediately. The URL is not secret, so
-  // GET returns it. An empty POST (or DELETE) resets to the built-in default.
-  app.get("/api/settings/model-base-url", wrap(async (req, res) => {
-    res.json({
-      configured: Boolean(process.env.BLUESMINDS_API_URL || process.env.OPENAI_BASE_URL),
-      value: process.env.BLUESMINDS_API_URL || process.env.OPENAI_BASE_URL || DIAGNOSE_DEFAULT_BASE_URL,
-      isDefault: !process.env.BLUESMINDS_API_URL && !process.env.OPENAI_BASE_URL,
-      managed: deviceBaseUrlPath() ? "device" : "environment",
-    });
-  }));
-
-  app.post("/api/settings/model-base-url", wrap(async (req, res) => {
-    const urlPath = deviceBaseUrlPath();
-    if (!urlPath) {
-      return res.status(400).json({
-        error: "The provider base URL is managed by the server environment on this install — it can't be changed from Settings.",
+  // Live model catalog. Fetches the provider's /v1/models with the
+  // server-side key (never exposed) so new models — Claude included — show up
+  // as tap options without another release. Cached for an hour; ?refresh=1
+  // bypasses the cache. Offline or provider trouble degrades to a friendly
+  // error and the UI falls back to typing a model id by hand.
+  app.get("/api/settings/models", wrap(async (req, res) => {
+    const now = Date.now();
+    const bypass = req.query?.refresh === "1";
+    if (!bypass && modelsCache.at && now - modelsCache.at < MODELS_CACHE_TTL_MS) {
+      return res.json({ ok: true, cached: true, fetchedAt: modelsCache.at, models: modelsCache.models });
+    }
+    let apiKey, baseUrl;
+    try {
+      ({ apiKey, baseUrl } = providerApiConfig());
+    } catch {
+      return res.status(503).json({
+        ok: false,
+        error: "No model key is configured on this install yet — the model list can't be fetched until one is keyed in.",
       });
     }
-    const raw = typeof req.body?.url === "string" ? req.body.url.trim() : "";
-    if (!raw) {
-      try { fs.unlinkSync(urlPath); } catch { /* already absent */ }
-      delete process.env.BLUESMINDS_API_URL;
-      if (logger) logger.info("settings", "provider base URL reset to default from Settings page");
-      return res.json({ ok: true, reset: true, value: DIAGNOSE_DEFAULT_BASE_URL });
-    }
-    const problem = validateBaseUrl(raw);
-    if (problem) return res.status(400).json({ error: problem });
-    const url = normalizeBaseUrl(raw);
-    fs.mkdirSync(path.dirname(urlPath), { recursive: true });
-    fs.writeFileSync(urlPath, url, { mode: 0o600, encoding: "utf8" });
-    process.env.BLUESMINDS_API_URL = url;
-    if (logger) logger.info("settings", "provider base URL updated from Settings page");
-    res.json({ ok: true, value: url });
-  }));
-
-  app.delete("/api/settings/model-base-url", wrap(async (req, res) => {
-    const urlPath = deviceBaseUrlPath();
-    if (!urlPath) {
-      return res.status(400).json({
-        error: "The provider base URL is managed by the server environment on this install.",
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
+    try {
+      const r = await fetch(`${baseUrl}/v1/models`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: controller.signal,
       });
+      if (!r.ok) {
+        return res.status(502).json({
+          ok: false,
+          error: r.status === 401 || r.status === 403
+            ? "The provider rejected the configured key, so the model list couldn't be fetched."
+            : `The provider returned HTTP ${r.status} for the model list.`,
+        });
+      }
+      const body = await r.json().catch(() => null);
+      const models = (body?.data || [])
+        .map((m) => String(m?.id || "").trim())
+        .filter((id) => id && id.length <= 100)
+        .filter((id, i, arr) => arr.indexOf(id) === i)
+        .slice(0, 500)
+        .sort((a, b) => a.localeCompare(b));
+      modelsCache = { at: now, models };
+      res.json({ ok: true, cached: false, fetchedAt: now, models });
+    } catch (err) {
+      const timeout = err?.name === "AbortError";
+      res.status(502).json({
+        ok: false,
+        error: timeout
+          ? "The provider didn't answer in time — check the connection and try again."
+          : "The model list couldn't be reached. The provider may be down or the device offline.",
+      });
+    } finally {
+      clearTimeout(timer);
     }
-    try { fs.unlinkSync(urlPath); } catch { /* already absent */ }
-    delete process.env.BLUESMINDS_API_URL;
-    if (logger) logger.info("settings", "provider base URL reset to default from Settings page");
-    res.json({ ok: true, reset: true, value: DIAGNOSE_DEFAULT_BASE_URL });
   }));
 
   // AI model id. Same on-device pattern (cognos_model.txt, mode 600 →
   // COGNOS_MODEL); llm.js resolves the model per call via resolveModel(), so
   // changes apply immediately. Not secret — GET returns it. Empty POST (or
-  // DELETE) resets to the built-in default. Switching providers usually means
-  // switching the model too (e.g. gemini-2.0-flash for Gemini).
+  // DELETE) resets to the built-in default.
   app.get("/api/settings/model-id", wrap(async (req, res) => {
     res.json({
       configured: Boolean(process.env.COGNOS_MODEL || process.env.OPENAI_MODEL),
@@ -248,6 +268,47 @@ export function registerSettingsRoutes(app, { wrap, logger }) {
     if (logger) logger.info("settings", "model id reset to default from Settings page");
     res.json({ ok: true, reset: true, value: resolveModel() });
   }));
+
+  // Fast model: the smaller brain behind background jobs (memory ranking, the
+  // council's quick passes). Same file pattern (cognos_fast_model.txt, mode
+  // 600 → COGNOS_FAST_MODEL); config.js reads it on every config build, so it
+  // applies on the next turn. A tap option, not a variable.
+  app.get("/api/settings/fast-model-id", wrap(async (req, res) => {
+    res.json({
+      configured: Boolean(process.env.COGNOS_FAST_MODEL),
+      value: resolveModel(process.env.COGNOS_FAST_MODEL),
+      isDefault: !process.env.COGNOS_FAST_MODEL,
+      managed: deviceFastModelPath() ? "device" : "environment",
+    });
+  }));
+
+  app.post("/api/settings/fast-model-id", wrap(async (req, res) =>
+    writeModelFile({ filePath: deviceFastModelPath(), envVar: "COGNOS_FAST_MODEL", logger, what: "quick-tasks model" })(req, res)
+  ));
+
+  app.delete("/api/settings/fast-model-id", wrap(async (req, res) =>
+    clearModelFile({ filePath: deviceFastModelPath(), envVar: "COGNOS_FAST_MODEL", logger, what: "quick-tasks model" })(req, res)
+  ));
+
+  // Image model: reads attached images (vision). Same file pattern
+  // (cognos_image_model.txt, mode 600 → COGNOS_IMAGE_MODEL); vision.js reads
+  // it per call, so it applies immediately. A tap option, not a variable.
+  app.get("/api/settings/image-model-id", wrap(async (req, res) => {
+    res.json({
+      configured: Boolean(process.env.COGNOS_IMAGE_MODEL),
+      value: resolveModel(process.env.COGNOS_IMAGE_MODEL),
+      isDefault: !process.env.COGNOS_IMAGE_MODEL,
+      managed: deviceImageModelPath() ? "device" : "environment",
+    });
+  }));
+
+  app.post("/api/settings/image-model-id", wrap(async (req, res) =>
+    writeModelFile({ filePath: deviceImageModelPath(), envVar: "COGNOS_IMAGE_MODEL", logger, what: "image-reading model" })(req, res)
+  ));
+
+  app.delete("/api/settings/image-model-id", wrap(async (req, res) =>
+    clearModelFile({ filePath: deviceImageModelPath(), envVar: "COGNOS_IMAGE_MODEL", logger, what: "image-reading model" })(req, res)
+  ));
 
   // --- Switch delegation (on-device operator handover) -----------------------
   // The *_UI_CONTROL env vars hand the switches to the UI
@@ -338,28 +399,6 @@ export function validateDatabaseUrl(url) {
     return "That doesn't look like a Postgres connection string — it should start with postgresql://.";
   }
   return null;
-}
-
-/**
- * Friendly validation for a user-supplied AI provider base URL (any
- * OpenAI-compatible endpoint). Returns an error message string, or null when
- * the URL is acceptable. Empty input is not an error here — the route treats
- * it as "reset to the built-in default".
- */
-export function validateBaseUrl(url) {
-  url = typeof url === "string" ? url.trim() : "";
-  if (!url) return "Paste a provider base URL first, or clear the field to go back to the default.";
-  if (url.length > 200) return "That URL looks too long to be valid — check for extra characters.";
-  if (!/^https:\/\//i.test(url)) {
-    return "The base URL must start with https:// — for example https://generativelanguage.googleapis.com/v1beta/openai";
-  }
-  return null;
-}
-
-/** Normalize a validated base URL: trim and strip trailing slashes (llm.js
- *  appends /chat/completions itself). */
-export function normalizeBaseUrl(url) {
-  return String(url).trim().replace(/\/+$/, "");
 }
 
 /**

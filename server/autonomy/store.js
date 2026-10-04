@@ -288,6 +288,36 @@ export function createAutonomyStore(run) {
       return rows[0] || null;
     },
 
+    /**
+     * Jeremy's data control: rename / re-aim a goal. Only the human-readable
+     * fields move — title and objective. Scope and budget are deliberately NOT
+     * writable here: pin.goal_scope_immutable means an authorized goal can
+     * never widen what it may do or spend without a fresh decision from him.
+     * Editing the words never edits the deal.
+     */
+    async updateFields(id, { title, objective }) {
+      const sets = [];
+      const params = [id];
+      if (title !== undefined) {
+        params.push(String(title).slice(0, 200));
+        sets.push(`title = $${params.length}`);
+      }
+      if (objective !== undefined) {
+        params.push(String(objective).slice(0, 4000));
+        sets.push(`objective = $${params.length}`);
+      }
+      if (!sets.length) {
+        const rows = await run(`SELECT * FROM autonomy_goals WHERE id=$1`, [id]);
+        return rows[0] || null;
+      }
+      sets.push(`updated_date = now()`);
+      const rows = await run(
+        `UPDATE autonomy_goals SET ${sets.join(", ")} WHERE id = $1 RETURNING *`,
+        params
+      );
+      return rows[0] || null;
+    },
+
     async nextRunAt(id, atMs) {
       const rows = await run(
         `UPDATE autonomy_goals SET next_run_at_ms = $2, updated_date = now()

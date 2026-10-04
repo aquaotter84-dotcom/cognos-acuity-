@@ -321,4 +321,51 @@ await test("DELETE /api/autonomy/goals/:id removes the goal; notes orphan to the
   }
 });
 
+// ---------------------------------------------------------------------------
+// Goal editing: title/objective are Jeremy's words to change; scope and
+// budget are the authorized deal and must never move through this route.
+// ---------------------------------------------------------------------------
+
+await test("PATCH /api/autonomy/goals/:id edits title/objective; scope+budget immutable", async () => {
+  const { bootHarness } = await import("./harness.mjs");
+  const h = await bootHarness({ COGNOS_AUTONOMY_ENABLED: "true" });
+  try {
+    const agent = (await h.raw("/api/autonomy/agents", {
+      method: "POST",
+      body: { name: "Editor", slug: "editor", purpose: "edit test", brief: "v1", skill_allowlist: [] }
+    })).json;
+    const goal = (await h.raw("/api/autonomy/goals", {
+      method: "POST",
+      body: { title: "Old title", objective: "Old objective.", agent_id: agent.id }
+    })).json.goal;
+    const before = await h.sql(`SELECT scope, budget, status FROM autonomy_goals WHERE id = $1`, [goal.id]);
+
+    const patched = await h.raw(`/api/autonomy/goals/${goal.id}`, {
+      method: "PATCH",
+      body: {
+        title: "New title", objective: "New objective.",
+        scope: { effectsAllowed: ["everything"] }, budget: { maxCostUsd: 999999 },
+      },
+    });
+    assert.equal(patched.status, 200, JSON.stringify(patched.json));
+    assert.equal(patched.json.goal.title, "New title");
+    assert.equal(patched.json.goal.objective, "New objective.");
+
+    const after = await h.sql(`SELECT scope, budget, status FROM autonomy_goals WHERE id = $1`, [goal.id]);
+    assert.deepEqual(after[0].scope, before[0].scope, "scope untouched by the edit");
+    assert.deepEqual(after[0].budget, before[0].budget, "budget untouched by the edit");
+
+    const empty = await h.raw(`/api/autonomy/goals/${goal.id}`, { method: "PATCH", body: {} });
+    assert.equal(empty.status, 400, "empty patch is rejected");
+
+    const blank = await h.raw(`/api/autonomy/goals/${goal.id}`, { method: "PATCH", body: { title: "  " } });
+    assert.equal(blank.status, 400, "blank title is rejected");
+
+    const missing = await h.raw("/api/autonomy/goals/nope", { method: "PATCH", body: { title: "x" } });
+    assert.equal(missing.status, 404);
+  } finally {
+    await h.stop();
+  }
+});
+
 console.log(`\nSTUDIO RESULT: ${passed} passed`);

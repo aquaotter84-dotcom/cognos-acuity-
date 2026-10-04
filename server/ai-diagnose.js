@@ -61,7 +61,7 @@ function checkKey() {
   let formatOk = false;
   let detail;
   if (!present) {
-    detail = "No API key is saved on this device — add one under Settings → AI model key first.";
+    detail = "No API key is configured on this install yet — the key is keyed in at setup, outside the app.";
   } else {
     const key = raw.trim();
     const printableAscii = /^[\x20-\x7E]+$/.test(key);

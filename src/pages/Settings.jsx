@@ -4,7 +4,7 @@
 // workspace instructions editor (which feeds buildContextSystemPrompt verbatim),
 // local browser voice preferences, and runtime status from /api/health.
 import { useState, useEffect, useCallback } from 'react';
-import { Settings as SettingsIcon, Menu, Check, X, Square, Volume2, ShieldAlert, Scale, KeyRound, Trash2, Sun, Moon, Database, Pencil, Plus } from 'lucide-react';
+import { Settings as SettingsIcon, Menu, Check, X, Square, Volume2, ShieldAlert, Scale, Trash2, Sun, Moon, Database, Pencil, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Pill } from '@/components/system/SystemUi';
 import { useCognos } from '@/lib/cognosContext';
@@ -156,276 +156,279 @@ function CouncilHandover() {
   );
 }
 
-/** Change or remove the on-device model API key — no reinstall needed. */function ModelKeySection({ onChanged }) {
-  const [status, setStatus] = useState(null);
-  const [keyInput, setKeyInput] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState(null); // { ok, text }
-  const [diag, setDiag] = useState(null); // staged AI-connection diagnostic result
-  const [diagBusy, setDiagBusy] = useState(false);
-
-  const refresh = () => api.modelKeyStatus().then(setStatus).catch(() => setStatus(null));
-  useEffect(() => { refresh(); }, []);
-
-  const save = async () => {
-    setBusy(true); setMessage(null);
-    try {
-      await api.setModelKey(keyInput);
-      setKeyInput('');
-      await refresh();
-      onChanged?.();
-      setMessage({ ok: true, text: 'Key saved — it takes effect immediately, no restart needed.' });
-    } catch (e) { setMessage({ ok: false, text: e.message || 'Could not save the key.' }); }
-    finally { setBusy(false); }
-  };
-
-  const remove = async () => {
-    if (!window.confirm('Remove the saved API key? COGNOS won\u2019t be able to answer until you add a new one.')) return;
-    setBusy(true); setMessage(null);
-    try {
-      await api.clearModelKey();
-      await refresh();
-      onChanged?.();
-      setMessage({ ok: true, text: 'Key removed.' });
-    } catch (e) { setMessage({ ok: false, text: e.message || 'Could not remove the key.' }); }
-    finally { setBusy(false); }
-  };
-
-  const runDiagnostic = async () => {
-    setDiagBusy(true); setDiag(null);
-    try {
-      setDiag(await api.diagnoseAi());
-    } catch (e) {
-      setDiag({ ok: false, summary: e.message || 'The diagnostic could not run.', stages: [] });
-    } finally { setDiagBusy(false); }
-  };
-
+/** The brains of the operation — which AI model answers, which handles the
+ *  quick background jobs, and which reads attached images. All three are tap
+ *  options backed by the provider's live model catalog (fetched from
+ *  /v1/models, cached an hour, refreshable) — no more typing model ids, and
+ *  new models show up without another release. Keys and endpoint URLs stay
+ *  keyed in: they are never shown, edited, or offered here. */
+function ModelSection({ onChanged }) {
   return (
     <section className="space-y-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI model key</h3>
-      <div className="rounded-xl border border-border bg-card p-3 space-y-3 text-xs">
-        {status === null ? (
-          <p className="text-muted-foreground">Loading…</p>
-        ) : status.managed === 'environment' ? (
-          <p className="text-muted-foreground leading-relaxed">
-            The model key for this install is managed by the server environment, so it can't be
-            changed here. {status.configured ? 'A key is configured.' : 'No key is configured yet.'}
-          </p>
-        ) : (
-          <>
-            <div className="flex items-start gap-2">
-              <KeyRound className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
-              <p className="text-muted-foreground leading-relaxed">
-                {status.configured
-                  ? 'A key is saved on this device. Paste a new one below to replace it — or remove it entirely.'
-                  : 'No key is saved yet, so COGNOS can\u2019t answer. Paste your BluesMinds (or OpenAI-compatible) API key below.'}
-              </p>
-            </div>
-            <input
-              type="password"
-              value={keyInput}
-              onChange={e => setKeyInput(e.target.value)}
-              placeholder="Paste new API key"
-              autoComplete="off" autoCapitalize="off" spellCheck="false"
-              className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/50"
-            />
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={save}
-                disabled={busy || !keyInput.trim()}
-                className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
-              >
-                {busy ? 'Saving…' : 'Save new key'}
-              </button>
-              {status.configured && (
-                <button
-                  onClick={remove}
-                  disabled={busy}
-                  className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 disabled:opacity-50"
-                >
-                  <Trash2 className="w-3.5 h-3.5" /> Remove key
-                </button>
-              )}
-              <button
-                onClick={runDiagnostic}
-                disabled={diagBusy}
-                className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground disabled:opacity-50"
-                title="Run a staged connection test against your AI provider: key sanity, DNS, TCP, TLS, HTTPS."
-              >
-                {diagBusy ? 'Testing…' : 'Test AI connection'}
-              </button>
-            </div>
-            {message && (
-              <p className={message.ok ? 'text-green-500' : 'text-destructive'}>{message.text}</p>
-            )}
-            {diag && (
-              <div className="rounded-lg border border-border bg-muted/30 p-2.5 space-y-1.5">
-                <p className={diag.ok ? 'text-green-500' : 'text-destructive'}>{diag.summary}</p>
-                {diag.stages.map(s => (
-                  <div key={s.name} className="flex items-start gap-2">
-                    {s.ok
-                      ? <Check className="w-3.5 h-3.5 text-green-500 mt-0.5 shrink-0" />
-                      : <X className="w-3.5 h-3.5 text-destructive mt-0.5 shrink-0" />}
-                    <div className="min-w-0">
-                      <p className="font-medium capitalize">
-                        {s.name}{s.skipped ? ' (skipped)' : ''}
-                        <span className="text-muted-foreground font-normal"> · {s.ms}ms</span>
-                      </p>
-                      <p className="text-muted-foreground leading-snug">{s.detail}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            <p className="text-muted-foreground/60 leading-relaxed">
-              The key is stored privately inside the app — no other app can read it — and is only
-              ever sent to your model provider when answering.
-            </p>
-          </>
-        )}
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI models</h3>
+      <div className="rounded-xl border border-border bg-card p-3 space-y-5 text-xs">
+        <ModelPicker
+          title="Answering model"
+          blurb="The main brain — the one that talks to you."
+          statusFn={api.modelIdStatus}
+          setFn={api.setModelId}
+          clearFn={api.clearModelId}
+          onChanged={onChanged}
+        />
+        <ModelPicker
+          title="Quick-tasks model"
+          blurb="The smaller brain behind background jobs — ranking memories, the council's quick passes."
+          statusFn={api.fastModelStatus}
+          setFn={api.setFastModel}
+          clearFn={api.clearFastModel}
+          onChanged={onChanged}
+        />
+        <ModelPicker
+          title="Image-reading model"
+          blurb="Reads the images you attach."
+          statusFn={api.imageModelStatus}
+          setFn={api.setImageModel}
+          clearFn={api.clearImageModel}
+          onChanged={onChanged}
+        />
+        <ConnectionTest />
       </div>
     </section>
   );
 }
 
-/** Point COGNOS at a different AI provider and/or model — e.g. Gemini's
- *  OpenAI-compatible endpoint. Takes effect immediately, no restart. Neither
- *  value is secret, so the current values are shown. */
-function AiProviderSection({ onChanged }) {
-  const [base, setBase] = useState(null);
-  const [baseInput, setBaseInput] = useState('');
-  const [model, setModel] = useState(null);
-  const [modelInput, setModelInput] = useState('');
+/** One model slot: current choice, a live catalog to tap from, a refresh,
+ *  and a manual-entry fallback for when the catalog can't load. */
+function ModelPicker({ title, blurb, statusFn, setFn, clearFn, onChanged }) {
+  const [status, setStatus] = useState(null);
+  const [catalog, setCatalog] = useState(null); // { models: [], cached, fetchedAt } | { error }
+  const [open, setOpen] = useState(false);
+  const [manual, setManual] = useState(false);
+  const [manualInput, setManualInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState(null); // { ok, text }
+  const [message, setMessage] = useState(null);
 
-  const refresh = () => Promise.all([
-    api.baseUrlStatus().then(setBase).catch(() => setBase(null)),
-    api.modelIdStatus().then(setModel).catch(() => setModel(null)),
-  ]);
-  useEffect(() => { refresh(); }, []);
+  const refreshStatus = useCallback(() => {
+    statusFn().then(setStatus).catch(() => setStatus(null));
+  }, [statusFn]);
+  useEffect(() => { refreshStatus(); }, [refreshStatus]);
 
-  const run = async (fn, doneText) => {
+  const loadCatalog = useCallback(async (forceRefresh = false) => {
+    setCatalog((c) => c || { loading: true });
+    try {
+      const r = await api.modelsList(forceRefresh);
+      if (r.ok) setCatalog({ models: r.models || [], cached: r.cached, fetchedAt: r.fetchedAt });
+      else setCatalog({ error: r.error || 'The model list could not be loaded.' });
+    } catch (e) {
+      setCatalog({ error: e.message || 'The model list could not be loaded.' });
+    }
+  }, []);
+
+  useEffect(() => { if (open && !catalog) loadCatalog(false); }, [open, catalog, loadCatalog]);
+
+  const choose = async (id) => {
     setBusy(true); setMessage(null);
     try {
-      await fn();
-      await refresh();
+      await setFn(id);
+      await refreshStatus();
       onChanged?.();
-      setMessage({ ok: true, text: doneText });
-    } catch (e) { setMessage({ ok: false, text: e.message || 'Could not save.' }); }
-    finally { setBusy(false); }
+      setOpen(false);
+      setMessage({ ok: true, text: `Switched — "${id}" takes effect right away.` });
+    } catch (e) {
+      setMessage({ ok: false, text: e.message || 'Could not switch models.' });
+    } finally { setBusy(false); }
   };
 
-  const saveBase = () => run(
-    () => api.setBaseUrl(baseInput).then(() => setBaseInput('')),
-    'Provider switched — it takes effect immediately.'
-  );
-  const resetBase = () => {
-    if (!window.confirm('Reset the provider to the default?')) return;
-    run(() => api.clearBaseUrl(), 'Provider reset to the default.');
-  };
-  const saveModel = () => run(
-    () => api.setModelId(modelInput).then(() => setModelInput('')),
-    'Model switched — it takes effect immediately.'
-  );
-  const resetModel = () => {
-    if (!window.confirm('Reset the model to the default?')) return;
-    run(() => api.clearModelId(), 'Model reset to the default.');
+  const saveManual = async () => {
+    const id = manualInput.trim();
+    if (!id) return;
+    setBusy(true); setMessage(null);
+    try {
+      await setFn(id);
+      setManualInput('');
+      setManual(false);
+      await refreshStatus();
+      onChanged?.();
+      setMessage({ ok: true, text: `Switched — "${id}" takes effect right away.` });
+    } catch (e) {
+      setMessage({ ok: false, text: e.message || 'Could not switch models.' });
+    } finally { setBusy(false); }
   };
 
-  const envManaged = base?.managed === 'environment' || model?.managed === 'environment';
+  const reset = async () => {
+    if (!window.confirm(`Reset the ${title.toLowerCase()} to the default?`)) return;
+    setBusy(true); setMessage(null);
+    try {
+      await clearFn();
+      await refreshStatus();
+      onChanged?.();
+      setMessage({ ok: true, text: 'Reset to the default.' });
+    } catch (e) {
+      setMessage({ ok: false, text: e.message || 'Could not reset.' });
+    } finally { setBusy(false); }
+  };
+
+  if (status === null) return <p className="text-muted-foreground">Loading…</p>;
+  if (status.managed === 'environment') {
+    return (
+      <div>
+        <p className="font-medium text-foreground/90">{title}</p>
+        <p className="text-muted-foreground leading-relaxed mt-1">
+          Managed by the server environment on this install — it can't be changed here.
+          Current: <span className="break-all">{status.value}</span>.
+        </p>
+      </div>
+    );
+  }
+
+  const current = status.value;
+  const models = catalog?.models || [];
 
   return (
-    <section className="space-y-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI provider</h3>
-      <div className="rounded-xl border border-border bg-card p-3 space-y-4 text-xs">
-        {(base === null || model === null) ? (
-          <p className="text-muted-foreground">Loading…</p>
-        ) : envManaged ? (
-          <p className="text-muted-foreground leading-relaxed">
-            The provider for this install is managed by the server environment, so it can't be
-            changed here. Endpoint: <span className="break-all">{base.value}</span>.
-            Model: <span className="break-all">{model.value}</span>.
-          </p>
-        ) : (
-          <>
-            <div className="space-y-2">
-              <p className="font-medium text-foreground/90">
-                Endpoint <span className="text-muted-foreground font-normal">· current: </span>
-                <span className="text-muted-foreground font-normal break-all">{base.value}{base.isDefault ? ' (default)' : ''}</span>
-              </p>
-              <input
-                value={baseInput}
-                onChange={e => setBaseInput(e.target.value)}
-                placeholder="https://…"
-                autoComplete="off" autoCapitalize="off" spellCheck="false"
-                className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/50"
-              />
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={saveBase}
-                  disabled={busy || !baseInput.trim()}
-                  className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
-                >
-                  {busy ? 'Saving…' : 'Save endpoint'}
-                </button>
-                {!base.isDefault && (
-                  <button
-                    onClick={resetBase}
-                    disabled={busy}
-                    className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground disabled:opacity-50"
-                  >
-                    Reset to default
-                  </button>
-                )}
-              </div>
-              <p className="text-muted-foreground/60 leading-relaxed">
-                Any OpenAI-compatible endpoint. For Gemini:
-                https://generativelanguage.googleapis.com/v1beta/openai
-              </p>
-            </div>
-            <div className="space-y-2">
-              <p className="font-medium text-foreground/90">
-                Model <span className="text-muted-foreground font-normal">· current: </span>
-                <span className="text-muted-foreground font-normal break-all">{model.value}{model.isDefault ? ' (default)' : ''}</span>
-              </p>
-              <input
-                value={modelInput}
-                onChange={e => setModelInput(e.target.value)}
-                placeholder="e.g. gemini-2.0-flash"
-                autoComplete="off" autoCapitalize="off" spellCheck="false"
-                className="w-full bg-muted/50 border border-border rounded-lg px-3 py-2 text-sm outline-none focus:border-primary/50"
-              />
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={saveModel}
-                  disabled={busy || !modelInput.trim()}
-                  className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
-                >
-                  {busy ? 'Saving…' : 'Save model'}
-                </button>
-                {!model.isDefault && (
-                  <button
-                    onClick={resetModel}
-                    disabled={busy}
-                    className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground disabled:opacity-50"
-                  >
-                    Reset to default
-                  </button>
-                )}
-              </div>
-              <p className="text-muted-foreground/60 leading-relaxed">
-                Switching providers usually means switching the model too — use the model id
-                your provider expects.
-              </p>
-            </div>
-            {message && (
-              <p className={message.ok ? 'text-green-500' : 'text-destructive'}>{message.text}</p>
-            )}
-          </>
+    <div className="space-y-2">
+      <p className="font-medium text-foreground/90">{title}</p>
+      <p className="text-muted-foreground/70 leading-relaxed">{blurb}</p>
+      <p className="text-muted-foreground">
+        Current: <span className="break-all text-foreground/80">{current}{status.isDefault ? ' (default)' : ''}</span>
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => setOpen(v => !v)}
+          disabled={busy}
+          className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
+        >
+          {open ? 'Close list' : 'Choose a model'}
+        </button>
+        {!status.isDefault && (
+          <button
+            onClick={reset}
+            disabled={busy}
+            className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground disabled:opacity-50"
+          >
+            Reset to default
+          </button>
         )}
+        <button
+          onClick={() => setManual(v => !v)}
+          disabled={busy}
+          className="text-xs px-3 py-2 rounded-lg text-muted-foreground hover:text-foreground disabled:opacity-50"
+        >
+          {manual ? 'Hide manual entry' : 'Type one in'}
+        </button>
       </div>
-    </section>
+
+      {open && (
+        <div className="rounded-lg border border-border bg-background/60 p-2 space-y-1 max-h-64 overflow-y-auto">
+          <div className="flex items-center justify-between px-1 py-1">
+            <p className="text-[10px] text-muted-foreground">
+              {catalog?.loading ? 'Loading the catalog…'
+                : catalog?.error ? 'The live catalog is unavailable'
+                : `${models.length} models${catalog?.cached ? ' · cached' : ''}`}
+            </p>
+            {!catalog?.loading && (
+              <button
+                onClick={() => loadCatalog(true)}
+                className="text-[10px] text-primary hover:underline"
+              >
+                Refresh
+              </button>
+            )}
+          </div>
+          {catalog?.loading && <p className="text-[11px] text-muted-foreground px-1 py-2">Fetching the latest from your provider…</p>}
+          {catalog?.error && (
+            <p className="text-[11px] text-muted-foreground px-1 py-2 leading-relaxed">
+              {catalog.error} You can still type a model id below.
+            </p>
+          )}
+          {models.map(id => (
+            <button
+              key={id}
+              onClick={() => choose(id)}
+              disabled={busy}
+              className={`w-full text-left px-2.5 py-2 rounded-lg text-[11px] font-mono break-all transition-colors disabled:opacity-50 ${
+                id === current ? 'bg-primary/15 text-primary' : 'hover:bg-muted/60 text-foreground/80'
+              }`}
+            >
+              {id}{id === current ? ' · current' : ''}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {manual && (
+        <div className="flex gap-2">
+          <input
+            value={manualInput}
+            onChange={e => setManualInput(e.target.value)}
+            placeholder="e.g. openai/gpt-oss-20b"
+            autoComplete="off" autoCapitalize="off" spellCheck="false"
+            className="flex-1 bg-muted/50 border border-border rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-primary/50"
+          />
+          <button
+            onClick={saveManual}
+            disabled={busy || !manualInput.trim()}
+            className="text-xs px-3 py-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-50"
+          >
+            {busy ? 'Saving…' : 'Use it'}
+          </button>
+        </div>
+      )}
+
+      {message && (
+        <p className={message.ok ? 'text-green-500' : 'text-destructive'}>{message.text}</p>
+      )}
+    </div>
+  );
+}
+
+/** Staged AI-connection self-test. Reports stage results only — the key and
+ *  the endpoint URL are scrubbed before they reach the app. */
+function ConnectionTest() {
+  const [diag, setDiag] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
+    setBusy(true); setDiag(null);
+    try {
+      setDiag(await api.diagnoseAi());
+    } catch (e) {
+      setDiag({ ok: false, summary: e.message || 'The diagnostic could not run.', stages: [] });
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="space-y-2 pt-1 border-t border-border/60">
+      <div className="flex items-center justify-between pt-2">
+        <p className="font-medium text-foreground/90">Connection test</p>
+        <button
+          onClick={run}
+          disabled={busy}
+          className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground disabled:opacity-50"
+          title="Run a staged connection test against your AI provider: key sanity, DNS, TCP, TLS, HTTPS."
+        >
+          {busy ? 'Testing…' : 'Test AI connection'}
+        </button>
+      </div>
+      {diag && (
+        <div className="rounded-lg border border-border bg-muted/30 p-2.5 space-y-1.5">
+          <p className={diag.ok ? 'text-green-500' : 'text-destructive'}>{diag.summary}</p>
+          {(diag.stages || []).map(s => (
+            <div key={s.name} className="flex items-start gap-2">
+              {s.ok
+                ? <Check className="w-3.5 h-3.5 text-green-500 mt-0.5 shrink-0" />
+                : <X className="w-3.5 h-3.5 text-destructive mt-0.5 shrink-0" />}
+              <div className="min-w-0">
+                <p className="font-medium capitalize">
+                  {s.name}{s.skipped ? ' (skipped)' : ''}
+                  <span className="text-muted-foreground font-normal"> · {s.ms}ms</span>
+                </p>
+                <p className="text-muted-foreground leading-snug">{s.detail}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -859,11 +862,9 @@ export default function Settings() {
             </button>
           </section>
 
-          <ModelKeySection onChanged={() => api.health().then(setHealth).catch(() => {})} />
+          <ModelSection onChanged={() => api.health().then(setHealth).catch(() => {})} />
 
           <AppUpdatesSection />
-
-          <AiProviderSection onChanged={() => api.health().then(setHealth).catch(() => {})} />
 
           <DatabaseSection onChanged={() => api.health().then(setHealth).catch(() => {})} />
 

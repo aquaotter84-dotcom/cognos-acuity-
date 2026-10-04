@@ -177,28 +177,17 @@ process.env.BLUESMINDS_API_KEY=SECRET;
   }
 }
 
-// --- AI provider settings routes (server/routes/settings.js) -----------------
-// Base-URL + model-id settings: validation, file mode 0600, env applied
-// immediately, reset semantics, and GET responses that never leak the API key.
+// --- AI model settings routes (server/routes/settings.js) --------------------
+// Model-id settings: validation, file mode 0600, env applied immediately,
+// reset semantics, and GET responses that never leak the API key or the
+// endpoint URL (Jeremy's boundary: keys and endpoints stay keyed in).
 import express from "express";
 import fss from "node:fs";
 import oss from "node:os";
 import pathh from "node:path";
 
-const { validateBaseUrl, normalizeBaseUrl, validateModelId, registerSettingsRoutes } =
+const { validateModelId, registerSettingsRoutes } =
   await import("../server/routes/settings.js");
-
-// Unit: base-URL validation.
-ok(validateBaseUrl("https://generativelanguage.googleapis.com/v1beta/openai") === null,
-  "accepts an https:// provider base URL");
-ok(validateBaseUrl("  https://example.com/v1  ") === null, "trims surrounding whitespace");
-ok(typeof validateBaseUrl("http://example.com/v1") === "string", "rejects http:// base URL");
-ok(typeof validateBaseUrl("not a url") === "string", "rejects garbage base URL");
-ok(typeof validateBaseUrl("https://" + "x".repeat(200)) === "string", "rejects overlong base URL");
-ok(typeof validateBaseUrl("") === "string" && typeof validateBaseUrl("   ") === "string",
-  "blank base URL is a validation message (route treats it as reset)");
-ok(normalizeBaseUrl("https://example.com/v1beta/openai///") === "https://example.com/v1beta/openai",
-  "normalizeBaseUrl strips trailing slashes");
 
 // Unit: model-id validation.
 ok(validateModelId("gemini-2.0-flash") === null, "accepts a Gemini model id");
@@ -232,62 +221,6 @@ async function tcall(method, p, body) {
 }
 const noKeyLeak = (obj, name) =>
   ok(!JSON.stringify(obj).includes("PROVIDER-ROUTE-SECRET"), `${name} → GET never leaks the API key`);
-
-// Base URL: default state.
-{
-  const r = await tcall("GET", "/api/settings/model-base-url");
-  ok(r.status === 200 && r.json.configured === false && r.json.isDefault === true &&
-    r.json.value === "https://api.bluesminds.com/v1" && r.json.managed === "device",
-    "GET base URL reports the built-in default");
-  noKeyLeak(r.json, "base URL default");
-}
-
-// Base URL: set, normalize, file mode 0600, env applied immediately.
-{
-  const r = await tcall("POST", "/api/settings/model-base-url",
-    { url: "https://generativelanguage.googleapis.com/v1beta/openai///" });
-  ok(r.status === 200 && r.json.value === "https://generativelanguage.googleapis.com/v1beta/openai",
-    "POST base URL normalizes trailing slashes");
-  ok(process.env.BLUESMINDS_API_URL === "https://generativelanguage.googleapis.com/v1beta/openai",
-    "POST base URL applies to the environment immediately");
-  const fp = pathh.join(process.env.COGNOS_DATA_DIR, "bluesminds_api_url.txt");
-  ok(fss.readFileSync(fp, "utf8") === "https://generativelanguage.googleapis.com/v1beta/openai",
-    "POST base URL persists the normalized value to the device file");
-  ok((fss.statSync(fp).mode & 0o777) === 0o600, "base URL device file has mode 0600");
-  const g = await tcall("GET", "/api/settings/model-base-url");
-  ok(g.json.configured === true && g.json.isDefault === false &&
-    g.json.value === "https://generativelanguage.googleapis.com/v1beta/openai",
-    "GET base URL reflects the override");
-  noKeyLeak(g.json, "base URL override");
-}
-
-// Base URL: rejections.
-for (const [bad, name] of [
-  ["http://example.com/v1", "http://"],
-  ["not a url", "garbage"],
-  ["https://" + "x".repeat(200), "overlong"],
-]) {
-  const r = await tcall("POST", "/api/settings/model-base-url", { url: bad });
-  ok(r.status === 400 && typeof r.json.error === "string", `POST base URL rejects ${name}`);
-}
-ok(process.env.BLUESMINDS_API_URL === "https://generativelanguage.googleapis.com/v1beta/openai",
-  "rejected POSTs leave the configured base URL untouched");
-
-// Base URL: reset semantics (empty POST and DELETE).
-{
-  const r = await tcall("POST", "/api/settings/model-base-url", { url: "   " });
-  ok(r.status === 200 && r.json.reset === true, "empty POST resets the base URL");
-  ok(!("BLUESMINDS_API_URL" in process.env) &&
-    !fss.existsSync(pathh.join(process.env.COGNOS_DATA_DIR, "bluesminds_api_url.txt")),
-    "reset removes the env var and the device file");
-  const g = await tcall("GET", "/api/settings/model-base-url");
-  ok(g.json.isDefault === true && g.json.value === "https://api.bluesminds.com/v1",
-    "GET base URL reports the default after reset");
-  await tcall("POST", "/api/settings/model-base-url", { url: "https://example.com/v1" });
-  const d = await tcall("DELETE", "/api/settings/model-base-url");
-  ok(d.status === 200 && d.json.reset === true && !("BLUESMINDS_API_URL" in process.env),
-    "DELETE resets the base URL");
-}
 
 // Model id: default state.
 {

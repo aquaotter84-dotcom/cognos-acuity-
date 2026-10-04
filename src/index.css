@@ -1,87 +1,90 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=Plus+Jakarta+Sans:wght@700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  /* Light theme is the default (:root). .dark below preserves the
-     original look; Settings → Appearance toggles documentElement.class. */
+  /* Orbit's face, app-wide: the light warm room. DM Sans for body,
+     Plus Jakarta Sans for headings, lime/deep-green accents. One app,
+     one face — no Orbit code is imported; the look is rebuilt here on
+     COGNOS's own variables and components. */
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
+    --background: 80 14% 97%;
+    --foreground: 210 24% 16%;
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 210 24% 16%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 217 91% 55%;
+    --popover-foreground: 210 24% 16%;
+    --primary: 110 32% 30%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 14% 96%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 46%;
-    --accent: 258 83% 55%;
+    --secondary: 84 45% 93%;
+    --secondary-foreground: 210 24% 16%;
+    --muted: 110 10% 93%;
+    --muted-foreground: 200 7% 52%;
+    --accent: 95 38% 40%;
     --accent-foreground: 0 0% 100%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 217 91% 60%;
-    --chart-1: 217 91% 55%;
-    --chart-2: 258 83% 55%;
+    --border: 110 10% 89%;
+    --input: 110 10% 89%;
+    --ring: 110 32% 42%;
+    --chart-1: 110 32% 30%;
+    --chart-2: 84 72% 60%;
     --chart-3: 160 84% 39%;
     --chart-4: 43 74% 60%;
     --chart-5: 27 87% 60%;
     --radius: 0.625rem;
-    --font-heading: 'Inter', ui-sans-serif, system-ui, sans-serif;
-    --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
-    --font-display: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --font-heading: 'Plus Jakarta Sans', 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+    --font-body: 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+    --font-display: 'Plus Jakarta Sans', 'DM Sans', ui-sans-serif, system-ui, sans-serif;
     --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    --sidebar-background: 220 14% 98%;
-    --sidebar-foreground: 222 47% 11%;
-    --sidebar-primary: 217 91% 55%;
+    --sidebar-background: 84 30% 96%;
+    --sidebar-foreground: 210 24% 16%;
+    --sidebar-primary: 110 32% 30%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 220 14% 94%;
-    --sidebar-accent-foreground: 222 47% 11%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217 91% 60%;
+    --sidebar-accent: 84 45% 93%;
+    --sidebar-accent-foreground: 210 24% 16%;
+    --sidebar-border: 110 10% 89%;
+    --sidebar-ring: 110 32% 42%;
     color-scheme: light;
   }
 
+  /* The dark face, harmonized: deep green night to match the warm room. */
   .dark {
     color-scheme: dark;
-    --background: 220 21% 6%;
-    --foreground: 220 14% 91%;
-    --card: 221 16% 12%;
-    --card-foreground: 220 14% 91%;
-    --popover: 221 16% 10%;
-    --popover-foreground: 220 14% 91%;
-    --primary: 217 91% 60%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 221 16% 16%;
-    --secondary-foreground: 220 14% 91%;
-    --muted: 221 16% 9%;
-    --muted-foreground: 217 10% 55%;
-    --accent: 258 83% 58%;
-    --accent-foreground: 0 0% 100%;
-    --destructive: 0 72% 51%;
+    --background: 110 18% 7%;
+    --foreground: 84 20% 92%;
+    --card: 110 16% 11%;
+    --card-foreground: 84 20% 92%;
+    --popover: 110 16% 9%;
+    --popover-foreground: 84 20% 92%;
+    --primary: 84 60% 62%;
+    --primary-foreground: 110 25% 12%;
+    --secondary: 110 12% 15%;
+    --secondary-foreground: 84 20% 92%;
+    --muted: 110 12% 13%;
+    --muted-foreground: 110 8% 60%;
+    --accent: 84 55% 55%;
+    --accent-foreground: 110 25% 12%;
+    --destructive: 0 72% 55%;
     --destructive-foreground: 0 0% 100%;
-    --border: 222 14% 19%;
-    --input: 222 14% 19%;
-    --ring: 217 91% 60%;
-    --chart-1: 217 91% 60%;
-    --chart-2: 258 83% 58%;
-    --chart-3: 160 84% 39%;
+    --border: 110 12% 18%;
+    --input: 110 12% 18%;
+    --ring: 84 60% 55%;
+    --chart-1: 84 60% 62%;
+    --chart-2: 84 72% 60%;
+    --chart-3: 160 84% 45%;
     --chart-4: 43 74% 66%;
     --chart-5: 27 87% 67%;
-    --sidebar-background: 221 16% 12%;
-    --sidebar-foreground: 220 14% 91%;
-    --sidebar-primary: 217 91% 60%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 221 16% 16%;
-    --sidebar-accent-foreground: 220 14% 91%;
-    --sidebar-border: 222 14% 19%;
-    --sidebar-ring: 217 91% 60%;
+    --sidebar-background: 110 16% 10%;
+    --sidebar-foreground: 84 20% 92%;
+    --sidebar-primary: 84 60% 62%;
+    --sidebar-primary-foreground: 110 25% 12%;
+    --sidebar-accent: 110 12% 15%;
+    --sidebar-accent-foreground: 84 20% 92%;
+    --sidebar-border: 110 12% 18%;
+    --sidebar-ring: 84 60% 55%;
   }
 }
 
@@ -93,6 +96,81 @@
   body {
     @apply bg-background text-foreground font-body antialiased;
     overscroll-behavior: none;
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-heading);
+    letter-spacing: -0.03em;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Orbit's visual language, app-wide. White cards with soft borders and
+ * generous radius, eyebrow labels, friendly headings, the dark-green button
+ * and the lime good-news pill. Rebuilt here on COGNOS's own variables —
+ * no Orbit code is imported.
+ * ------------------------------------------------------------------------- */
+@layer components {
+  .orbit-eyebrow {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: #92a093;
+  }
+  .dark .orbit-eyebrow { color: #7d8a7e; }
+
+  .orbit-page-title {
+    font-family: var(--font-heading);
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    color: #202b31;
+  }
+  .dark .orbit-page-title { color: #eef4ea; }
+  .orbit-page-sub {
+    color: #8a9598;
+    line-height: 1.5;
+  }
+
+  .orbit-agent-card {
+    background: #fff;
+    border: 1px solid #e8eeea;
+    border-radius: 16px;
+    transition: box-shadow 0.2s, border-color 0.2s;
+  }
+  .orbit-agent-card:hover {
+    border-color: #dce8d8;
+    box-shadow: 0 13px 33px rgba(34, 49, 40, 0.07);
+  }
+  .dark .orbit-agent-card {
+    background: hsl(var(--card));
+    border-color: hsl(var(--border));
+  }
+  .orbit-agent-card .orbit-agent-name {
+    font-family: var(--font-heading);
+    font-weight: 800;
+    color: #26313a;
+  }
+  .dark .orbit-agent-card .orbit-agent-name { color: hsl(var(--foreground)); }
+  .orbit-agent-card .orbit-agent-role {
+    color: #9aa5a4;
+  }
+
+  .orbit-btn-dark {
+    background: #192337;
+    color: #fff;
+    border-radius: 11px;
+    font-weight: 700;
+  }
+  .orbit-btn-dark:hover { background: #232f47; }
+
+  .orbit-pill-lime {
+    background: #ebf5e1;
+    color: #557643;
+  }
+  .dark .orbit-pill-lime {
+    background: hsl(110 25% 16%);
+    color: hsl(84 60% 70%);
   }
 }
 

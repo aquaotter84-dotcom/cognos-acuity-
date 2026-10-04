@@ -129,6 +129,26 @@ if (dataDir) {
     } catch { /* absent — the built-in default is used */ }
   }
   bootLog("entry: model file " + (process.env.COGNOS_MODEL ? "present" : "absent"));
+  // Optional: cognos_fast_model.txt overrides the quick-tasks model id
+  // (background jobs: memory ranking, council passes). Written by Settings.
+  if (!process.env.COGNOS_FAST_MODEL) {
+    const fastModelFile = path.join(dataDir, "cognos_fast_model.txt");
+    try {
+      const fastModel = fs.readFileSync(fastModelFile, "utf8").trim();
+      if (fastModel) process.env.COGNOS_FAST_MODEL = fastModel;
+    } catch { /* absent — falls back to the main model */ }
+  }
+  bootLog("entry: fast model file " + (process.env.COGNOS_FAST_MODEL ? "present" : "absent"));
+  // Optional: cognos_image_model.txt overrides the image-reading model id
+  // (vision on attached images). Written by Settings.
+  if (!process.env.COGNOS_IMAGE_MODEL) {
+    const imageModelFile = path.join(dataDir, "cognos_image_model.txt");
+    try {
+      const imageModel = fs.readFileSync(imageModelFile, "utf8").trim();
+      if (imageModel) process.env.COGNOS_IMAGE_MODEL = imageModel;
+    } catch { /* absent — falls back to the main model */ }
+  }
+  bootLog("entry: image model file " + (process.env.COGNOS_IMAGE_MODEL ? "present" : "absent"));
   // Optional: autonomy switch delegation files (see server/delegation-files.mjs).
   // On a phone there is no operator shell, so the Autonomy page hands its own
   // switches over by writing these files; they take effect here, at boot — an

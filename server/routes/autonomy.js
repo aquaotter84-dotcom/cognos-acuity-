@@ -1031,6 +1031,38 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     res.json({ deleted: true, id: goal.id, title: goal.title });
   }));
 
+  /**
+   * Edit a goal (Studio UI). Jeremy's data control: rename it or re-aim it.
+   * Only title and objective are writable — scope and budget stay immutable
+   * after authorization (pin.goal_scope_immutable): editing the words never
+   * edits the deal. Notes and events are history and are not rewritten here.
+   */
+  app.patch("/api/autonomy/goals/:id", wrap(async (req, res) => {
+    const ws = await db.Workspace.ensureDefault();
+    const goal = await db.AutonomyGoal.get(req.params.id);
+    if (!goal || goal.workspace_id !== ws.id) {
+      return res.status(404).json({ error: "Goal not found in this workspace" });
+    }
+    const patch = {};
+    if (req.body?.title !== undefined) {
+      const title = String(req.body.title || "").trim();
+      if (!title) return res.status(400).json({ error: "The title can't be empty." });
+      patch.title = title;
+    }
+    if (req.body?.objective !== undefined) {
+      const objective = String(req.body.objective || "").trim();
+      if (!objective) return res.status(400).json({ error: "The objective can't be empty." });
+      patch.objective = objective;
+    }
+    if (!Object.keys(patch).length) {
+      return res.status(400).json({ error: "Nothing to change — send a title and/or an objective." });
+    }
+    // Anything else in the body (scope, budget, status…) is ignored on
+    // purpose: this route edits words, never the deal.
+    const updated = await db.AutonomyGoal.updateFields(goal.id, patch);
+    res.json({ goal: updated });
+  }));
+
   app.post("/api/autonomy/goals", wrap(async (req, res) => {
     if (config().enabled !== true) {
       return res.status(409).json({ error: frozenError(), code: "autonomy_disabled" });

@@ -63,10 +63,7 @@ export const api = {
   health: () => req("/api/health"),
   identity: () => req("/api/identity"),
 
-  // --- On-device model key (Settings) --------------------------------------
-  modelKeyStatus: () => req("/api/settings/model-key"),
-  setModelKey: (key) => req("/api/settings/model-key", { method: "POST", body: { key } }),
-  clearModelKey: () => req("/api/settings/model-key", { method: "DELETE" }),
+  // --- AI connection diagnostic (Settings; never exposes key material) ------
   diagnoseAi: () => req("/api/settings/diagnose-ai"),
 
   // --- On-device database URL (Settings) -----------------------------------
@@ -74,13 +71,20 @@ export const api = {
   setDatabaseUrl: (url) => req("/api/settings/database-url", { method: "POST", body: { url } }),
   clearDatabaseUrl: () => req("/api/settings/database-url", { method: "DELETE" }),
 
-  // --- On-device AI provider endpoint + model id (Settings) ------------------
-  baseUrlStatus: () => req("/api/settings/model-base-url"),
-  setBaseUrl: (url) => req("/api/settings/model-base-url", { method: "POST", body: { url } }),
-  clearBaseUrl: () => req("/api/settings/model-base-url", { method: "DELETE" }),
+  // --- Model selection (Settings): tap options, not variables ---------------
+  // The live catalog (GET /v1/models on the configured provider) so new
+  // models appear without another release. API keys and endpoint URLs stay
+  // keyed in — no client here reads, writes, or displays them.
+  modelsList: (refresh = false) => req(`/api/settings/models${refresh ? "?refresh=1" : ""}`),
   modelIdStatus: () => req("/api/settings/model-id"),
   setModelId: (model) => req("/api/settings/model-id", { method: "POST", body: { model } }),
   clearModelId: () => req("/api/settings/model-id", { method: "DELETE" }),
+  fastModelStatus: () => req("/api/settings/fast-model-id"),
+  setFastModel: (model) => req("/api/settings/fast-model-id", { method: "POST", body: { model } }),
+  clearFastModel: () => req("/api/settings/fast-model-id", { method: "DELETE" }),
+  imageModelStatus: () => req("/api/settings/image-model-id"),
+  setImageModel: (model) => req("/api/settings/image-model-id", { method: "POST", body: { model } }),
+  clearImageModel: () => req("/api/settings/image-model-id", { method: "DELETE" }),
 
   // --- Autonomy switch delegation (Autonomy page, on-device) -----------------
   /**
@@ -155,6 +159,7 @@ export const api = {
   getGoal: (id) => req(`/api/autonomy/goals/${id}`),
   /** Hard delete, user-confirmed. Notes orphan to the cleanup review queue; events stay as audit trail. */
   deleteGoal: (id) => req(`/api/autonomy/goals/${id}`, { method: "DELETE" }),
+  updateGoal: (id, patch) => req(`/api/autonomy/goals/${id}`, { method: "PATCH", body: patch }),
   /** THE BARRIER: authorize | decline | pause | resume | cancel. */
   decideGoal: (id, body) => req(`/api/autonomy/goals/${id}/decision`, { method: "POST", body }),
 

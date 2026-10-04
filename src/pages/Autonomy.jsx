@@ -26,7 +26,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Activity, AlertTriangle, Bell, Bot, Check, ChevronDown, ChevronRight, ClipboardCheck,
-  Clock, Copy, Gauge, Heart, HelpCircle, Inbox, Lock, Menu, Pause, Play, Plus, RefreshCw, ScrollText,
+  Clock, Copy, Gauge, Heart, HelpCircle, Inbox, Lock, Menu, Pause, Pencil, Play, Plus, RefreshCw, ScrollText,
   Send, ShieldAlert, ShieldCheck, Snowflake, Sparkles, Sprout, MessageCircle, Trash2, ThumbsDown, ThumbsUp, Undo2, X, Zap
 } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -36,7 +36,6 @@ import { Pill, Empty, ErrorNote } from '@/components/system/SystemUi';
 import DesignerDrawer from '@/components/autonomy/DesignerDrawer';
 import ResidentChatDrawer from '@/components/autonomy/ResidentChatDrawer';
 import AuthorizeConsent from '@/components/autonomy/AuthorizeConsent';
-import '@/components/autonomy/studio-orbit.css';
 import { ARCHIVIST } from '@/lib/archivist';
 import {
   GLOSSARY, TIER_LABEL, effectStatusLabel, goalStatusLabel,
@@ -876,6 +875,9 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
   const [destInput, setDestInput] = useState('');
   const [expanded, setExpanded] = useState(null);
   const [detail, setDetail] = useState({});
+  const [editingGoal, setEditingGoal] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editObjective, setEditObjective] = useState('');
   const [reason, setReason] = useState('');
   const [declining, setDeclining] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -893,6 +895,7 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
 
   useEffect(() => {
     if (!expanded) return;
+    setEditingGoal(false);
     let cancelled = false;
     api.getGoal(expanded)
       .then(d => { if (!cancelled) setDetail(prev => ({ ...prev, [expanded]: d })); })
@@ -1158,6 +1161,78 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                             </button>
                           </div>
                         )}
+
+                        {/* ---- edit: rename or re-aim. Title + objective only — the
+                             scope and budget are the deal you authorized and are
+                             never rewritten here. ---- */}
+                        <div className="flex items-center gap-2">
+                          {editingGoal ? (
+                            <div className="flex-1 space-y-2 rounded-lg border border-border bg-background/60 p-2.5">
+                              <input
+                                autoFocus
+                                value={editTitle}
+                                onChange={e => setEditTitle(e.target.value)}
+                                placeholder="Goal title"
+                                className="w-full bg-background border border-border rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-primary/60"
+                              />
+                              <textarea
+                                value={editObjective}
+                                onChange={e => setEditObjective(e.target.value)}
+                                placeholder="Objective — what would count as done?"
+                                rows={3}
+                                className="w-full bg-background border border-border rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-primary/60 resize-none"
+                              />
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={async () => {
+                                    if (busy || !editTitle.trim() || !editObjective.trim()) return;
+                                    setBusy(true); setError('');
+                                    try {
+                                      const r = await api.updateGoal(goal.id, {
+                                        title: editTitle.trim(),
+                                        objective: editObjective.trim(),
+                                      });
+                                      setDetail(prev => ({ ...prev, [goal.id]: { ...prev[goal.id], goal: r.goal } }));
+                                      setEditingGoal(false);
+                                      await refresh();
+                                    } catch (e) {
+                                      setError(e?.message || 'Could not save the changes.');
+                                    } finally {
+                                      setBusy(false);
+                                    }
+                                  }}
+                                  disabled={busy || !editTitle.trim() || !editObjective.trim()}
+                                  className="flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-2.5 py-1.5 text-xs disabled:opacity-40"
+                                >
+                                  <Check className="w-3.5 h-3.5" /> Save
+                                </button>
+                                <button
+                                  onClick={() => setEditingGoal(false)}
+                                  disabled={busy}
+                                  className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
+                                >
+                                  <X className="w-3.5 h-3.5" /> Cancel
+                                </button>
+                              </div>
+                              <p className="text-[10px] text-muted-foreground leading-relaxed">
+                                Renaming never changes what the goal may do or spend — that was
+                                settled when you authorized it.
+                              </p>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setEditTitle(goal.title || '');
+                                setEditObjective(d?.goal?.objective || '');
+                                setEditingGoal(true);
+                              }}
+                              disabled={busy}
+                              className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
+                            >
+                              <Pencil className="w-3.5 h-3.5" /> Edit goal
+                            </button>
+                          )}
+                        </div>
 
                         {/* ---- delete: any status. Notes orphan to the cleanup review queue. ---- */}
                         <div className="flex items-center gap-2">
@@ -2465,7 +2540,7 @@ export default function Autonomy() {
   };
 
   return (
-    <div className="studio-orbit flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0">
       <header
         className="flex items-center gap-2 px-3 md:px-4 py-3 border-b border-border shrink-0"
         style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}

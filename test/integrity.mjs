@@ -35,15 +35,15 @@ try {
     // The designer adds NO second answer route: it drafts rows, and the only
     // POST that composes an answer is still /api/chat.
     // Phase 26 added 2: the delegated council switches (read + flip).
-    // Round 3 added 3: the on-device model-key settings routes
-    // (GET/POST/DELETE /api/settings/model-key).
+    // Round 3 added the on-device model-key settings routes — removed in the
+    // tap-options round per Jeremy's boundary (keys stay keyed in, never UI).
     // Supabase round added 3: the on-device database-url settings routes
     // (GET/POST/DELETE /api/settings/database-url).
     // AI-diagnose round added 1: GET /api/settings/diagnose-ai, the staged
     // AI-connection self-test.
-    // AI-provider round added 6: the on-device provider base-URL and model-id
-    // settings routes (GET/POST/DELETE /api/settings/model-base-url and
-    // GET/POST/DELETE /api/settings/model-id).
+    // AI-provider round added 3: the on-device model-id settings routes
+    // (GET/POST/DELETE /api/settings/model-id). The base-URL routes were
+    // removed in the tap-options round (endpoints stay keyed in, never UI).
     // Autonomy-delegation round added 3: the on-device switch-handover routes
     // (GET/POST/DELETE /api/settings/autonomy-delegation).
     // Phase 31 added 3: the heartbeat personality routes (GET
@@ -57,9 +57,15 @@ try {
     // Phase 34 added 2: the studio feed (GET /api/autonomy/feed) and
     // per-resident chat (POST /api/autonomy/agents/:id/chat).
     // Studio follow-up added 1: goal deletion (DELETE /api/autonomy/goals/:id).
-    assert.equal(nonStatic.length, 163);
-    // +1 static route on top of the 163 API routes (was 157 = 156 + 1).
-    if (!process.env.VERCEL) assert.equal(routes.length, 164);
+    // Tap-options round: net +2 — removed 6 (the keyed-in key + endpoint
+    // routes: GET/POST/DELETE /api/settings/model-key and
+    // /api/settings/model-base-url, per Jeremy's boundary) and added 8 (the
+    // live model catalog GET /api/settings/models, GET/POST/DELETE
+    // /api/settings/fast-model-id and /api/settings/image-model-id, and
+    // PATCH /api/autonomy/goals/:id for goal editing).
+    assert.equal(nonStatic.length, 165);
+    // +1 static route on top of the 165 API routes (was 163 = 162 + 1).
+    if (!process.env.VERCEL) assert.equal(routes.length, 166);
     for (const route of [
       "post:/api/chat",
       "get:/api/identity",
@@ -126,10 +132,13 @@ try {
       "get:/api/graph/coverage",
       "get:/api/graph/state/:entityType/:entityId",
       "get:/api/settings/diagnose-ai",
-      "get:/api/settings/model-base-url",
-      "post:/api/settings/model-base-url",
+      "get:/api/settings/models",
       "get:/api/settings/model-id",
-      "post:/api/settings/model-id"
+      "post:/api/settings/model-id",
+      "get:/api/settings/fast-model-id",
+      "post:/api/settings/fast-model-id",
+      "get:/api/settings/image-model-id",
+      "post:/api/settings/image-model-id"
     ]) assert.ok(routes.includes(route), `missing ${route}`);
   });
 
