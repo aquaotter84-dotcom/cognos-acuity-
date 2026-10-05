@@ -177,6 +177,7 @@ export default function ResidentChatDrawer({ open, onClose, resident, goal = nul
 
         <form
           className="flex items-center gap-2 px-4 py-3 border-t border-border shrink-0"
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.75rem)' }}
           onSubmit={e => { e.preventDefault(); send(); }}
         >
           <input
