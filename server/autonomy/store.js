@@ -1261,18 +1261,22 @@ export function createAutonomyStore(run) {
   const ResidentTool = {
     async create(data) {
       const id = data.id || newId("tool");
+      const kind = data.kind === "email" ? "email" : "https";
       const rows = await run(
         `INSERT INTO resident_tools
           (id, workspace_id, name, description, method, url, headers,
-           body_template, timeout_ms, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           body_template, timeout_ms, created_by, kind, to_template,
+           subject_template)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
          RETURNING id, workspace_id, name, description, method, url, headers,
-                   body_template, timeout_ms, created_by, created_date, updated_date`,
+                   body_template, timeout_ms, created_by, kind, to_template,
+                   subject_template, created_date, updated_date`,
         [id, data.workspace_id, data.name, data.description || "",
-         data.method || "GET", data.url,
+         data.method || "GET", data.url || "",
          json(data.headers, {}), data.body_template || "",
          num(data.timeout_ms, 10000) > 0 ? int(data.timeout_ms, 10000) : 10000,
-         data.created_by || null]
+         data.created_by || null, kind, data.to_template || "",
+         data.subject_template || ""]
       );
       return rows[0];
     },
@@ -1282,6 +1286,7 @@ export function createAutonomyStore(run) {
       const rows = await run(
         `SELECT t.id, t.workspace_id, t.name, t.description, t.method, t.url,
                 t.headers, t.body_template, t.timeout_ms, t.created_by,
+                t.kind, t.to_template, t.subject_template,
                 t.created_date, t.updated_date,
                 COALESCE(
                   (SELECT json_agg(s.name ORDER BY s.name)
@@ -1311,6 +1316,7 @@ export function createAutonomyStore(run) {
       const rows = await run(
         `SELECT t.id, t.workspace_id, t.name, t.description, t.method, t.url,
                 t.headers, t.body_template, t.timeout_ms, t.created_by,
+                t.kind, t.to_template, t.subject_template,
                 t.created_date, t.updated_date,
                 COALESCE(
                   (SELECT json_agg(s.name ORDER BY s.name)
@@ -1343,6 +1349,10 @@ export function createAutonomyStore(run) {
       if (fields.url !== undefined) set("url", String(fields.url));
       if (fields.headers !== undefined) set("headers", json(fields.headers, {}));
       if (fields.body_template !== undefined) set("body_template", String(fields.body_template || ""));
+      if (fields.to_template !== undefined) set("to_template", String(fields.to_template || ""));
+      if (fields.subject_template !== undefined) set("subject_template", String(fields.subject_template || ""));
+      // kind is immutable: an email tool stays an email tool and an HTTPS
+      // tool stays HTTPS. The routes refuse a kind change outright.
       if (fields.timeout_ms !== undefined) {
         const ms = int(fields.timeout_ms, 10000);
         set("timeout_ms", ms > 0 ? ms : 10000);
@@ -1464,6 +1474,7 @@ export function createAutonomyStore(run) {
       const rows = await run(
         `SELECT t.id, t.workspace_id, t.name, t.description, t.method, t.url,
                 t.headers, t.body_template, t.timeout_ms,
+                t.kind, t.to_template, t.subject_template,
                 COALESCE(
                   (SELECT json_agg(s.name ORDER BY s.name)
                      FROM resident_tool_secrets s WHERE s.tool_id = t.id),

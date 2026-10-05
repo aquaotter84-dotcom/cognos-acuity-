@@ -32,11 +32,21 @@ import {
 } from "./webhookPost.js";
 import { effectiveEnabled } from "./settings.js";
 import { stageEffect, canonicalize } from "./outbox.js";
+import { sendMail } from "../insights/smtp.js";
+import { getSendCredentials, validEmail } from "../insights/emailStore.js";
 
 export const TOOL_METHODS = Object.freeze(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+// A tool is either an 'https' endpoint (Phase 36) or a native 'email' send
+// (Phase 39): the resident composes to/subject/body and the delivery goes
+// through Jeremy's COGNOS Gmail account — no third-party API, no
+// Authorization header, no secrets on the tool. Email tools are ALWAYS
+// writes: they stage an approval and never auto-send.
+export const TOOL_KINDS = Object.freeze(["https", "email"]);
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const BODY_CAP_BYTES = 32_768;
 const EXCERPT_CHARS = 4000;
+const MAX_EMAIL_RECIPIENTS = 20;
+const SUBJECT_CAP_CHARS = 300;
 
 const sha256 = (v) => createHash("sha256").update(String(v ?? ""), "utf8").digest("hex");
 const clean = (v, max = 300) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -201,6 +211,155 @@ export function validateToolDefinition({ name, method, url, headers, body_templa
 /** Secret names must look like names, not values. */
 export function validateSecretName(name) {
   return /^[A-Z0-9_]{1,64}$/.test(String(name || ""));
+}
+
+/** The tool's kind, normalized. Creation-time validation only ever writes
+ *  'https' or 'email'; anything else (a hand-built row) reads as 'https',
+ *  which fails closed on the empty URL in buildToolRequest. */
+export function toolKind(tool) {
+  return tool && tool.kind === "email" ? "email" : "https";
+}
+
+// ---------------------------------------------------------------------------
+// Native email tools (Phase 39)
+// ---------------------------------------------------------------------------
+// Definition validation (routes call this; plain-language errors for Jeremy).
+// The recipient template may be fixed ("you@example.com"), an argument
+// ("{{to}}"), or a comma-separated mix — it is rendered with a dummy address
+// per argument and every resulting recipient must parse as an email address.
+
+/** Render a template for SHAPE validation with a dummy address per arg. */
+function dryRenderEmailShape(template) {
+  const args = {};
+  for (const n of extractArgNames(template)) args[n] = "placeholder@example.com";
+  return renderTemplate(template, { args, secrets: {}, redactSecrets: true });
+}
+
+function splitRecipients(rendered) {
+  return String(rendered || "").split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+export function validateEmailToolDefinition({ name, description, to_template, subject_template, body_template }) {
+  const errors = [];
+
+  const cleanName = String(name ?? "").trim();
+  if (!cleanName) errors.push("give the tool a name");
+  else if (cleanName.length > 80) errors.push("the name is over 80 characters");
+
+  const combined = `${to_template ?? ""} ${subject_template ?? ""} ${body_template ?? ""}`;
+  if (/\{\{\s*secret:/.test(combined)) {
+    errors.push("email tools don't use {{secret:…}} — they send from your COGNOS Gmail, no keys needed");
+  }
+
+  const toRaw = String(to_template ?? "").trim();
+  if (!toRaw) {
+    errors.push("the tool needs a recipient — an address, or {{to}} to fill in when it runs");
+  } else {
+    try {
+      const addrs = splitRecipients(dryRenderEmailShape(toRaw));
+      if (!addrs.length) {
+        errors.push("the recipient list is empty");
+      } else if (addrs.length > MAX_EMAIL_RECIPIENTS) {
+        errors.push(`over ${MAX_EMAIL_RECIPIENTS} recipients — trim it down`);
+      } else {
+        for (const a of addrs) {
+          if (!validEmail(a)) {
+            errors.push(`“${a.slice(0, 60)}” doesn't look like an email address`);
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      errors.push(`recipient: ${e.message}`);
+    }
+    if (looksLikeSecret(toRaw)) {
+      errors.push("the recipient looks like it contains a real key — email tools don't use Secrets");
+    }
+  }
+
+  const subj = String(subject_template ?? "");
+  try {
+    const rendered = dryRenderEmailShape(subj);
+    if (rendered.length > SUBJECT_CAP_CHARS) {
+      errors.push(`the subject is over ${SUBJECT_CAP_CHARS} characters`);
+    }
+  } catch (e) {
+    errors.push(`subject: ${e.message}`);
+  }
+  if (looksLikeSecret(subj)) {
+    errors.push("the subject looks like it contains a real key — email tools don't use Secrets");
+  }
+
+  const body = String(body_template ?? "");
+  if (!body.trim()) {
+    errors.push("the tool needs a body — an empty email is a misconfiguration");
+  } else {
+    if (body.length > 200_000) errors.push("the body template is over 200KB");
+    try { dryRenderShape(body); }
+    catch (e) { errors.push(`body template: ${e.message}`); }
+    if (looksLikeSecret(body)) {
+      errors.push("the body template looks like it contains a real key — email tools don't use Secrets");
+    }
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+/**
+ * Build the exact email an invocation would send. Renders to/subject/body
+ * from args (no secrets exist for email tools — a {{secret:…}} here throws,
+ * fail-closed). The returned `redacted` preview is what gets stored and
+ * shown; it carries no credential because there is none.
+ */
+export function buildEmailRequest(tool, { args = {} } = {}) {
+  const errors = [];
+  let to = [];
+  let subject = "";
+  let body = "";
+  try {
+    to = splitRecipients(renderTemplate(tool.to_template || "", { args, secrets: {} }));
+  } catch (e) { errors.push(`recipient: ${e.message}`); }
+  try {
+    subject = renderTemplate(tool.subject_template || "", { args, secrets: {} });
+  } catch (e) { errors.push(`subject: ${e.message}`); }
+  try {
+    body = renderTemplate(tool.body_template || "", { args, secrets: {} });
+  } catch (e) { errors.push(`body: ${e.message}`); }
+
+  let bodyBytes = 0;
+  if (!errors.length) {
+    if (!to.length) errors.push("the email has no recipient");
+    else if (to.length > MAX_EMAIL_RECIPIENTS) errors.push(`over ${MAX_EMAIL_RECIPIENTS} recipients — trim it down`);
+    else {
+      for (const a of to) {
+        if (!validEmail(a)) { errors.push(`“${a.slice(0, 80)}” doesn't look like an email address`); break; }
+      }
+    }
+    if (!body.trim()) errors.push("the email body is empty — nothing to send");
+    bodyBytes = Buffer.byteLength(body, "utf8");
+    if (bodyBytes > BODY_CAP_BYTES) errors.push(`the body is ${bodyBytes} bytes, over the ${BODY_CAP_BYTES} cap`);
+    if (subject.length > SUBJECT_CAP_CHARS) errors.push(`the subject is over ${SUBJECT_CAP_CHARS} characters`);
+  }
+
+  const bodyDigest = sha256(body);
+  let redacted = null;
+  if (!errors.length) {
+    redacted = {
+      kind: "email",
+      to,
+      subject: subject.slice(0, SUBJECT_CAP_CHARS),
+      bodyPreview: body.slice(0, 2000),
+      bodyBytes,
+      bodyDigest,
+    };
+  }
+  return { ok: errors.length === 0, errors, to, subject, body, bodyDigest, redacted };
+}
+
+/** The run row's origin column for an email tool: the destination, honestly. */
+function emailOrigin(to) {
+  const list = (Array.isArray(to) ? to : []).join(",");
+  return list ? `mailto:${list}`.slice(0, 500) : "mailto:(unset)";
 }
 
 // ---------------------------------------------------------------------------
@@ -497,6 +656,55 @@ export async function invokeTool({
     url_origin: originOf(String(tool.url).replace(PLACEHOLDER_RE, "x")) || "(unknown)",
   };
 
+  // --- email tools are ALWAYS writes: stage an approval, never auto-send ----
+  if (toolKind(tool) === "email") {
+    const built = buildEmailRequest(tool, { args });
+    const emailBase = { ...runBase, method: "POST", url_origin: emailOrigin(built.to) };
+    if (!built.ok) {
+      await logRun(db, emailBase, { status: "failed", error: built.errors[0] });
+      return { ok: false, code: "bad_request", message: built.errors[0] };
+    }
+    const argsDigest = sha256(JSON.stringify(canonicalize(args || {})));
+    const { row, deduplicated } = await stageEffect({
+      db,
+      workspaceId: ws.id,
+      agentId: agent.id,
+      goalId,
+      skillId: "tool.invoke",
+      effectType: "tool_call",
+      tier: "T4",
+      payload: {
+        kind: "email",
+        toolId: tool.id,
+        toolName: tool.name,
+        agentSlug: agent.slug,
+        method: "POST",
+        to: built.to,
+        subject: built.subject,
+        args: args || {},
+        preview: built.redacted, // to/subject/body excerpt — no secrets exist
+        body_chars: built.redacted.bodyBytes,
+        body_digest: built.bodyDigest,
+      },
+      mode: config?.outboxMode || "shadow",
+      destination: emailOrigin(built.to),
+      keyPayload: { kind: "email", toolId: tool.id, goalId: goalId || null, args: argsDigest },
+    });
+    const run = await logRun(db, {
+      ...emailBase,
+      outbox_id: row.id,
+      status: "awaiting_approval",
+      request_digest: built.bodyDigest,
+    });
+    return {
+      ok: true, staged: true, runId: run.id, outboxId: row.id,
+      deduplicated: deduplicated === true,
+      message: deduplicated
+        ? `“${tool.name}” is already waiting for approval — nothing new was staged.`
+        : `“${tool.name}” sends email, so it's waiting for Jeremy's approval in the inbox. Nothing was sent.`,
+    };
+  }
+
   // --- reads run freely ------------------------------------------------------
   if (tool.method === "GET") {
     const run = await logRun(db, runBase, { status: "staged" });
@@ -591,6 +799,100 @@ export async function invokeTool({
 }
 
 /**
+ * The outbox executor for native email tools. Runs only after a live verdict —
+ * a per-effect human approval row names this exact outbox id, and the
+ * approval is hash-bound to the exact recipients, subject, and body. The
+ * kill switch and the assignment were re-verified by the caller before this
+ * branch. Delivery goes through the COGNOS Gmail account (the same SMTP path
+ * as the Daily Insights digest): one send per recipient.
+ */
+async function performEmailEffect({ db, effect, tool, payload: p, started, failRun, mailer = null }) {
+  if (p.kind !== "email" || p.method !== "POST") {
+    await failRun("refused", "The staged payload doesn't match the email tool's definition.");
+    throw new Error("the staged payload doesn't match the email tool's definition — refusing");
+  }
+
+  const built = buildEmailRequest(tool, { args: p.args || {} });
+  if (!built.ok) {
+    await failRun("failed", built.errors[0]);
+    throw new Error(`the approved email could not be rebuilt: ${built.errors[0]}`);
+  }
+  // The approval named exact recipients; a re-render that lands elsewhere
+  // dies here — the email analog of the HTTPS destination check.
+  if (JSON.stringify(built.to) !== JSON.stringify(p.to || [])) {
+    await failRun("refused", "The email recipients changed after approval.");
+    throw new Error("the email recipients changed since approval — refusing");
+  }
+
+  const wsId = effect.workspace_id || (await db.Workspace.ensureDefault()).id;
+  const creds = await getSendCredentials(db, wsId);
+  if (!creds?.password) {
+    await failRun("failed", "The COGNOS Gmail isn't set up.");
+    throw new Error(
+      creds?.decryptError
+        ? "the stored Gmail app password couldn't be decrypted — re-enter it under Settings → Daily Insights email, then approve again"
+        : "the COGNOS Gmail isn't set up — add the address and app password under Settings → Daily Insights email, then approve again"
+    );
+  }
+
+  const send = mailer || (({ to, subject, body }) => sendMail({
+    host: "smtp.gmail.com",
+    port: 465,
+    user: creds.address,
+    pass: creds.password,
+    from: creds.address,
+    to,
+    subject,
+    text: body,
+  }));
+
+  try {
+    for (const rcpt of built.to) {
+      await send({ to: rcpt, subject: built.subject, body: built.body });
+    }
+  } catch (error) {
+    const msg = clean(error?.message || String(error), 200);
+    await failRun("failed", msg);
+    throw error;
+  }
+
+  const runs = await db.ResidentTool.runsForTool(p.toolId, 5);
+  const run = (runs || []).find((r) => r.outbox_id === effect.id);
+  if (run) {
+    await db.ResidentTool.updateRun(run.id, {
+      status: "succeeded",
+      latency_ms: Date.now() - started,
+      response_digest: built.bodyDigest,
+      response_chars: built.redacted.bodyBytes,
+    });
+  }
+
+  return {
+    // Metadata only. The body is digested, never stored — like every receipt
+    // in this system.
+    receipt: {
+      toolId: tool.id,
+      toolName: tool.name,
+      kind: "email",
+      method: "POST",
+      from: creds.address,
+      to: built.to,
+      subject: built.subject.slice(0, SUBJECT_CAP_CHARS),
+      bodyDigest: built.bodyDigest,
+      bodyChars: built.redacted.bodyBytes,
+      effectId: effect.id,
+    },
+    output: {
+      delivered: true,
+      accepted: true,
+      to: built.to,
+      effectId: effect.id,
+      note: "the email was sent from the COGNOS Gmail account",
+    },
+  };
+}
+
+/**
  * The outbox executor for tool_call effects. Runs only after a live verdict —
  * which for a write means a per-effect human approval row names this exact
  * outbox id (the same story as T5). Re-verifies the kill switch and the
@@ -598,7 +900,10 @@ export async function invokeTool({
  */
 export async function performToolEffect({ db, effect, config = null, signal = null,
   // Test-only seams, like deliverWebhook's.
-  transport = null, resolve = null } = {}) {
+  transport = null, resolve = null,
+  // Test-only seam for email tools: async ({ to, subject, body }) => void.
+  // Production sends through the COGNOS Gmail account below.
+  mailer = null } = {}) {
   const p = effect.payload || {};
   const started = Date.now();
 
@@ -630,6 +935,11 @@ export async function performToolEffect({ db, effect, config = null, signal = nu
   if (tool.method !== p.method) {
     await failRun("refused", "The tool's method changed after approval.");
     throw new Error("the tool's method changed since approval — refusing");
+  }
+
+  // --- email tools deliver through the COGNOS Gmail account ------------------
+  if (toolKind(tool) === "email") {
+    return performEmailEffect({ db, effect, tool, payload: p, started, failRun, mailer });
   }
 
   const built = buildToolRequest(tool, { args: p.args || {}, secrets: tool.secrets });

@@ -1669,6 +1669,24 @@ CREATE INDEX IF NOT EXISTS insights_digest_runs_ws_idx
   ON insights_digest_runs (workspace_id, started_ms DESC);
 `;
 
+// ---------------------------------------------------------------------------
+// Phase 39 -- native email tools for residents.
+// ---------------------------------------------------------------------------
+// A second tool kind beside 'https': the resident composes to/subject/body
+// and the send goes through Jeremy's COGNOS Gmail account (the same SMTP
+// path as the Daily Insights digest) — no third-party API, no Authorization
+// header, no secrets on the tool. Email tools are ALWAYS writes: invokeTool
+// stages an approval and nothing sends until Jeremy taps it in the Outbox.
+// The kind is enforced at the validation layer (create/update routes); the
+// columns default so every existing row reads as kind='https'.
+export const PHASE39_SCHEMA = `
+-- 39.1 Email tool columns on resident_tools. kind is 'https' (the Phase 36
+-- HTTPS endpoint tool) or 'email' (the native Gmail send tool).
+ALTER TABLE resident_tools ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'https';
+ALTER TABLE resident_tools ADD COLUMN IF NOT EXISTS to_template TEXT NOT NULL DEFAULT '';
+ALTER TABLE resident_tools ADD COLUMN IF NOT EXISTS subject_template TEXT NOT NULL DEFAULT '';
+`;
+
 export const PHASE_SCHEMAS = [  { id: "0001", phase: 14, name: "phase14_dynamic_systems", sql: PHASE14_SCHEMA },  { id: "0002", phase: 15, name: "phase15_metacognition", sql: PHASE15_SCHEMA },  { id: "0003", phase: 16, name: "phase16_latency_observability", sql: PHASE16_SCHEMA },
   { id: "0004", phase: 17, name: "phase17_sources_and_agents", sql: PHASE17_SCHEMA },
   { id: "0005", phase: 18, name: "phase18_research_projects_images", sql: PHASE18_SCHEMA },
@@ -1693,7 +1711,8 @@ export const PHASE_SCHEMAS = [  { id: "0001", phase: 14, name: "phase14_dynamic_
   { id: "0024", phase: 35, name: "phase35_sapphire_memory_transplant", sql: PHASE35_SCHEMA },
   { id: "0025", phase: 36, name: "phase36_resident_tools", sql: PHASE36_SCHEMA },
   { id: "0026", phase: 37, name: "phase37_openmuse_steals", sql: PHASE37_SCHEMA },
-  { id: "0027", phase: 38, name: "phase38_daily_insights", sql: PHASE38_SCHEMA }
+  { id: "0027", phase: 38, name: "phase38_daily_insights", sql: PHASE38_SCHEMA },
+  { id: "0028", phase: 39, name: "phase39_email_tools", sql: PHASE39_SCHEMA }
 ];
 
 // ---------------------------------------------------------------------------

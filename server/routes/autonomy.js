@@ -40,7 +40,7 @@ import { describeLiveReadiness, setOutboxMode, listOutboxModeFlips } from "../au
 import { decidePromotion } from "../autonomy/promote.js";
 import { decideCleanupProposal, runCleanupAudit, cleanupDue } from "../autonomy/cleanup.js";
 import { buildFeed, residentChatTurn } from "../autonomy/studio.js";
-import { validateToolDefinition, validateSecretName, invokeTool } from "../autonomy/residentTools.js";
+import { validateToolDefinition, validateEmailToolDefinition, validateSecretName, invokeTool } from "../autonomy/residentTools.js";
 import { describeSkills } from "../skills/index.js";
 import { publicNotice, NOTICE_TEMPLATE_IDS } from "../autonomy/notice.js";
 import { runTick } from "../autonomy/tick.js";
@@ -1014,6 +1014,30 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
   app.post("/api/autonomy/tools", wrap(async (req, res) => {
     const ws = await db.Workspace.ensureDefault();
     const body = req.body || {};
+    // Phase 39 — native email tools: no URL/headers/secrets; the send goes
+    // through the COGNOS Gmail account and always waits for approval.
+    if (body.kind === "email") {
+      const v = validateEmailToolDefinition(body);
+      if (!v.ok) return res.status(400).json({ error: v.errors[0], errors: v.errors });
+      if (body.secrets && typeof body.secrets === "object" && Object.keys(body.secrets).length) {
+        return res.status(400).json({ error: "email tools don't use Secrets — they send from your COGNOS Gmail, no keys needed" });
+      }
+      const tool = await db.ResidentTool.create({
+        workspace_id: ws.id,
+        kind: "email",
+        name: String(body.name).trim(),
+        description: safe(body.description, 500),
+        method: "POST",
+        url: "",
+        headers: {},
+        to_template: String(body.to_template || "").trim(),
+        subject_template: String(body.subject_template || ""),
+        body_template: String(body.body_template || ""),
+        created_by: "ui",
+      });
+      res.status(201).json({ tool: toolShape(await db.ResidentTool.get(tool.id)) });
+      return;
+    }
     const v = validateToolDefinition(body);
     if (!v.ok) return res.status(400).json({ error: v.errors[0], errors: v.errors });
     const { problems, entries } = checkSecrets(body.secrets);
@@ -1047,6 +1071,33 @@ export function registerAutonomyRoutes(app, { wrap, db, logger }) {
     const tool = await db.ResidentTool.get(req.params.id);
     if (!tool || tool.workspace_id !== ws.id) return res.status(404).json({ error: "Tool not found" });
     const body = req.body || {};
+    // Phase 39 — kind is immutable: an email tool stays an email tool.
+    if (body.kind !== undefined && body.kind !== (tool.kind || "https")) {
+      return res.status(400).json({ error: "a tool can't change kind — delete it and make the other kind instead" });
+    }
+    if ((tool.kind || "https") === "email") {
+      const merged = {
+        name: body.name !== undefined ? body.name : tool.name,
+        description: body.description !== undefined ? body.description : tool.description,
+        to_template: body.to_template !== undefined ? body.to_template : tool.to_template,
+        subject_template: body.subject_template !== undefined ? body.subject_template : tool.subject_template,
+        body_template: body.body_template !== undefined ? body.body_template : tool.body_template,
+      };
+      const v = validateEmailToolDefinition(merged);
+      if (!v.ok) return res.status(400).json({ error: v.errors[0], errors: v.errors });
+      if (body.secrets && typeof body.secrets === "object" && Object.keys(body.secrets).length) {
+        return res.status(400).json({ error: "email tools don't use Secrets — they send from your COGNOS Gmail, no keys needed" });
+      }
+      const updated = await db.ResidentTool.update(tool.id, {
+        ...(body.name !== undefined ? { name: String(body.name).trim() } : {}),
+        ...(body.description !== undefined ? { description: safe(body.description, 500) } : {}),
+        ...(body.to_template !== undefined ? { to_template: String(body.to_template).trim() } : {}),
+        ...(body.subject_template !== undefined ? { subject_template: String(body.subject_template) } : {}),
+        ...(body.body_template !== undefined ? { body_template: String(body.body_template) } : {}),
+      });
+      res.json({ tool: toolShape(updated) });
+      return;
+    }
     const merged = {
       name: body.name !== undefined ? body.name : tool.name,
       method: body.method !== undefined ? body.method : tool.method,

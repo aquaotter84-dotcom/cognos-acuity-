@@ -226,6 +226,103 @@ function ToolForm({ initial, onSave, onCancel, busy }) {
   );
 }
 
+/** Native email tool form (Phase 39): to/subject/body, sent from the COGNOS
+ *  Gmail account. No URL, no headers, no secrets — every send waits for
+ *  Jeremy's approval in the Outbox. */
+function EmailToolForm({ initial, onSave, onCancel, busy }) {
+  const [name, setName] = useState(initial?.name || '');
+  const [description, setDescription] = useState(initial?.description || '');
+  const [toTemplate, setToTemplate] = useState(initial?.to_template || '');
+  const [subjectTemplate, setSubjectTemplate] = useState(initial?.subject_template || '');
+  const [bodyTemplate, setBodyTemplate] = useState(initial?.body_template || '');
+  const [localError, setLocalError] = useState('');
+
+  const save = async () => {
+    setLocalError('');
+    if (!name.trim()) { setLocalError('give the tool a name'); return; }
+    if (!toTemplate.trim()) { setLocalError('the tool needs a recipient — an address, or {{to}} to fill in when it runs'); return; }
+    if (!bodyTemplate.trim()) { setLocalError('the tool needs a body'); return; }
+    await onSave({
+      kind: 'email',
+      name: name.trim(),
+      description: description.trim(),
+      to_template: toTemplate.trim(),
+      subject_template: subjectTemplate,
+      body_template: bodyTemplate,
+    });
+  };
+
+  const inputCls = "w-full bg-muted/40 border border-border rounded-lg px-2.5 py-2 text-xs outline-none focus:border-primary/60";
+
+  return (
+    <div className="rounded-lg border border-border bg-background p-3 space-y-2.5">
+      <div className="rounded-lg border border-border bg-muted/20 p-2.5">
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          Sends from your <span className="font-medium text-foreground">COGNOS Gmail</span> account —
+          no API keys, no setup. <span className="font-medium text-foreground">Every send waits for
+          your approval</span> in the Outbox, one at a time. Nothing ever goes out on its own.
+        </p>
+      </div>
+      <input
+        value={name} onChange={e => setName(e.target.value)}
+        placeholder="Tool name — e.g. “Email me the summary”"
+        className={inputCls}
+      />
+      <input
+        value={description} onChange={e => setDescription(e.target.value)}
+        placeholder="What it's for — one line, shown on the resident's card"
+        className={inputCls}
+      />
+      <div>
+        <p className="text-[10px] text-muted-foreground mb-1">
+          To — an address, or <span className="font-mono">{'{{to}}'}</span> to fill in when it runs.
+          Comma-separated for several.
+        </p>
+        <input
+          value={toTemplate} onChange={e => setToTemplate(e.target.value)}
+          placeholder="{{to}}"
+          className={`${inputCls} font-mono`}
+        />
+      </div>
+      <div>
+        <p className="text-[10px] text-muted-foreground mb-1">
+          Subject — fixed, or <span className="font-mono">{'{{subject}}'}</span> to fill in when it runs.
+        </p>
+        <input
+          value={subjectTemplate} onChange={e => setSubjectTemplate(e.target.value)}
+          placeholder="{{subject}}"
+          className={`${inputCls} font-mono`}
+        />
+      </div>
+      <div>
+        <p className="text-[10px] text-muted-foreground mb-1">
+          Body — <span className="font-mono">{'{{body}}'}</span> fills in when it runs.
+        </p>
+        <textarea
+          value={bodyTemplate} onChange={e => setBodyTemplate(e.target.value)}
+          rows={4} placeholder={"{{body}}"}
+          className={`${inputCls} font-mono resize-none`}
+        />
+      </div>
+      <ErrorNote error={localError} />
+      <div className="flex items-center gap-2">
+        <button
+          onClick={save} disabled={busy || !name.trim() || !toTemplate.trim() || !bodyTemplate.trim()}
+          className="rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs disabled:opacity-40"
+        >
+          {initial ? 'Save changes' : 'Create email tool'}
+        </button>
+        <button
+          onClick={onCancel} disabled={busy}
+          className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** Tap-to-toggle assignment of one tool across residents. */
 function ToolAssignments({ tool, residents, onChanged }) {
   const [busy, setBusy] = useState(false);
@@ -347,7 +444,7 @@ export function ResidentToolPicker({ resident, onChanged }) {
                 </span>
                 <span className="text-[11px] font-medium flex-1 truncate">{t.name}</span>
                 <span className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono text-muted-foreground">
-                  {t.method}
+                  {t.kind === 'email' ? 'email' : t.method}
                 </span>
               </button>
             );
@@ -384,7 +481,8 @@ export function ToolRunHistory({ residentId, limit = 10 }) {
 
 export default function ToolsTab({ residents, onChanged }) {
   const [tools, setTools] = useState([]);
-  const [creating, setCreating] = useState(false);
+  // null | 'https' | 'email' — which creator form is open.
+  const [creating, setCreating] = useState(null);
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -404,7 +502,7 @@ export default function ToolsTab({ residents, onChanged }) {
     setBusy(true); setError('');
     try {
       await api.createTool(data);
-      setCreating(false);
+      setCreating(null);
       await load();
       onChanged?.();
     } catch (e) {
@@ -457,14 +555,25 @@ export default function ToolsTab({ residents, onChanged }) {
       <ErrorNote error={error} />
 
       {!creating ? (
-        <button
-          onClick={() => { setCreating(true); setEditing(null); }}
-          className="flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-2 text-xs font-medium"
-        >
-          <Plus className="w-3.5 h-3.5" /> New tool
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setCreating('https'); setEditing(null); }}
+            className="flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-2 text-xs font-medium"
+          >
+            <Plus className="w-3.5 h-3.5" /> New HTTPS tool
+          </button>
+          <button
+            onClick={() => { setCreating('email'); setEditing(null); }}
+            className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50"
+            title="Send email from your COGNOS Gmail — every send waits for your approval"
+          >
+            <Plus className="w-3.5 h-3.5" /> New email tool
+          </button>
+        </div>
+      ) : creating === 'email' ? (
+        <EmailToolForm busy={busy} onSave={saveNew} onCancel={() => setCreating(null)} />
       ) : (
-        <ToolForm busy={busy} onSave={saveNew} onCancel={() => setCreating(false)} />
+        <ToolForm busy={busy} onSave={saveNew} onCancel={() => setCreating(null)} />
       )}
 
       {tools.length === 0 && !creating ? (
@@ -474,7 +583,9 @@ export default function ToolsTab({ residents, onChanged }) {
         />
       ) : (
         <div className="space-y-2.5">
-          {tools.map(tool => (
+          {tools.map(tool => {
+            const isEmail = tool.kind === 'email';
+            return (
             <div key={tool.id} className="orbit-agent-card rounded-lg border border-border">
               <div className="flex items-start gap-3 px-3 py-2.5">
                 <Wrench className="w-4 h-4 text-accent mt-0.5 shrink-0" />
@@ -482,7 +593,7 @@ export default function ToolsTab({ residents, onChanged }) {
                   <div className="flex items-center gap-2 text-sm font-medium">
                     <span className="truncate flex-1">{tool.name}</span>
                     <span className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono text-muted-foreground">
-                      {tool.method}
+                      {isEmail ? 'email' : tool.method}
                     </span>
                     {(tool.secret_names?.length > 0) && (
                       <span className="flex items-center gap-1 text-[10px] text-muted-foreground" title={`Secrets: ${tool.secret_names.join(', ')}`}>
@@ -493,9 +604,15 @@ export default function ToolsTab({ residents, onChanged }) {
                   {tool.description && (
                     <p className="text-[11px] text-muted-foreground mt-0.5">{tool.description}</p>
                   )}
-                  <p className="text-[10px] font-mono text-muted-foreground/70 mt-1 truncate" title={tool.url}>
-                    {tool.url}
-                  </p>
+                  {isEmail ? (
+                    <p className="text-[10px] font-mono text-muted-foreground/70 mt-1 truncate" title={tool.to_template}>
+                      To: {tool.to_template || '(unset)'}
+                    </p>
+                  ) : (
+                    <p className="text-[10px] font-mono text-muted-foreground/70 mt-1 truncate" title={tool.url}>
+                      {tool.url}
+                    </p>
+                  )}
                   <div className="mt-2">
                     <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
                       Residents with this tool — tap to hand it over or take it back
@@ -505,7 +622,7 @@ export default function ToolsTab({ residents, onChanged }) {
                 </div>
                 <div className="flex flex-col gap-1 shrink-0">
                   <button
-                    onClick={() => { setEditing(editing?.id === tool.id ? null : tool); setCreating(false); }}
+                    onClick={() => { setEditing(editing?.id === tool.id ? null : tool); setCreating(null); }}
                     className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
                     title="Edit the tool"
                   >
@@ -522,11 +639,16 @@ export default function ToolsTab({ residents, onChanged }) {
               </div>
               {editing?.id === tool.id && (
                 <div className="border-t border-border px-3 py-2.5">
-                  <ToolForm initial={tool} busy={busy} onSave={saveEdit} onCancel={() => setEditing(null)} />
+                  {isEmail ? (
+                    <EmailToolForm initial={tool} busy={busy} onSave={saveEdit} onCancel={() => setEditing(null)} />
+                  ) : (
+                    <ToolForm initial={tool} busy={busy} onSave={saveEdit} onCancel={() => setEditing(null)} />
+                  )}
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -538,6 +660,7 @@ export default function ToolsTab({ residents, onChanged }) {
         <ul className="text-[11px] text-muted-foreground mt-1.5 space-y-1 list-disc list-inside">
           <li>A resident only sees the tools you hand it — never another resident's.</li>
           <li>Reads run right away. Writes wait for your approval in the Outbox, one at a time.</li>
+          <li>Email tools send from your COGNOS Gmail — and every send waits for your approval. Nothing goes out on its own.</li>
           <li>The master autonomy switch halts tools too.</li>
           <li>Secrets are write-only: typed once, resolved at send time, never stored or shown.</li>
         </ul>

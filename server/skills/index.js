@@ -245,7 +245,7 @@ export const SKILL_REGISTRY = Object.freeze({
     killSwitch: "COGNOS_SKILL_TOOL_INVOKE",
     maxPayloadBytes: 40_960,
     timeoutMs: 12_000,
-    summary: "Invoke an HTTPS tool Jeremy defined and assigned to this resident. Reads run freely; writes wait for Jeremy's approval.",
+    summary: "Invoke a tool Jeremy defined and assigned to this resident — an HTTPS endpoint or a native email send. Reads run freely; writes wait for Jeremy's approval.",
     idempotencyRule: "keyed by (tool, goal, canonical args): the same call stages once however many times it is asked for",
     args: {
       toolId: { type: "string", max: 64, required: true },

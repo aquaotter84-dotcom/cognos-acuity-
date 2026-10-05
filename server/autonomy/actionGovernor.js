@@ -38,6 +38,8 @@ import { urlAllowedByScope, destinationsForScope, scopeEntryFor } from "./scopeU
 import { checkWebhookUrl, checkWebhookHeaders, resolveSecretRef } from "./webhookPost.js";
 import { isAllowedHeaderName } from "./webhookPost.js";
 import { effectiveEnabled } from "./settings.js";
+import { buildEmailRequest } from "./residentTools.js";
+import { validEmail } from "../insights/emailStore.js";
 import { validateApproval } from "./approvalHardening.js";
 
 /** Every rule, so a refusal names what fired instead of just "no".
@@ -86,7 +88,10 @@ export const RULES = Object.freeze({
   TOOL_URL_UNSAFE: "the tool's address didn't pass the safety check",
   TOOL_DESTINATION_MISMATCH: "the request goes somewhere the tool's definition doesn't name",
   TOOL_METHOD_MISMATCH: "the method doesn't match the tool's definition",
-  TOOL_WRITE_NEEDS_APPROVAL: "a write needs your approval first — it's waiting in the inbox"
+  TOOL_WRITE_NEEDS_APPROVAL: "a write needs your approval first — it's waiting in the inbox",
+  // Phase 39 — native email tools. The destination is a recipient list, not a URL.
+  TOOL_RECIPIENT_UNSAFE: "an email recipient doesn't look like an email address",
+  TOOL_RECIPIENT_MISMATCH: "the email goes somewhere the tool's definition doesn't name"
 });
 
 /**
@@ -294,7 +299,32 @@ export async function judgeEffect({ db, effect, goal, authorization, config, now
       passed.push("the method matches the tool's definition");
     }
 
-    if (tp.url_origin) {
+    // Phase 39 — email tools name recipients, not a URL. Every staged
+    // recipient must parse as an address, and the list must equal what the
+    // tool's own templates render from the staged args — the exact analog of
+    // the HTTPS origin checks below.
+    if (tool && tool.kind === "email") {
+      const stagedTo = Array.isArray(tp.to) ? tp.to.map((a) => String(a || "").trim()).filter(Boolean) : [];
+      if (!stagedTo.length) {
+        fail("TOOL_RECIPIENT_UNSAFE", "pin.effect_staged", "the staged email names no recipient");
+      } else if (stagedTo.some((a) => !validEmail(a))) {
+        fail("TOOL_RECIPIENT_UNSAFE", "pin.effect_staged", "a staged recipient doesn't parse as an email address");
+      } else {
+        passed.push("every recipient parses as an email address");
+        let renderedTo = null;
+        try {
+          renderedTo = buildEmailRequest(tool, { args: tp.args || {} }).to;
+        } catch { renderedTo = null; }
+        if (!renderedTo) {
+          fail("TOOL_RECIPIENT_UNSAFE", "pin.effect_staged", "the recipients couldn't be rebuilt from the tool's definition");
+        } else if (JSON.stringify([...stagedTo].sort()) !== JSON.stringify([...renderedTo].sort())) {
+          fail("TOOL_RECIPIENT_MISMATCH", "pin.effect_staged",
+            "the staged recipients are not what the tool's definition renders");
+        } else {
+          passed.push("the recipients are the tool's own rendered recipients");
+        }
+      }
+    } else if (tp.url_origin) {
       const shaped = checkWebhookUrl(`${tp.url_origin}/`);
       if (!shaped.ok) {
         fail("TOOL_URL_UNSAFE", "pin.effect_staged", shaped.reason);

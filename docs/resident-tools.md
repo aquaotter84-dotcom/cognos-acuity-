@@ -119,3 +119,38 @@ transcript as context for the next turn.
    as a webhook would be.
 - **Secret rotation / versioning.** Secrets are write-only upserts. Rotation
    is "type the new value"; there is no history.
+
+## Phase 39 — native email tools
+
+A second tool kind beside `https`: `email`. The resident composes
+to/subject/body and the send goes through Jeremy's COGNOS Gmail account (the
+same SMTP path as the Daily Insights digest) — no third-party mail API, no
+`Authorization` header (which tools can never send, by deliberate design), no
+secrets on the tool.
+
+- **Definition:** name, description, `to_template`, `subject_template`,
+  `body_template`. The recipient may be fixed (`you@example.com`), an
+  argument (`{{to}}`), or a comma-separated mix. `{{secret:…}}` is refused
+  anywhere in an email tool — there are no keys to reference.
+- **Always a write.** Email tools never auto-send: `invokeTool` stages a
+  `tool_call` effect and records the run as `awaiting_approval`, exactly like
+  an HTTPS write. Nothing goes out until Jeremy approves it in the inbox.
+- **Governor:** the `tool_call` branch judges email effects on their own
+  terms — every staged recipient must parse as an address
+  (`TOOL_RECIPIENT_UNSAFE`) and equal what the tool's own templates render
+  from the staged args (`TOOL_RECIPIENT_MISMATCH`), the exact analog of the
+  HTTPS origin checks. The approval is hash-bound to the exact
+  recipients/subject/body, and the executor re-verifies the recipients at
+  send time.
+- **Delivery:** after a live verdict, `performToolEffect` reads the Gmail
+  credentials from the insights email store and sends via
+  `server/insights/smtp.js` — one send per recipient. If the COGNOS Gmail
+  isn't configured, the run fails loudly with directions to Settings.
+- **Studio:** the Tools tab has a "New email tool" button next to "New
+  HTTPS tool"; email tools show an `email` badge and their recipient line,
+  and are assigned to residents exactly like HTTPS tools.
+- **LAN / non-https destinations.** The SSRF boundary is the webhook
+   adapter's: public https only. A tool aimed at a LAN device is refused, same
+   as a webhook would be.
+- **Secret rotation / versioning.** Secrets are write-only upserts. Rotation
+   is "type the new value"; there is no history.

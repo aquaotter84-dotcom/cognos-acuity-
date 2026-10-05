@@ -23,7 +23,7 @@ import { publicNotice } from "./notice.js";
 import { getPersonalitySettings, updatePersonalitySettings } from "./personality.js";
 import { setOutboxMode } from "./liveOutbox.js";
 import { autonomyConfig } from "./config.js";
-import { invokeTool } from "./residentTools.js";
+import { invokeTool, extractArgNames } from "./residentTools.js";
 import { scopeHashes } from "./authorize.js";
 
 const clean = (v, max = 400) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -433,9 +433,20 @@ export async function residentChatTurn({
   // Phase 36 — the resident's assigned tools. The model may request calls;
   // the route verifies and runs them. Never shown to other residents.
   const assignedTools = await db.ResidentTool.toolsForAgent(ws.id, resident.slug).catch(() => []);
-  const toolLines = (assignedTools || []).slice(0, 12).map((t) =>
-    `- ${t.name}: ${clean(t.description, 140) || "no description"} [${t.method}]`
-  ).join("\n");
+  const toolLines = (assignedTools || []).slice(0, 12).map((t) => {
+    // Phase 39 — email tools read as [email] with their argument names, so
+    // the model knows what to pass; HTTPS tools keep the [METHOD] badge.
+    if (t.kind === "email") {
+      const argNames = [...new Set([
+        ...extractArgNames(t.to_template || ""),
+        ...extractArgNames(t.subject_template || ""),
+        ...extractArgNames(t.body_template || ""),
+      ])].sort();
+      const argsHint = argNames.length ? ` — args: ${argNames.join(", ")}` : "";
+      return `- ${t.name}: ${clean(t.description, 140) || "no description"} [email, sends from the COGNOS Gmail; every send waits for Jeremy's approval]${argsHint}`;
+    }
+    return `- ${t.name}: ${clean(t.description, 140) || "no description"} [${t.method}]`;
+  }).join("\n");
   const findings = parseJson(scopedGoal?.findings, {});
   const prefs = await getPersonalitySettings(db, ws.id).catch(() => ({}));
   const c = cfg && cfg.outboxMode ? cfg : autonomyConfig();
