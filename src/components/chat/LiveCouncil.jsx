@@ -99,6 +99,11 @@ export default function LiveCouncil({ live }) {
               agent: {agent.mode.replace('_', ' ')} · {agent.status} · {(agent.steps || []).filter(step => step.status === 'completed').length}/{(agent.steps || []).length} reads
             </p>
           )}
+          {(agent?.steps || []).filter(step => step.status === 'failed' && step.error).map(step => (
+            <p key={step.id || step.ordinal} className="text-muted-foreground/70 pt-1">
+              read {step.ordinal ?? '?' } failed: {String(step.error).slice(0, 220)}
+            </p>
+          ))}
           {classification && (
             <p className="text-muted-foreground/70 pt-1">
               {classification.task_type} · {classification.complexity}

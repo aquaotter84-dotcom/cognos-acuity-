@@ -241,11 +241,16 @@ try {
     assert.equal(run.status, "cancelled");
     assert.equal(run.message_id, null);
     assert.ok((run.failures || []).some(f => f.kind === "abort" || /cancel/i.test(f.message || "")));
-    const calls = await h.sql(
-      "SELECT status, error_class FROM telemetry_model_calls WHERE run_id=$1 ORDER BY seq",
-      [start.runId]
-    );
-    assert.ok(calls.some(call => call.status === "abort" && call.error_class === "abort"), "active model call was not aborted");
+    let abortedCall = null;
+    for (let i = 0; i < 100 && !abortedCall; i++) {
+      const rows = await h.sql(
+        "SELECT status, error_class FROM telemetry_model_calls WHERE run_id=$1 ORDER BY seq",
+        [start.runId]
+      );
+      abortedCall = rows.find(call => call.status === "abort" && call.error_class === "abort") || null;
+      if (!abortedCall) await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.ok(abortedCall, "active model call was not aborted");
 
     const assistantRows = await h.sql(
       "SELECT id FROM messages WHERE conversation_id=$1 AND role='assistant'",
