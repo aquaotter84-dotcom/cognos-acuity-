@@ -22,6 +22,39 @@ export const TOOL_REGISTRY = Object.freeze({
   open_link: Object.freeze({ risk: "network_read", requiresApproval: false, sideEffect: "immutable_source_snapshot" })
 });
 
+/**
+ * Open a link, retrying once at the site origin when the exact URL 404s.
+ * The planner sometimes invents a deep path that doesn't exist; the site's
+ * homepage usually does, and a real page is strictly more useful than a dead
+ * step. Only 404/410 retries — DNS/TLS/5xx failures would fail identically at
+ * the origin. The fallback is recorded on the step output for transparency.
+ */
+async function ingestLinkWithOriginFallback(db, { workspaceId, conversationId, url, signal, logger }) {
+  try {
+    const source = await ingestLink(db, { workspaceId, conversationId, url, signal });
+    return { source, fallback: false };
+  } catch (error) {
+    if (isClientAbort(error, signal)) throw error;
+    const status = Number(error?.status || 0);
+    if (status !== 404 && status !== 410) throw error;
+    let origin;
+    try {
+      origin = new URL(url).origin + "/";
+    } catch {
+      throw error;
+    }
+    if (origin === url) throw error;
+    logger?.warn?.("research read 404; retrying at site origin", { url, origin });
+    try {
+      const source = await ingestLink(db, { workspaceId, conversationId, url: origin, signal });
+      return { source, fallback: true, fallbackFrom: url };
+    } catch (fallbackError) {
+      if (isClientAbort(fallbackError, signal)) throw fallbackError;
+      throw error; // report the approved URL's failure, not the fallback's
+    }
+  }
+}
+
 /** True when every step's tool is read-only per the registry: no prompt needed.
  *  Unknown tools fail closed — they are never pre-authorized. */
 export function researchStepsPreauthorized(steps = []) {
@@ -482,13 +515,15 @@ export async function approveAndExecuteResearchRun({ db, runId, workspaceId, rea
       eventType: "step_started", patch: { started_ms: startedMs }, detail: { tool: original.tool_name }
     });
     try {
-      const source = await ingestLink(db, {
+      const { source, fallback, fallbackFrom } = await ingestLinkWithOriginFallback(db, {
         workspaceId,
         conversationId: run.conversation_id,
         url: original.input.url,
-        signal
+        signal,
+        logger
       });
       const output = { sourceId: source.id, name: source.name, finalUrl: source.final_url, duplicate: source.duplicate };
+      if (fallback) output.fallbackFrom = fallbackFrom;
       if (!source.duplicate) createdSources.push(source.id);
       const endedMs = Date.now();
       const updated = await changeStep(db, {
