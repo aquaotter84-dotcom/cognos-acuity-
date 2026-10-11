@@ -162,6 +162,10 @@ export async function safeFetch(input, {
     if (visited.has(url.href)) throw Object.assign(new Error("Redirect loop detected"), { status: 422 });
     visited.add(url.href);
     const records = await resolvePublic(url.hostname);
+    // Prefer IPv4: the pinned lookup tries records[0] with no fallback, and
+    // on networks without a working IPv6 route the first (AAAA) address fails
+    // instantly. The validated set is unchanged — only the try-order shifts.
+    records.sort((a, b) => Number(a.family) - Number(b.family));
     const response = await oneRequest(url, records, { signal, timeoutMs, maxBytes });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.location;
