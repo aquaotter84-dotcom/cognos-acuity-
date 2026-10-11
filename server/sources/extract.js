@@ -38,17 +38,40 @@ function assertTextSize(text) {
   return text;
 }
 
-function decodeUtf8(buffer) {
+function assertNotBinary(buffer) {
   const probe = buffer.subarray(0, Math.min(buffer.length, 16_384));
   let controls = 0;
   for (const byte of probe) if (byte === 0 || (byte < 9 || (byte > 13 && byte < 32))) controls++;
   if (probe.includes(0) || (probe.length && controls / probe.length > 0.01)) {
     throw Object.assign(new Error("Document appears to be binary rather than UTF-8 text"), { status: 422 });
   }
+}
+
+function decodeUtf8(buffer) {
+  assertNotBinary(buffer);
+  // Lenient on purpose: real-world pages routinely carry a stray windows-1252
+  // byte or two. The binary probe above already rejects actual binary; a
+  // fatal decoder turned one bad byte into a failed read.
+  return new TextDecoder("utf-8", { fatal: false }).decode(buffer);
+}
+
+/** Declared charset from an HTTP Content-Type header or an HTML meta tag. */
+function sniffCharset(buffer, contentTypeHeader) {
+  const fromHeader = String(contentTypeHeader || "").match(/charset\s*=\s*["']?\s*([\w:.-]+)/i)?.[1];
+  if (fromHeader) return fromHeader.toLowerCase();
+  const head = buffer.subarray(0, Math.min(buffer.length, 4096)).toString("latin1");
+  const fromMeta = head.match(/<meta[^>]+charset\s*=\s*["']?\s*([\w:.-]+)/i)?.[1];
+  return fromMeta ? fromMeta.toLowerCase() : null;
+}
+
+function decodeHtml(buffer, contentTypeHeader) {
+  assertNotBinary(buffer);
+  const label = sniffCharset(buffer, contentTypeHeader) || "utf-8";
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    // Unknown labels throw RangeError; malformed bytes become U+FFFD.
+    return new TextDecoder(label, { fatal: false }).decode(buffer);
   } catch {
-    throw Object.assign(new Error("Text document is not valid UTF-8"), { status: 422 });
+    return new TextDecoder("utf-8", { fatal: false }).decode(buffer);
   }
 }
 
@@ -182,8 +205,8 @@ export async function extractDocument({ name, mediaType, buffer }) {
   };
 }
 
-export function extractHtml(buffer, mediaType = "text/html") {
-  const html = decodeUtf8(buffer);
+export function extractHtml(buffer, mediaType = "text/html", contentTypeHeader = "") {
+  const html = decodeHtml(buffer, contentTypeHeader);
   const $ = loadHtml(html, { xmlMode: /xhtml|xml/.test(mediaType) });
   $("script,style,noscript,template,svg,canvas,iframe,object,embed,form").remove();
   const title = cleanText($("title").first().text()) || null;

@@ -193,7 +193,7 @@ export async function ingestLink(db, {
   let mediaType = type;
   const looksLikeHtml = /^\s*(?:<!doctype\s+html|<html\b|<head\b|<body\b)/i.test(response.body.subarray(0, 1024).toString("utf8"));
   if (["text/html", "application/xhtml+xml"].includes(type) || (type === "application/octet-stream" && looksLikeHtml)) {
-    extracted = extractHtml(response.body, type === "application/octet-stream" ? "text/html" : type);
+    extracted = extractHtml(response.body, type === "application/octet-stream" ? "text/html" : type, response.headers?.["content-type"] || "");
     mediaType = "text/html";
   } else if (["text/plain", "text/markdown", "text/csv", "application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream"].includes(type)) {
     const pathName = new URL(response.finalUrl).pathname.split("/").filter(Boolean).pop() || "linked-source";
