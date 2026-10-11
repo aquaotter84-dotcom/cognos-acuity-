@@ -593,6 +593,10 @@ export function styleDirective(style) {
 
 export function buildContextSystemPrompt(workspace, memories, classification, base = 'You are COGNOS, an intelligent AI reasoning assistant. You provide thoughtful, accurate, and helpful responses. Use markdown formatting when appropriate for clarity.', style = null, councilRecord = null, sourceContext = null, memoryContext = null, graphContext = null, persona = null) {
   let systemPrompt = withCharter(base);
+  // Output hygiene: this draft becomes user-visible text. Internal planning
+  // must never leak into it (seen 2026-10-11: a specialist emitted its plan
+  // and an unexecuted search-query JSON blob as the answer).
+  systemPrompt += `\n\nOUTPUT HYGIENE: Write only the finished answer. Never narrate your internal reasoning, never describe what you plan to do next, and never emit tool-call JSON, function-call syntax, or search-query objects — you have no tools in this step; answer directly from the provided context.`;
   if (workspace?.instructions) {
     systemPrompt += `\n\nWORKSPACE INSTRUCTIONS:\n${workspace.instructions}`;
   }
