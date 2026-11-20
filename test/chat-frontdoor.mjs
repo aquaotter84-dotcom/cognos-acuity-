@@ -118,6 +118,18 @@ await test("the Orbit face is untouched: same mark, same orbit classes", async (
   }
 });
 
+await test("welcome centers when it fits but never clips its top on short screens", async () => {
+  assert.ok(welcome.includes('className="flex min-h-full px-4 py-8 animate-fade-in"'), "outer flow grows past the viewport instead of forcing a fixed height");
+  assert.ok(welcome.includes('className="m-auto flex w-full max-w-2xl flex-col items-center"'), "auto margins center only when free space exists");
+  assert.ok(!welcome.includes("justify-center h-full"), "unsafe fixed-height centering is gone");
+  assert.ok(!welcome.includes("overflow-y-auto"), "the existing conversation scroll container owns scrolling");
+});
+
+await test("suggestion prompts remain fully readable before they are tapped", async () => {
+  assert.ok(!welcome.includes("line-clamp-1"), "prompt text is not truncated to one line");
+  assert.ok(welcome.includes("text-muted-foreground leading-relaxed"), "full prompt text keeps readable line spacing");
+});
+
 // ---------------------------------------------------------------------------
 // Loading state
 // ---------------------------------------------------------------------------
