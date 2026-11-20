@@ -55,29 +55,31 @@ function Mark() {
 
 export default function WelcomeScreen({ onSuggestion }) {
   return (
-    <div className="flex flex-col items-center justify-center h-full px-4 py-8 animate-fade-in overflow-y-auto">
-      <Mark />
-      <p className="orbit-eyebrow mb-2">Your AI, on your phone</p>
-      <h1 className="orbit-page-title text-3xl mb-2">Welcome to COGNOS</h1>
-      <p className="orbit-page-sub text-sm mb-8 text-center max-w-md">
-        An AI that shows its work, remembers what matters, and keeps your data in your own hands. Ask anything — when it needs to look something up first, it asks you before it opens a thing.
-      </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
-        {suggestions.map(({ icon: Icon, title, text }) => (
-          <button
-            key={title}
-            onClick={() => onSuggestion(text)}
-            className="orbit-agent-card flex flex-col gap-1 p-4 text-left"
-          >
-            <Icon className="w-5 h-5 text-primary mb-1" />
-            <span className="text-sm font-medium">{title}</span>
-            <span className="text-xs text-muted-foreground line-clamp-1">{text}</span>
-          </button>
-        ))}
+    <div className="flex min-h-full px-4 py-8 animate-fade-in">
+      <div className="m-auto flex w-full max-w-2xl flex-col items-center">
+        <Mark />
+        <p className="orbit-eyebrow mb-2">Your AI, on your phone</p>
+        <h1 className="orbit-page-title text-3xl mb-2">Welcome to COGNOS</h1>
+        <p className="orbit-page-sub text-sm mb-8 text-center max-w-md">
+          An AI that shows its work, remembers what matters, and keeps your data in your own hands. Ask anything — when it needs to look something up first, it asks you before it opens a thing.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
+          {suggestions.map(({ icon: Icon, title, text }) => (
+            <button
+              key={title}
+              onClick={() => onSuggestion(text)}
+              className="orbit-agent-card flex flex-col gap-1 p-4 text-left"
+            >
+              <Icon className="w-5 h-5 text-primary mb-1" />
+              <span className="text-sm font-medium">{title}</span>
+              <span className="text-xs text-muted-foreground leading-relaxed">{text}</span>
+            </button>
+          ))}
+        </div>
+        <p className="mt-6 text-[11px] text-muted-foreground text-center max-w-sm leading-relaxed">
+          The choices under the header tune how it answers — how it talks, answer style, web lookup, research help. Tap any of them, anytime.
+        </p>
       </div>
-      <p className="mt-6 text-[11px] text-muted-foreground text-center max-w-sm leading-relaxed">
-        The choices under the header tune how it answers — how it talks, answer style, web lookup, research help. Tap any of them, anytime.
-      </p>
     </div>
   );
 }
