@@ -19,6 +19,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useReducedMotion } from 'framer-motion';
 import { Bot, Folder, Menu, Volume2, VolumeX } from 'lucide-react';
 import { api, sendMessage } from '@/lib/api';
 import { ConversationQueue } from '@/lib/conversationQueue';
@@ -54,6 +55,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export default function Chat() {
   const { activeWorkspace, setActiveConversationId, refreshConversations, openSidebar, projectById } = useCognos();
   const navigate = useNavigate();
+  const reduceMotion = useReducedMotion();
   const {
     supported: voiceSupported,
     settings: voiceSettings,
@@ -132,6 +134,20 @@ export default function Chat() {
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
+  const [modelConfigured, setModelConfigured] = useState(null);
+  const checkAiConnection = useCallback(async () => {
+    try {
+      const health = await api.health();
+      const configured = typeof health?.modelKeyConfigured === 'boolean' ? health.modelKeyConfigured : null;
+      setModelConfigured(configured);
+      return configured;
+    } catch {
+      // A failed health check must not block an otherwise working chat.
+      setModelConfigured(null);
+      return null;
+    }
+  }, []);
+  useEffect(() => { checkAiConnection(); }, [checkAiConnection]);
 
   // Phase 31 — the morning greeting: one fetch per app session, against the
   // device clock. The server dedupes per day, so this is naturally once-daily.
@@ -274,8 +290,8 @@ export default function Chat() {
   }, [conversationId, reloadToken]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, draft]);
+    messagesEndRef.current?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth' });
+  }, [messages, draft, reduceMotion]);
 
   // Phase 18 — research plans stop for the user: whenever an awaiting_approval
   // research run exists for this conversation, surface it for decision. The
@@ -564,7 +580,7 @@ export default function Chat() {
         className="flex items-center gap-2 px-3 md:px-4 py-3 border-b border-border shrink-0"
         style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
       >
-        <button onClick={openSidebar} className="md:hidden p-2 -ml-2 rounded-lg hover:bg-muted transition-colors">
+        <button aria-label="Open navigation" onClick={openSidebar} className="md:hidden p-2 -ml-2 rounded-lg hover:bg-muted transition-colors">
           <Menu className="w-5 h-5" />
         </button>
         <div className="flex-1 min-w-0">
@@ -573,7 +589,7 @@ export default function Chat() {
           {conversationProject && (
             <button
               onClick={() => navigate('/projects')}
-              className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-accent hover:underline"
+              className="mt-0.5 inline-flex items-center gap-1 text-xs text-accent hover:underline"
               title="Open Projects"
             >
               <Folder className="w-3 h-3" />
@@ -583,9 +599,9 @@ export default function Chat() {
         </div>
         <button
           onClick={() => setDesignerOpen(true)}
-          aria-label="Design a resident"
+          aria-label="Design an assistant"
           className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-          title="Design a resident — describe it in plain words and COGNOS drafts the whole thing"
+          title="Design an assistant — describe it in plain words and COGNOS drafts the whole thing"
         >
           <Bot className="w-4 h-4" />
         </button>
@@ -651,7 +667,12 @@ export default function Chat() {
             <p className="text-center text-xs text-muted-foreground pt-2">Opening conversation…</p>
           </div>
         ) : messages.length === 0 && !draft ? (
-          <WelcomeScreen onSuggestion={(t) => sendOrQueue(t)} />
+          <WelcomeScreen
+            onSuggestion={(t) => sendOrQueue(t)}
+            modelConfigured={modelConfigured}
+            onOpenSettings={() => navigate('/settings#ai-models')}
+            onRetryConnection={checkAiConnection}
+          />
         ) : (
           <div className="max-w-3xl mx-auto px-3 md:px-4 py-4 space-y-4">
             {messages.map(m => (
@@ -677,7 +698,7 @@ export default function Chat() {
       {goalId && (
         <div className="shrink-0 px-3 md:px-4 pb-1">
           {goalDetached && (
-            <p className="max-w-3xl mx-auto text-[11px] text-amber-600 dark:text-amber-400 px-1 pb-1">
+            <p className="max-w-3xl mx-auto text-[13px] text-amber-600 dark:text-amber-400 px-1 pb-1">
               This goal belongs to another conversation — shown here, but detached from this chat until you open that thread.
             </p>
           )}
@@ -729,13 +750,13 @@ export default function Chat() {
           <button
             type="button"
             onClick={() => navigate('/autonomy')}
-            className="max-w-3xl mx-auto w-full flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-[11px] text-left hover:bg-amber-500/10"
+            className="max-w-3xl mx-auto w-full flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-[13px] text-left hover:bg-amber-500/10"
           >
             <span className="rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 tabular-nums font-semibold">
               {attention.total}
             </span>
             <span className="text-foreground/80 min-w-0 truncate">
-              {attention.total === 1 ? 'One thing needs you on Autonomy' : `${attention.total} things need you on Autonomy`}
+              {attention.total === 1 ? 'One update is waiting in Studio' : `${attention.total} updates are waiting in Studio`}
             </span>
           </button>
         </div>
@@ -743,7 +764,7 @@ export default function Chat() {
 
       {(!isOnline || outbox.length > 0) && (
         <div className="shrink-0 px-3 md:px-4 pb-1">
-          <div className="max-w-3xl mx-auto rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-[11px] text-foreground/80">
+          <div className="max-w-3xl mx-auto rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-[13px] text-foreground/80">
             {!isOnline
               ? `You're offline — ${outbox.length === 0 ? 'new messages' : outbox.length === 1 ? '1 message' : `${outbox.length} messages`} will send when you reconnect.`
               : `Sending ${outbox.length} queued message${outbox.length === 1 ? '' : 's'}…`}
@@ -751,9 +772,19 @@ export default function Chat() {
         </div>
       )}
 
+      {modelConfigured === false && (conversationId || messages.length > 0) && (
+        <div className="shrink-0 px-3 md:px-4 pb-2">
+          <div className="max-w-3xl mx-auto flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
+            <p className="flex-1 text-muted-foreground">Connect an AI model before sending another message.</p>
+            <button type="button" onClick={() => navigate('/settings#ai-models')} className="inline-flex min-h-11 items-center justify-center rounded-lg bg-primary/10 px-3 py-2 font-medium text-primary hover:bg-primary/20">Open AI settings</button>
+          </div>
+        </div>
+      )}
+
       <ChatInput
         onSend={sendOrQueue}
-        disabled={!activeWorkspace}
+        disabled={!activeWorkspace || modelConfigured === false}
+        setupRequired={modelConfigured === false}
         isProcessing={isProcessing}
         onStop={handleStop}
         conversationId={conversationId}

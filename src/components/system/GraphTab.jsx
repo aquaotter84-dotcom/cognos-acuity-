@@ -125,16 +125,16 @@ export default function GraphTab() {
       {overview && (
         <Card title="Atlas overview" subtitle="What the user-controlled, append-only graph holds. Sessions, sources, and intents stitch here — the Governor consults it before drafting and cites only what the turn loaded.">
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
-            <div className="rounded border border-border/60 p-2"><div className="text-[10px] text-muted-foreground/60 uppercase">nodes</div><div className="text-lg tabular-nums">{overview.nodes?.total ?? 0}</div><div className="text-[10px] text-muted-foreground/70">{overview.nodes?.active ?? 0} active · {overview.nodes?.pinned ?? 0} pinned · {overview.nodes?.retired ?? 0} retired</div></div>
-            <div className="rounded border border-border/60 p-2"><div className="text-[10px] text-muted-foreground/60 uppercase">edges</div><div className="text-lg tabular-nums">{overview.edges?.total ?? 0}</div><div className="text-[10px] text-muted-foreground/70">{overview.edges?.active ?? 0} active · {overview.edges?.retired ?? 0} retired</div></div>
-            <div className="rounded border border-border/60 p-2"><div className="text-[10px] text-muted-foreground/60 uppercase">open conflicts</div><div className="text-lg tabular-nums">{overview.openConflicts ?? 0}</div><div className="text-[10px] text-muted-foreground/70">contradicts, live ends</div></div>
-            <div className="rounded border border-border/60 p-2"><div className="text-[10px] text-muted-foreground/60 uppercase">snapshots</div><div className="text-lg tabular-nums">{overview.snapshots ?? 0}</div><div className="text-[10px] text-muted-foreground/70">immutable · Merkle</div></div>
+            <div className="rounded border border-border/60 p-2"><div className="text-xs text-muted-foreground uppercase">nodes</div><div className="text-lg tabular-nums">{overview.nodes?.total ?? 0}</div><div className="text-xs text-muted-foreground">{overview.nodes?.active ?? 0} active · {overview.nodes?.pinned ?? 0} pinned · {overview.nodes?.retired ?? 0} retired</div></div>
+            <div className="rounded border border-border/60 p-2"><div className="text-xs text-muted-foreground uppercase">edges</div><div className="text-lg tabular-nums">{overview.edges?.total ?? 0}</div><div className="text-xs text-muted-foreground">{overview.edges?.active ?? 0} active · {overview.edges?.retired ?? 0} retired</div></div>
+            <div className="rounded border border-border/60 p-2"><div className="text-xs text-muted-foreground uppercase">open conflicts</div><div className="text-lg tabular-nums">{overview.openConflicts ?? 0}</div><div className="text-xs text-muted-foreground">contradicts, live ends</div></div>
+            <div className="rounded border border-border/60 p-2"><div className="text-xs text-muted-foreground uppercase">snapshots</div><div className="text-lg tabular-nums">{overview.snapshots ?? 0}</div><div className="text-xs text-muted-foreground">immutable · Merkle</div></div>
             <div className="rounded border border-border/60 p-2">
-              <div className="text-[10px] text-muted-foreground/60 uppercase">seals</div>
+              <div className="text-xs text-muted-foreground uppercase">seals</div>
               <div className="text-lg tabular-nums flex items-center gap-1.5">
                 {verify ? (verify.ok ? <ShieldCheck className="w-5 h-5 text-green-400" /> : <Pill tone="bad">{verify.mismatches ?? '?'} mismatches</Pill>) : '—'}
               </div>
-              <div className="text-[10px] text-muted-foreground/70">{verify ? `${verify.nodesChecked ?? 0} nodes · ${verify.edgesChecked ?? 0} edges recomputed` : 'not checked'}</div>
+              <div className="text-xs text-muted-foreground">{verify ? `${verify.nodesChecked ?? 0} nodes · ${verify.edgesChecked ?? 0} edges recomputed` : 'not checked'}</div>
             </div>
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
@@ -142,7 +142,7 @@ export default function GraphTab() {
             {(overview.nodes?.byTrust || []).map(t => <Pill key={t.trust} tone={trustTone(t.trust)}>{t.trust} ×{t.count}</Pill>)}
           </div>
           {coverage && (
-            <div className="mt-2 text-[11px] text-muted-foreground">
+            <div className="mt-2 text-[13px] text-muted-foreground">
               coverage: <span className="text-foreground/85 tabular-nums">{coverage.coveragePct ?? '—'}%</span> of session content reachable from the graph · {coverage.events ?? 0} projected events, {coverage.intents ?? 0} intents, {coverage.concepts ?? 0} concepts
               {coverage.conversations != null && <span> · {coverage.conversations} conversations</span>}
             </div>
@@ -156,12 +156,12 @@ export default function GraphTab() {
       <Card title="Query" subtitle="The same bounded relevance query the turn uses — indexed overlap, under the 150ms target. truthOnly admits only nodes standing under the truth floor.">
         <div className="flex flex-wrap gap-2 items-end">
           <input className={`${inputCls} flex-1 min-w-[14rem]`} placeholder="what does the graph know about…" value={qbox.q} onChange={(e) => setQbox(s => ({ ...s, q: e.target.value }))} onKeyDown={(e) => { if (e.key === 'Enter') runQuery(); }} />
-          <label className="text-[11px] text-muted-foreground flex items-center gap-1.5"><input type="checkbox" checked={qbox.truthOnly} onChange={(e) => setQbox(s => ({ ...s, truthOnly: e.target.checked }))} /> truthOnly</label>
+          <label className="text-[13px] text-muted-foreground flex items-center gap-1.5"><input type="checkbox" checked={qbox.truthOnly} onChange={(e) => setQbox(s => ({ ...s, truthOnly: e.target.checked }))} /> truthOnly</label>
           <button onClick={runQuery} disabled={busy} className="px-3 py-1.5 rounded-lg bg-primary/15 text-primary text-xs hover:bg-primary/25 disabled:opacity-50">Ask the atlas</button>
         </div>
         {qres && (
           <div className="mt-2 space-y-1">
-            <div className="text-[10px] text-muted-foreground/70">{qres.count} node(s) · {fmtMs(qres.latencyMs)} (target ≤ {qres.latencyTargetMs}ms)</div>
+            <div className="text-xs text-muted-foreground">{qres.count} node(s) · {fmtMs(qres.latencyMs)} (target ≤ {qres.latencyTargetMs}ms)</div>
             {qres.nodes.map(n => (
               <button key={n.id} onClick={() => openNode(n.id)} className="w-full text-left rounded border border-border/60 hover:border-primary/40 px-2 py-1.5 text-xs">
                 <div className="flex flex-wrap items-center gap-2">
@@ -169,7 +169,7 @@ export default function GraphTab() {
                   <Pill tone={trustTone(n.trust)}>{n.trust}</Pill>
                   <Pill tone={statusTone(n.status)}>{n.status}</Pill>
                   <span className="text-foreground/85 truncate flex-1">{n.label}</span>
-                  <span className="tabular-nums text-muted-foreground/60">{n.id}</span>
+                  <span className="tabular-nums text-muted-foreground">{n.id}</span>
                 </div>
               </button>
             ))}
@@ -190,7 +190,7 @@ export default function GraphTab() {
             {STATUSES.map(t => <option key={t} value={t}>{t || 'any status'}</option>)}
           </select>
           <input className={`${inputCls} flex-1 min-w-[10rem]`} placeholder="search label / content / id…" value={filter.q} onChange={(e) => setFilter(f => ({ ...f, q: e.target.value }))} />
-          <label className="text-[11px] text-muted-foreground flex items-center gap-1.5"><input type="checkbox" checked={filter.truthOnly} onChange={(e) => setFilter(f => ({ ...f, truthOnly: e.target.checked }))} /> truthOnly</label>
+          <label className="text-[13px] text-muted-foreground flex items-center gap-1.5"><input type="checkbox" checked={filter.truthOnly} onChange={(e) => setFilter(f => ({ ...f, truthOnly: e.target.checked }))} /> truthOnly</label>
         </div>
         {nodes.length === 0 ? <Empty>No nodes match. Approved turns project their exchange here.</Empty> : (
           <div className="space-y-1 max-h-72 overflow-auto scrollbar-thin">
@@ -201,7 +201,7 @@ export default function GraphTab() {
                   <Pill tone={trustTone(n.trust)}>{n.trust}</Pill>
                   <Pill tone={statusTone(n.status)}>{n.status}</Pill>
                   <span className="text-foreground/85 truncate flex-1">{n.label}</span>
-                  <span className="tabular-nums text-muted-foreground/50 text-[10px]">{n.id}</span>
+                  <span className="tabular-nums text-muted-foreground text-xs">{n.id}</span>
                 </div>
               </button>
             ))}
@@ -213,7 +213,7 @@ export default function GraphTab() {
         <Card
           title={`${selected.node.type}:${selected.node.id}`}
           subtitle={`v${selected.node.version} · ${fmtTime(selected.node.created_at)} · seal ${selected.seal?.sealOk ? 'holds' : 'BROKEN'} · hash ${String(selected.node.provenance_hash || '').slice(0, 12)}…`}
-          action={<button onClick={() => setSelected(null)} className="text-[10px] text-muted-foreground hover:text-foreground">close</button>}
+          action={<button onClick={() => setSelected(null)} className="text-xs text-muted-foreground hover:text-foreground">close</button>}
         >
           <div className="flex flex-wrap gap-2 mb-2">
             <Pill tone={trustTone(selected.node.trust)}>{selected.node.trust}</Pill>
@@ -224,26 +224,26 @@ export default function GraphTab() {
           <p className="text-xs text-foreground/90 mb-1 font-medium">{selected.node.label}</p>
           <Json value={selected.node.content} />
           <div className="mt-2 flex flex-wrap gap-2">
-            <button disabled={busy || selected.node.status === 'retired'} onClick={() => act(() => api.graphPinNode(selected.node.id))} className="px-2.5 py-1 rounded-lg bg-primary/15 text-primary text-[11px] hover:bg-primary/25 disabled:opacity-40">Pin</button>
-            <button disabled={busy || selected.node.status === 'retired'} onClick={() => { const note = window.prompt('Fork note (optional)', ''); if (note !== null) act(() => api.graphForkNode(selected.node.id, { note })); }} className="px-2.5 py-1 rounded-lg bg-primary/15 text-primary text-[11px] hover:bg-primary/25 disabled:opacity-40">Fork</button>
-            <button disabled={busy || selected.node.status === 'retired'} onClick={() => { const content = window.prompt('Revised content (empty keeps current)', selected.node.content || ''); if (content !== null) { const note = window.prompt('Revision note (optional)', '') || ''; act(() => api.graphReviseNode(selected.node.id, { content: content || undefined, note })); } }} className="px-2.5 py-1 rounded-lg bg-primary/15 text-primary text-[11px] hover:bg-primary/25 disabled:opacity-40">Revise</button>
-            <button disabled={busy || selected.node.status === 'retired'} onClick={() => { const note = window.prompt('Retire reason (recorded on the ledger)', ''); if (note !== null) act(() => api.graphRetireNode(selected.node.id, { note })); }} className="px-2.5 py-1 rounded-lg bg-destructive/15 text-destructive text-[11px] hover:bg-destructive/25 disabled:opacity-40">Retire</button>
+            <button disabled={busy || selected.node.status === 'retired'} onClick={() => act(() => api.graphPinNode(selected.node.id))} className="px-2.5 py-1 rounded-lg bg-primary/15 text-primary text-[13px] hover:bg-primary/25 disabled:opacity-40">Pin</button>
+            <button disabled={busy || selected.node.status === 'retired'} onClick={() => { const note = window.prompt('Fork note (optional)', ''); if (note !== null) act(() => api.graphForkNode(selected.node.id, { note })); }} className="px-2.5 py-1 rounded-lg bg-primary/15 text-primary text-[13px] hover:bg-primary/25 disabled:opacity-40">Fork</button>
+            <button disabled={busy || selected.node.status === 'retired'} onClick={() => { const content = window.prompt('Revised content (empty keeps current)', selected.node.content || ''); if (content !== null) { const note = window.prompt('Revision note (optional)', '') || ''; act(() => api.graphReviseNode(selected.node.id, { content: content || undefined, note })); } }} className="px-2.5 py-1 rounded-lg bg-primary/15 text-primary text-[13px] hover:bg-primary/25 disabled:opacity-40">Revise</button>
+            <button disabled={busy || selected.node.status === 'retired'} onClick={() => { const note = window.prompt('Retire reason (recorded on the ledger)', ''); if (note !== null) act(() => api.graphRetireNode(selected.node.id, { note })); }} className="px-2.5 py-1 rounded-lg bg-destructive/15 text-destructive text-[13px] hover:bg-destructive/25 disabled:opacity-40">Retire</button>
             {['verified', 'trusted', 'untrusted', 'flagged'].filter(t => t !== selected.node.trust).map(t => (
-              <button key={t} disabled={busy} onClick={() => act(() => api.graphTrustNode(selected.node.id, { trust: t }))} className="px-2.5 py-1 rounded-lg bg-muted text-muted-foreground text-[11px] hover:bg-muted/70 disabled:opacity-40">→ {t}</button>
+              <button key={t} disabled={busy} onClick={() => act(() => api.graphTrustNode(selected.node.id, { trust: t }))} className="px-2.5 py-1 rounded-lg bg-muted text-muted-foreground text-[13px] hover:bg-muted/70 disabled:opacity-40">→ {t}</button>
             ))}
           </div>
           <div className="mt-3">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">edges — {selected.edges?.length ?? 0}</div>
+            <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">edges — {selected.edges?.length ?? 0}</div>
             {(selected.edges || []).length === 0 ? <Empty>Isolated — no edges touch this node.</Empty> : (
               <div className="space-y-1">
                 {selected.edges.map(e => (
-                  <div key={e.id} className="flex flex-wrap gap-2 items-center rounded border border-border/50 px-2 py-1 text-[11px]">
+                  <div key={e.id} className="flex flex-wrap gap-2 items-center rounded border border-border/50 px-2 py-1 text-[13px]">
                     <Pill tone={e.kind === 'contradicts' ? 'warn' : 'info'}>{e.kind}</Pill>
                     <button className="text-foreground/80 hover:text-primary underline decoration-dotted" onClick={() => openNode(e.src_node_id === selected.node.id ? e.dst_node_id : e.src_node_id)}>{e.src_node_id === selected.node.id ? `→ ${String(e.dst_node_id).slice(0, 18)}` : `${String(e.src_node_id).slice(0, 18)} →`}</button>
                     <Pill tone={trustTone(e.trust)}>{e.trust}</Pill>
                     <Pill tone={statusTone(e.status)}>{e.status}</Pill>
                     {e.status !== 'retired' && (
-                      <button className="ml-auto text-[10px] text-destructive/80 hover:text-destructive" disabled={busy} onClick={() => { if (window.confirm(`Retire edge ${e.id}? The row and its history stay.`)) act(() => api.graphRetireEdge(e.id)); }}>retire</button>
+                      <button className="ml-auto text-xs text-destructive/80 hover:text-destructive" disabled={busy} onClick={() => { if (window.confirm(`Retire edge ${e.id}? The row and its history stay.`)) act(() => api.graphRetireEdge(e.id)); }}>retire</button>
                     )}
                   </div>
                 ))}
@@ -251,14 +251,14 @@ export default function GraphTab() {
             )}
           </div>
           <div className="mt-3">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">lineage — {selected.lineage?.count ?? 0} event(s)</div>
+            <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">lineage — {selected.lineage?.count ?? 0} event(s)</div>
             {(selected.lineage?.events || []).length === 0 ? <Empty>No ledger events.</Empty> : (
               <div className="space-y-1">
                 {selected.lineage.events.map(h => (
-                  <div key={h.id || h.seq} className="flex flex-wrap gap-2 items-center text-[11px]">
-                    <span className="tabular-nums text-muted-foreground/50">#{h.seq}</span>
+                  <div key={h.id || h.seq} className="flex flex-wrap gap-2 items-center text-[13px]">
+                    <span className="tabular-nums text-muted-foreground">#{h.seq}</span>
                     <Pill tone="info">{h.transition}</Pill>
-                    <span className="text-muted-foreground/70">{fmtTime(h.at || h.ts_ms)}</span>
+                    <span className="text-muted-foreground">{fmtTime(h.at || h.ts_ms)}</span>
                     {h.delta && <span className="text-foreground/70">Δ {JSON.stringify(h.delta).slice(0, 160)}</span>}
                   </div>
                 ))}
@@ -271,7 +271,7 @@ export default function GraphTab() {
       <Card title="Curate" subtitle="Create nodes and edges directly. Both calls are idempotent — re-sending the same content returns the existing row.">
         <div className="grid sm:grid-cols-2 gap-3 text-xs">
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">new node</div>
+            <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">new node</div>
             <div className="space-y-1.5">
               <div className="flex gap-1.5">
                 <select className={inputCls} value={create.type} onChange={(e) => setCreate(c => ({ ...c, type: e.target.value }))}>
@@ -287,7 +287,7 @@ export default function GraphTab() {
             </div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">new edge</div>
+            <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">new edge</div>
             <div className="space-y-1.5">
               <input className={`${inputCls} w-full`} placeholder="source node id (graph_…)" value={edge.srcNodeId} onChange={(e) => setEdge(c => ({ ...c, srcNodeId: e.target.value }))} />
               <input className={`${inputCls} w-full`} placeholder="target node id (graph_…)" value={edge.dstNodeId} onChange={(e) => setEdge(c => ({ ...c, dstNodeId: e.target.value }))} />
@@ -311,10 +311,10 @@ export default function GraphTab() {
                 <div className="flex flex-wrap items-center gap-2">
                   <Pill tone="warn">contradicts</Pill>
                   <button className="text-foreground/85 hover:text-primary underline decoration-dotted" onClick={() => openNode(e.src_node_id)}>“{String(src?.label || e.src_node_id).slice(0, 80)}”</button>
-                  <span className="text-muted-foreground/60">vs</span>
+                  <span className="text-muted-foreground">vs</span>
                   <button className="text-foreground/85 hover:text-primary underline decoration-dotted" onClick={() => openNode(e.dst_node_id)}>“{String(dst?.label || e.dst_node_id).slice(0, 80)}”</button>
                 </div>
-                <div className="mt-1 text-[10px] text-muted-foreground/60">edge {e.id} · {fmtTime(e.created_at)} · weight {Number(e.weight ?? 0).toFixed(2)}</div>
+                <div className="mt-1 text-xs text-muted-foreground">edge {e.id} · {fmtTime(e.created_at)} · weight {Number(e.weight ?? 0).toFixed(2)}</div>
               </div>
             ))}
           </div>
@@ -337,21 +337,21 @@ export default function GraphTab() {
         {snapshots.length === 0 ? <Empty>No snapshots yet.</Empty> : (
           <div className="space-y-1">
             {snapshots.map(s => (
-              <div key={s.id} className="flex flex-wrap gap-2 items-center rounded border border-border/50 px-2 py-1 text-[11px]">
+              <div key={s.id} className="flex flex-wrap gap-2 items-center rounded border border-border/50 px-2 py-1 text-[13px]">
                 <span className="text-foreground/85 tabular-nums">{s.id}</span>
-                <span className="text-muted-foreground/70">{s.node_count} nodes · {s.edge_count} edges</span>
-                <span className="text-muted-foreground/50 font-mono">root {String(s.merkle_root || '').slice(0, 16)}…</span>
-                {s.note && <span className="text-muted-foreground/70 truncate">“{s.note}”</span>}
-                <span className="ml-auto text-muted-foreground/50">{fmtTime(s.created_at)}</span>
+                <span className="text-muted-foreground">{s.node_count} nodes · {s.edge_count} edges</span>
+                <span className="text-muted-foreground font-mono">root {String(s.merkle_root || '').slice(0, 16)}…</span>
+                {s.note && <span className="text-muted-foreground truncate">“{s.note}”</span>}
+                <span className="ml-auto text-muted-foreground">{fmtTime(s.created_at)}</span>
               </div>
             ))}
           </div>
         )}
         {diff && (
-          <div className="mt-2 rounded border border-border/60 p-2 text-[11px]">
+          <div className="mt-2 rounded border border-border/60 p-2 text-[13px]">
             <div className="flex flex-wrap gap-2 mb-1">
               <Pill tone={diff.identical ? 'ok' : 'warn'}>{diff.identical ? 'identical' : 'changed'}</Pill>
-              <span className="text-muted-foreground/70 font-mono">{String(diff.a?.root || '').slice(0, 12)}… → {String(diff.b?.root || '').slice(0, 12)}…</span>
+              <span className="text-muted-foreground font-mono">{String(diff.a?.root || '').slice(0, 12)}… → {String(diff.b?.root || '').slice(0, 12)}…</span>
             </div>
             <Json value={diff} />
           </div>

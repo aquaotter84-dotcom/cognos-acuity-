@@ -123,14 +123,14 @@ export default function SignIn() {
               <ul className="space-y-1 text-xs">
                 {(session.trusted_atlas_facts || []).slice(0, 4).map(f => (
                   <li key={f.graph_id} className="flex flex-wrap items-baseline gap-x-2">
-                    <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">{f.graph_id}</code>
+                    <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">{f.graph_id}</code>
                     <span className="text-muted-foreground">{f.subject}</span>
                     <span className="text-foreground">{Array.isArray(f.value) ? f.value.join(', ') : f.value}</span>
-                    <span className="ml-auto rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">{f.trust}</span>
+                    <span className="ml-auto rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-600 dark:text-emerald-400">{f.trust}</span>
                   </li>
                 ))}
               </ul>
-              <p className="mt-2 text-[11px] text-muted-foreground">
+              <p className="mt-2 text-[13px] text-muted-foreground">
                 Every fact the API asserts comes from a trusted Atlas row, cited by graph id. NOT truth-bearing rows never generate assertions.
               </p>
             </div>
@@ -163,7 +163,7 @@ export default function SignIn() {
               </div>
             </label>
             <label className="block space-y-1">
-              <span className="text-xs text-muted-foreground">Password {mode === 'register' && <span className="text-[10px]">(min 8 chars)</span>}</span>
+              <span className="text-xs text-muted-foreground">Password {mode === 'register' && <span className="text-xs">(min 8 chars)</span>}</span>
               <div className="relative">
                 <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <input className={`${input} pl-9`} type="password" required minLength={8} value={password}
@@ -182,7 +182,7 @@ export default function SignIn() {
 
             <div className="flex items-center gap-3 py-1">
               <div className="h-px flex-1 bg-border" />
-              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">or</span>
+              <span className="text-xs uppercase tracking-wide text-muted-foreground">or</span>
               <div className="h-px flex-1 bg-border" />
             </div>
 
@@ -199,7 +199,7 @@ export default function SignIn() {
           </form>
         )}
 
-        <p className="text-center text-[11px] leading-relaxed text-muted-foreground">
+        <p className="text-center text-[13px] leading-relaxed text-muted-foreground">
           Passwords are hashed with scrypt (per-user salt, timing-safe compare).
           Tokens carry your workspace binding and are revoked on sign-out.
           See <code className="font-mono">docs/WORKSPACES.md</code> for the full trust model.

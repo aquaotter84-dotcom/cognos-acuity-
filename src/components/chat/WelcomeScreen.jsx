@@ -1,40 +1,36 @@
-// Plain-language welcome: say what COGNOS does for the user, and let the
-// suggestion cards demo what makes it different — deep research with a plan
-// you approve, memory that sticks, and reasoning you can watch.
-//
-// v51 — Chat as the front door: the first run stays calm and welcoming —
-// four plain cards, no jargon — and points at the choices row above, so the
-// consolidated controls are discoverable from the very first screen. The
-// Orbit mark is untouched: no new face.
-
-import { FlaskConical, Brain, Network, MessagesSquare } from 'lucide-react';
+import { useState } from 'react';
+import { FlaskConical, Brain, Network, MessagesSquare, Settings, RefreshCw } from 'lucide-react';
 
 const suggestions = [
   {
+    icon: MessagesSquare,
+    title: 'Think through a decision',
+    description: 'Slow down and weigh the trade-offs.',
+    text: 'Help me think through a big decision, step by step',
+  },
+  {
     icon: FlaskConical,
-    title: 'Research something deeply',
+    title: 'Research a question',
+    description: 'Review the plan before any page is opened.',
     text: 'Research the best way to winterize a house — propose your plan before you open a single page',
   },
   {
     icon: Brain,
-    title: 'Remember this about me',
+    title: 'Save what matters',
+    description: 'Ask COGNOS to remember a preference.',
     text: 'Remember that I like short, plain answers — what should you learn about me next?',
   },
   {
     icon: Network,
-    title: 'What have you learned?',
+    title: 'See what it remembers',
+    description: 'Review what COGNOS has learned so far.',
     text: 'Summarize what you have learned about me from our conversations so far',
-  },
-  {
-    icon: MessagesSquare,
-    title: 'Think it through with me',
-    text: 'Help me think through a big decision, step by step',
   },
 ];
 
 function Mark() {
   return (
-    <svg viewBox="0 0 200 200" className="w-40 h-40 md:w-56 md:h-56 mb-6" aria-label="COGNOS">
+    <svg viewBox="0 0 200 200" className="w-16 h-16 md:w-20 md:h-20 mb-4" role="img" aria-label="COGNOS">
       <defs>
         <radialGradient id="cg" cx="50%" cy="50%" r="50%">
           <stop offset="0%" stopColor="hsl(110 32% 42%)" stopOpacity="0.9" />
@@ -53,33 +49,71 @@ function Mark() {
   );
 }
 
-export default function WelcomeScreen({ onSuggestion }) {
+function AiSetup({ onOpenSettings, onRetryConnection }) {
+  const [checking, setChecking] = useState(false);
+  const checkAgain = async () => {
+    setChecking(true);
+    try { await onRetryConnection?.(); }
+    finally { setChecking(false); }
+  };
+
   return (
-    <div className="flex min-h-full px-4 py-8 animate-fade-in">
-      <div className="m-auto flex w-full max-w-2xl flex-col items-center">
-        <Mark />
-        <p className="orbit-eyebrow mb-2">Your AI, on your phone</p>
-        <h1 className="orbit-page-title text-3xl mb-2">Welcome to COGNOS</h1>
-        <p className="orbit-page-sub text-sm mb-8 text-center max-w-md">
-          An AI that shows its work, remembers what matters, and keeps your data in your own hands. Ask anything — when it needs to look something up first, it asks you before it opens a thing.
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl">
-          {suggestions.map(({ icon: Icon, title, text }) => (
-            <button
-              key={title}
-              onClick={() => onSuggestion(text)}
-              className="orbit-agent-card flex flex-col gap-1 p-4 text-left"
-            >
-              <Icon className="w-5 h-5 text-primary mb-1" />
-              <span className="text-sm font-medium">{title}</span>
-              <span className="text-xs text-muted-foreground leading-relaxed">{text}</span>
-            </button>
-          ))}
-        </div>
-        <p className="mt-6 text-[11px] text-muted-foreground text-center max-w-sm leading-relaxed">
-          The choices under the header tune how it answers — how it talks, answer style, web lookup, research help. Tap any of them, anytime.
-        </p>
+    <div className="m-auto flex w-full max-w-lg flex-col items-center text-center">
+      <Mark />
+      <p className="orbit-eyebrow mb-2">One quick setup</p>
+      <h1 className="orbit-page-title text-2xl md:text-3xl mb-3">Connect COGNOS to an AI model</h1>
+      <p className="orbit-page-sub text-sm md:text-base max-w-md">
+        Your workspace is ready. Add your AI provider credentials in the server environment, restart COGNOS, and run the connection test in Settings.
+      </p>
+      <div className="mt-6 flex w-full flex-col sm:w-auto sm:flex-row gap-2.5">
+        <button type="button" onClick={onOpenSettings} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90">
+          <Settings className="w-4 h-4" aria-hidden />
+          Open AI settings
+        </button>
+        <button type="button" onClick={checkAgain} disabled={checking} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium hover:bg-muted disabled:opacity-50">
+          <RefreshCw className={`w-4 h-4 ${checking ? 'animate-spin' : ''}`} aria-hidden />
+          {checking ? 'Checking…' : 'Check again'}
+        </button>
       </div>
+      <p className="mt-5 text-xs text-muted-foreground leading-relaxed max-w-sm">
+        Credentials stay on your server. They are never sent to this browser.
+      </p>
+    </div>
+  );
+}
+
+export default function WelcomeScreen({ onSuggestion, modelConfigured = null, onOpenSettings, onRetryConnection }) {
+  return (
+    <div className="flex min-h-full px-4 py-5 md:py-8 animate-fade-in">
+      {modelConfigured === false ? (
+        <AiSetup onOpenSettings={onOpenSettings} onRetryConnection={onRetryConnection} />
+      ) : (
+        <div className="m-auto flex w-full max-w-2xl flex-col items-center">
+          <Mark />
+          <p className="orbit-eyebrow mb-2">Your space to think</p>
+          <h1 className="orbit-page-title text-2xl md:text-4xl mb-2 text-center">What are you working through?</h1>
+          <p className="orbit-page-sub text-sm md:text-base mb-5 md:mb-6 text-center max-w-lg">
+            Ask a question, weigh a decision, or start a research project. COGNOS shows its work and asks before researching beyond your conversation.
+          </p>
+          <div className="grid grid-cols-2 gap-2.5 md:gap-3 w-full max-w-2xl">
+            {suggestions.map(({ icon: Icon, title, description, text }) => (
+              <button
+                type="button"
+                key={title}
+                onClick={() => onSuggestion(text)}
+                className="orbit-agent-card flex min-h-28 flex-col gap-1 p-3.5 md:p-4 text-left"
+              >
+                <Icon className="w-4 h-4 text-primary mb-1" aria-hidden />
+                <span className="text-sm font-semibold leading-snug">{title}</span>
+                <span className="text-xs text-muted-foreground leading-relaxed">{description}</span>
+              </button>
+            ))}
+          </div>
+          <p className="mt-4 md:mt-5 text-xs text-muted-foreground text-center max-w-sm leading-relaxed">
+            Use the choices above to adjust tone, answer style, web lookup, and research help anytime.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

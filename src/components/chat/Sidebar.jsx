@@ -30,7 +30,7 @@ function ConversationRow({ conversation, onNavigate }) {
       <div className="min-w-0 flex-1">
         <p className="truncate text-xs font-medium">{conversation.title}</p>
         {conversation.last_message_preview && (
-          <p className="truncate text-[11px] text-muted-foreground/70">{conversation.last_message_preview}</p>
+          <p className="truncate text-[13px] text-muted-foreground">{conversation.last_message_preview}</p>
         )}
       </div>
       <button
@@ -119,7 +119,7 @@ export default function Sidebar({ onNavigate }) {
       <Icon className={`w-4 h-4 shrink-0 ${accent || 'text-primary'}`} />
       <span className="min-w-0">
         <span className="block leading-tight">{label}</span>
-        {sub && <span className="block text-[10px] text-muted-foreground leading-tight">{sub}</span>}
+        {sub && <span className="block text-xs text-muted-foreground leading-tight">{sub}</span>}
       </span>
     </Link>
   );
@@ -129,10 +129,10 @@ export default function Sidebar({ onNavigate }) {
       <div className="p-3 border-b border-border">
         <div className="flex items-center gap-2 mb-3 px-1">
           <div className="w-6 h-6 rounded-md bg-gradient-to-br from-primary to-accent flex items-center justify-center">
-            <span className="text-[10px] font-bold text-white">C</span>
+            <span className="text-xs font-bold text-white">C</span>
           </div>
           <span className="text-sm font-semibold tracking-tight">COGNOS</span>
-          <span className="ml-auto text-[10px] text-muted-foreground truncate max-w-[100px]">{activeWorkspace?.name}</span>
+          <span className="ml-auto text-xs text-muted-foreground truncate max-w-[100px]">{activeWorkspace?.name}</span>
         </div>
         <button
           onClick={handleNew}
@@ -173,7 +173,7 @@ export default function Sidebar({ onNavigate }) {
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search conversations"
-            className="bg-transparent outline-none text-xs flex-1 min-w-0 placeholder:text-muted-foreground/60"
+            className="bg-transparent outline-none text-xs flex-1 min-w-0 placeholder:text-muted-foreground"
           />
         </div>
       </div>
@@ -183,7 +183,7 @@ export default function Sidebar({ onNavigate }) {
           const rows = byProject.get(project.id) || [];
           return (
             <div key={project.id} className="mb-1">
-              <div className="flex items-center gap-1.5 px-2 py-1.5 text-[11px] text-muted-foreground">
+              <div className="flex items-center gap-1.5 px-2 py-1.5 text-[13px] text-muted-foreground">
                 <Folder className="w-3.5 h-3.5 text-accent shrink-0" />
                 <span className="truncate font-medium text-foreground/80">{project.name}</span>
                 <span className="shrink-0">· {project.conversation_count}</span>
@@ -197,7 +197,7 @@ export default function Sidebar({ onNavigate }) {
                 </button>
               </div>
               {rows.length === 0 && !query && (
-                <p className="px-3 pb-1 text-[10px] text-muted-foreground/60">No chats yet — open this project's chat and upload evidence.</p>
+                <p className="px-3 pb-1 text-xs text-muted-foreground">No chats yet — open this project's chat and upload evidence.</p>
               )}
               {rows.map(conversation => (
                 <ConversationRow key={conversation.id} conversation={conversation} onNavigate={onNavigate} />
@@ -208,7 +208,7 @@ export default function Sidebar({ onNavigate }) {
 
         {general.length > 0 && (
           <div className="mb-1">
-            <p className="flex items-center gap-1.5 px-2 py-1.5 text-[11px] text-muted-foreground">
+            <p className="flex items-center gap-1.5 px-2 py-1.5 text-[13px] text-muted-foreground">
               <MessageSquare className="w-3 h-3" /> General
             </p>
             {general.map(conversation => (
@@ -231,7 +231,7 @@ export default function Sidebar({ onNavigate }) {
         {navLink('/projects', Folder, 'Projects', 'text-accent')}
         {navLink('/autonomy', Bot, 'Studio', 'text-accent')}
         {navLink('/memory', Brain, 'Memory', 'text-accent')}
-        <p className="px-3 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">More</p>
+        <p className="px-3 pt-2 pb-0.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">More</p>
         {navLink('/activity', ActivityIcon, 'Activity')}
         {navLink('/system', Network, 'System · diagnostics', null, 'Ledger, telemetry, and laws')}
         {navLink('/about', Cpu, 'About COGNOS', 'text-primary')}

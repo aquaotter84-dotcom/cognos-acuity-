@@ -130,7 +130,7 @@ function QueueStrip({ queue, onResume }) {
         <button
           type="button"
           onClick={onResume}
-          className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary hover:bg-primary/20 active:bg-primary/25 text-xs font-medium px-2.5 py-1 transition-colors shrink-0"
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary/10 text-primary hover:bg-primary/20 active:bg-primary/25 text-sm font-medium px-3 py-2 transition-colors shrink-0"
         >
           <Play className="w-3 h-3" aria-hidden />
           Send queued
@@ -144,7 +144,7 @@ function QueueStrip({ queue, onResume }) {
               type="button"
               onClick={() => queue.remove(m.id)}
               aria-label="Remove queued message"
-              className="p-1 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 active:bg-destructive/20 transition-colors shrink-0"
+              className="min-w-11 min-h-11 p-2 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 active:bg-destructive/20 transition-colors shrink-0"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -158,6 +158,7 @@ function QueueStrip({ queue, onResume }) {
 export default function ChatInput({
   onSend,
   disabled,
+  setupRequired = false,
   isProcessing,
   onStop,
   conversationId,
@@ -219,7 +220,7 @@ export default function ChatInput({
         {sources.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-1 pb-2">
             {sources.map(source => (
-              <span key={source.id} className="inline-flex items-center gap-1 max-w-[220px] rounded-md bg-primary/10 text-primary px-2 py-1 text-[10px]">
+              <span key={source.id} className="inline-flex items-center gap-1 max-w-[220px] rounded-md bg-primary/10 text-primary px-2 py-1 text-xs">
                 {source.kind === 'link' ? <LinkIcon className="w-3 h-3 shrink-0" /> : <FileText className="w-3 h-3 shrink-0" />}
                 <span className="truncate">{source.name}</span>
                 <button
@@ -243,8 +244,11 @@ export default function ChatInput({
           />
           {micSupported && (
             <button
+              type="button"
               onClick={() => (listening ? stop() : startDictation())}
-              className={`p-2 rounded-xl transition-colors ${listening ? 'bg-destructive text-destructive-foreground animate-pulse' : 'text-muted-foreground hover:text-foreground'}`}
+              disabled={disabled}
+              aria-label={listening ? 'Stop dictation' : 'Dictate a message'}
+              className={`min-w-11 min-h-11 p-2 rounded-xl transition-colors disabled:opacity-30 ${listening ? 'bg-destructive text-destructive-foreground animate-pulse' : 'text-muted-foreground hover:text-foreground'}`}
               title={listening ? 'Stop listening' : 'Speak'}
             >
               {listening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
@@ -255,16 +259,18 @@ export default function ChatInput({
             value={displayText}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Message COGNOS..."
+            disabled={disabled}
+            aria-label="Message COGNOS"
+            placeholder={setupRequired ? 'Connect AI in Settings…' : 'Message COGNOS…'}
             rows={1}
-            className="flex-1 bg-transparent resize-none outline-none text-base md:text-sm py-2 placeholder:text-muted-foreground/60 scrollbar-thin"
+            className="flex-1 min-h-11 bg-transparent resize-none outline-none text-base py-2.5 placeholder:text-muted-foreground disabled:cursor-not-allowed scrollbar-thin"
           />
           {isProcessing ? (
-            <button onClick={onStop} className="p-2 rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors" title="Stop">
+            <button type="button" onClick={onStop} aria-label="Stop response" className="min-w-11 min-h-11 p-2 rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors" title="Stop response">
               <Square className="w-4 h-4" />
             </button>
           ) : (
-            <button onClick={handleSend} disabled={disabled || !text.trim()} className="p-2 rounded-xl bg-primary text-primary-foreground disabled:opacity-30 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors">
+            <button type="button" onClick={handleSend} disabled={disabled || !text.trim()} aria-label="Send message" className="min-w-11 min-h-11 p-2 rounded-xl bg-primary text-primary-foreground disabled:opacity-30 disabled:cursor-not-allowed hover:bg-primary/90 transition-colors" title="Send message">
               <Send className="w-4 h-4" />
             </button>
           )}

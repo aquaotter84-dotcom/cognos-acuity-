@@ -4,6 +4,7 @@
 // workspace instructions editor (which feeds buildContextSystemPrompt verbatim),
 // local browser voice preferences, and runtime status from /api/health.
 import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Settings as SettingsIcon, Menu, Check, X, Square, Volume2, ShieldAlert, Scale, Trash2, Sun, Moon, Database, Pencil, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Pill } from '@/components/system/SystemUi';
@@ -26,11 +27,11 @@ function GovernanceToggle({ label, hint, on, canToggle, refusal, busy, onFlip })
       <div className="min-w-0">
         <p className="font-medium text-foreground/90 flex items-center gap-1.5">
           {label}
-          {on ? <span className="text-[10px] text-ok">on</span> : <span className="text-[10px] text-destructive">off</span>}
+          {on ? <span className="text-xs text-ok">on</span> : <span className="text-xs text-destructive">off</span>}
         </p>
-        <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">{hint}</p>
+        <p className="text-[13px] text-muted-foreground mt-0.5 leading-snug">{hint}</p>
         {!canToggle && refusal && (
-          <p className="text-[10px] text-muted-foreground mt-0.5">{refusal.message}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{refusal.message}</p>
         )}
       </div>
       <button
@@ -115,18 +116,18 @@ function CouncilHandover() {
           ? <Pill tone="ok">handed over</Pill>
           : <Pill tone="info">handed over — restart pending</Pill>}
         {!sw.delegated && (
-          <span className="text-[10px] text-muted-foreground">Close and reopen the app to use the switches.</span>
+          <span className="text-xs text-muted-foreground">Close and reopen the app to use the switches.</span>
         )}
         {sw.fileDelegated ? (
           <button
             onClick={takeBack}
             disabled={busy}
-            className="text-[10px] text-muted-foreground underline hover:text-foreground disabled:opacity-40"
+            className="text-xs text-muted-foreground underline hover:text-foreground disabled:opacity-40"
           >
             {busy ? 'Taking back…' : 'Take them back'}
           </button>
         ) : (
-          <span className="text-[10px] text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             Handed over by the environment — this page can&rsquo;t take them back.
           </span>
         )}
@@ -136,23 +137,23 @@ function CouncilHandover() {
 
   return (
     <div className="rounded-lg border border-border bg-background/60 p-3">
-      <p className="text-[11px] font-semibold flex items-center gap-1.5">
+      <p className="text-[13px] font-semibold flex items-center gap-1.5">
         <Scale className="w-3.5 h-3.5 text-muted-foreground" />
         The switches are held back
       </p>
-      <p className="text-[10px] text-muted-foreground mt-1 leading-relaxed">
+      <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
         The Critic and Governor switches are held back until the operator hands them over.
         On this phone, you&rsquo;re the operator — tap to hand the switches to this page.
         It takes effect when you close and reopen the app. The handover only hands over
         the switches: both seats rest <strong>on</strong>, and an operator pin (a real
         environment variable, if one is ever set) still outranks everything.
       </p>
-      {error && <p className="text-[10px] text-destructive mt-1.5">{error}</p>}
+      {error && <p className="text-xs text-destructive mt-1.5">{error}</p>}
       <div className="mt-2">
         <button
           onClick={handOver}
           disabled={busy}
-          className="rounded-lg bg-primary text-primary-foreground px-2.5 py-1.5 text-[11px] disabled:opacity-40"
+          className="rounded-lg bg-primary text-primary-foreground px-2.5 py-1.5 text-[13px] disabled:opacity-40"
         >
           {busy ? 'Handing over…' : (sw.cta || 'Hand me the council switches')}
         </button>
@@ -167,9 +168,17 @@ function CouncilHandover() {
  *  /v1/models, cached an hour, refreshable) — no more typing model ids, and
  *  new models show up without another release. Keys and endpoint URLs stay
  *  keyed in: they are never shown, edited, or offered here. */
-function ModelSection({ onChanged }) {
+function ModelSection({ onChanged, modelKeyConfigured }) {
   return (
-    <SectionCard title="AI models" bodyClassName="space-y-5 text-sm">
+    <SectionCard id="ai-models" title="AI models" bodyClassName="space-y-5 text-sm">
+      {modelKeyConfigured === false && (
+        <div className="rounded-xl border border-warn/30 bg-warn/10 p-3.5">
+          <p className="font-semibold text-foreground">Connect your AI provider</p>
+          <p className="mt-1 text-muted-foreground leading-relaxed">
+            Add <code className="rounded bg-background/70 px-1.5 py-0.5 text-xs">BLUESMINDS_API_KEY</code> or <code className="rounded bg-background/70 px-1.5 py-0.5 text-xs">OPENAI_API_KEY</code> to the server environment, then restart COGNOS. Your key stays on the server and is never shown here.
+          </p>
+        </div>
+      )}
       <ModelPicker
         title="Answering model"
         blurb="The main brain — the one that talks to you."
@@ -289,7 +298,7 @@ function ModelPicker({ title, blurb, statusFn, setFn, clearFn, onChanged }) {
   return (
     <div className="space-y-2">
       <p className="font-medium text-foreground/90">{title}</p>
-      <p className="text-muted-foreground/70 leading-relaxed">{blurb}</p>
+      <p className="text-muted-foreground leading-relaxed">{blurb}</p>
       <p className="text-muted-foreground">
         Current: <span className="break-all text-foreground/80">{current}{status.isDefault ? ' (default)' : ''}</span>
       </p>
@@ -310,7 +319,7 @@ function ModelPicker({ title, blurb, statusFn, setFn, clearFn, onChanged }) {
       {open && (
         <div className="rounded-lg border border-border bg-background/60 p-2 space-y-1 max-h-64 overflow-y-auto">
           <div className="flex items-center justify-between px-1 py-1">
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {catalog?.loading ? 'Loading the catalog…'
                 : catalog?.error ? 'The live catalog is unavailable'
                 : `${models.length} models${catalog?.cached ? ' · cached' : ''}`}
@@ -318,15 +327,15 @@ function ModelPicker({ title, blurb, statusFn, setFn, clearFn, onChanged }) {
             {!catalog?.loading && (
               <button
                 onClick={() => loadCatalog(true)}
-                className="text-[10px] text-primary hover:underline"
+                className="text-xs text-primary hover:underline"
               >
                 Refresh
               </button>
             )}
           </div>
-          {catalog?.loading && <p className="text-[11px] text-muted-foreground px-1 py-2">Fetching the latest from your provider…</p>}
+          {catalog?.loading && <p className="text-[13px] text-muted-foreground px-1 py-2">Fetching the latest from your provider…</p>}
           {catalog?.error && (
-            <p className="text-[11px] text-muted-foreground px-1 py-2 leading-relaxed">
+            <p className="text-[13px] text-muted-foreground px-1 py-2 leading-relaxed">
               {catalog.error} You can still type a model id below.
             </p>
           )}
@@ -335,7 +344,7 @@ function ModelPicker({ title, blurb, statusFn, setFn, clearFn, onChanged }) {
               key={id}
               onClick={() => choose(id)}
               disabled={busy}
-              className={`w-full text-left px-2.5 py-2 rounded-lg text-[11px] font-mono break-all transition-colors disabled:opacity-50 ${
+              className={`w-full text-left px-2.5 py-2 rounded-lg text-[13px] font-mono break-all transition-colors disabled:opacity-50 ${
                 id === current ? 'bg-primary/15 text-primary' : 'hover:bg-muted/60 text-foreground/80'
               }`}
             >
@@ -493,7 +502,7 @@ function DatabaseSection({ onChanged }) {
             {message && (
               <p className={message.ok ? 'text-ok' : 'text-destructive'}>{message.text}</p>
             )}
-            <p className="text-muted-foreground/60 leading-relaxed">
+            <p className="text-muted-foreground leading-relaxed">
               The URL is stored privately inside the app — no other app can read it. Supabase:
               Project Settings → Database → Connection string (Session pooler mode).
             </p>
@@ -592,12 +601,12 @@ function PersonasSection() {
                   <div className="min-w-0">
                     <p className="font-medium text-foreground/90 flex items-center gap-2">
                       {p.name}
-                      {p.builtin && <span className="text-[10px] text-muted-foreground font-normal">built-in</span>}
-                      {p.id === activeId && <span className="text-[10px] text-ok">active</span>}
+                      {p.builtin && <span className="text-xs text-muted-foreground font-normal">built-in</span>}
+                      {p.id === activeId && <span className="text-xs text-ok">active</span>}
                     </p>
                     {p.description && <p className="text-muted-foreground mt-0.5 leading-snug">{p.description}</p>}
                     {p.voice && p.voice.voiceURI && (
-                      <p className="text-muted-foreground/70 mt-0.5 leading-snug">
+                      <p className="text-muted-foreground mt-0.5 leading-snug">
                         Spoken voice: {voiceLabel(p.voice.voiceURI)}
                       </p>
                     )}
@@ -702,7 +711,7 @@ function PersonaEditor({ initial, busy, onCancel, onSave }) {
         </Select>
       </Field>
       {initial?.builtin && (
-        <p className="text-muted-foreground/70 leading-relaxed">Built-in personas can be tuned but not deleted.</p>
+        <p className="text-muted-foreground leading-relaxed">Built-in personas can be tuned but not deleted.</p>
       )}
       {formError && <p className="text-destructive">{formError}</p>}
       <div className="flex gap-2">
@@ -718,6 +727,7 @@ function PersonaEditor({ initial, busy, onCancel, onSave }) {
 }
 
 export default function Settings() {
+  const location = useLocation();
   const { activeWorkspace, setActiveWorkspace, openSidebar } = useCognos();
   const voice = useVoice();
   const [name, setName] = useState('');
@@ -764,6 +774,11 @@ export default function Settings() {
 
   useEffect(() => { api.health().then(setHealth).catch(() => {}); }, []);
   useEffect(() => {
+    if (location.hash === '#ai-models') {
+      document.getElementById('ai-models')?.scrollIntoView({ block: 'start' });
+    }
+  }, [location.hash]);
+  useEffect(() => {
     api.councilSettings().then(setCouncil).catch(() => setCouncil(null));
   }, []);
 
@@ -803,7 +818,7 @@ export default function Settings() {
   return (
     <div className="flex flex-col h-full min-h-0">
       <header className="flex items-center gap-2 px-3 md:px-4 py-3 border-b border-border shrink-0" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}>
-        <button onClick={openSidebar} className="md:hidden p-2 -ml-2 rounded-lg hover:bg-muted"><Menu className="w-5 h-5" /></button>
+        <button aria-label="Open navigation" onClick={openSidebar} className="md:hidden p-2 -ml-2 rounded-lg hover:bg-muted"><Menu className="w-5 h-5" /></button>
         <SettingsIcon className="w-4 h-4 text-muted-foreground" />
         <h2 className="text-sm font-medium">Settings</h2>
       </header>
@@ -822,7 +837,7 @@ export default function Settings() {
             </Btn>
           </SectionCard>
 
-          <ModelSection onChanged={() => api.health().then(setHealth).catch(() => {})} />
+          <ModelSection modelKeyConfigured={health?.modelKeyConfigured} onChanged={() => api.health().then(setHealth).catch(() => {})} />
 
           <AppUpdatesSection />
 
@@ -859,7 +874,7 @@ export default function Settings() {
                     Speech output is not available on this device.
                     COGNOS will continue to work normally in text mode.
                   </p>
-                  <p className="text-[11px] text-muted-foreground/60 font-mono leading-relaxed">
+                  <p className="text-[13px] text-muted-foreground font-mono leading-relaxed">
                     probe: native {(voice.probe?.isNative) ? 'yes' : 'no'}
                     {' · '}plugin {(voice.probe?.plugin) ? 'yes' : 'no'}
                     {' · '}voices {voice.probe?.voices ?? 0}
@@ -872,7 +887,7 @@ export default function Settings() {
                   {voice.engine === 'native' && voice.voices.length === 0 && (
                     <div className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2.5">
                       <p className="font-medium text-foreground/90">No voice data on this device yet</p>
-                      <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+                      <p className="text-[13px] text-muted-foreground mt-0.5 leading-relaxed">
                         The speech engine is ready, but this phone has no voices installed.
                         Install the system voice data, then pick a voice below.
                       </p>
@@ -886,7 +901,7 @@ export default function Settings() {
                       </Btn>
                       {voiceInstallHint && (
                         <div className="mt-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 flex items-start gap-2">
-                          <p className="text-[11px] text-muted-foreground leading-relaxed flex-1">
+                          <p className="text-[13px] text-muted-foreground leading-relaxed flex-1">
                             The installer didn't open, so here's the manual path: open your phone's{' '}
                             <span className="text-foreground/80">Settings</span>, search{' '}
                             <span className="text-foreground/80">Text-to-speech</span>, tap{' '}
@@ -909,7 +924,7 @@ export default function Settings() {
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <p className="font-medium text-foreground/90">Voice mode</p>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">Speak governed answers automatically after the Governor approves them.</p>
+                      <p className="text-[13px] text-muted-foreground mt-0.5">Speak governed answers automatically after the Governor approves them.</p>
                     </div>
                     <button
                       type="button"
@@ -933,7 +948,7 @@ export default function Settings() {
                     Automatically speak each new final response while voice mode is on
                   </label>
 
-                  <label className="block text-[11px] text-muted-foreground">
+                  <label className="block text-[13px] text-muted-foreground">
                     {voice.engine === 'native' ? 'Device voice' : 'Browser voice'}
                     <Select
                       value={voice.settings.voiceURI}
@@ -957,14 +972,14 @@ export default function Settings() {
                       >
                         Install voice data
                       </Btn>
-                      <p className="text-[10px] text-muted-foreground/60 flex-1 min-w-[12rem]">
+                      <p className="text-xs text-muted-foreground flex-1 min-w-[12rem]">
                         Opens the system installer if this device is missing voice data for its on-device voices.
                       </p>
                     </div>
                   )}
 
                   <div className="grid sm:grid-cols-3 gap-4">
-                    <label className="text-[11px] text-muted-foreground">
+                    <label className="text-[13px] text-muted-foreground">
                       Speed <span className="float-right tabular-nums text-foreground/80">{voice.settings.rate.toFixed(2)}×</span>
                       <input
                         type="range" min="0.6" max="1.6" step="0.05"
@@ -973,7 +988,7 @@ export default function Settings() {
                         className="mt-2 w-full accent-[hsl(var(--accent))]"
                       />
                     </label>
-                    <label className="text-[11px] text-muted-foreground">
+                    <label className="text-[13px] text-muted-foreground">
                       Pitch <span className="float-right tabular-nums text-foreground/80">{voice.settings.pitch.toFixed(2)}</span>
                       <input
                         type="range" min="0.7" max="1.3" step="0.05"
@@ -982,7 +997,7 @@ export default function Settings() {
                         className="mt-2 w-full accent-[hsl(var(--accent))]"
                       />
                     </label>
-                    <label className="text-[11px] text-muted-foreground">
+                    <label className="text-[13px] text-muted-foreground">
                       Volume <span className="float-right tabular-nums text-foreground/80">{Math.round(voice.settings.volume * 100)}%</span>
                       <input
                         type="range" min="0" max="1" step="0.05"
@@ -1004,7 +1019,7 @@ export default function Settings() {
                       {voice.speakingId === 'voice-preview' ? <Square className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
                       {voice.speakingId === 'voice-preview' ? 'Stop preview' : 'Test voice'}
                     </Btn>
-                    <p className="text-[10px] text-muted-foreground/60 flex-1 min-w-[12rem]">
+                    <p className="text-xs text-muted-foreground flex-1 min-w-[12rem]">
                       {voice.engine === 'native'
                         ? 'On-device playback: no audio is uploaded, stored, or sent to a separate speech provider.'
                         : 'Browser-native playback: no audio is uploaded, stored, or sent to a separate speech provider.'}
@@ -1020,12 +1035,12 @@ export default function Settings() {
                     >
                       {ttsDiagBusy ? 'Running diagnostic…' : 'Run TTS diagnostic'}
                     </Btn>
-                    <p className="text-[10px] text-muted-foreground/60 flex-1 min-w-[12rem]">
+                    <p className="text-xs text-muted-foreground flex-1 min-w-[12rem]">
                       Asks the phone directly what its text-to-speech engine sees, bypassing the voice plugin.
                     </p>
                   </div>
                   {ttsDiag && (
-                    <pre className="text-[10px] font-mono text-muted-foreground bg-muted/40 rounded-lg px-3 py-2.5 overflow-x-auto whitespace-pre-wrap break-all">
+                    <pre className="text-xs font-mono text-muted-foreground bg-muted/40 rounded-lg px-3 py-2.5 overflow-x-auto whitespace-pre-wrap break-all">
                       {JSON.stringify(ttsDiag, null, 2)}
                     </pre>
                   )}
@@ -1068,7 +1083,7 @@ export default function Settings() {
               />
 
               {council?.governorEnabled === false && (
-                <p className="flex items-start gap-2 text-[11px] leading-relaxed text-warn bg-warn/10 border border-warn/30 rounded-lg px-3 py-2">
+                <p className="flex items-start gap-2 text-[13px] leading-relaxed text-warn bg-warn/10 border border-warn/30 rounded-lg px-3 py-2">
                   <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   <span>
                     The Governor is off. Nothing deterministic is vetoing answers anymore — empty responses,
@@ -1113,12 +1128,12 @@ export default function Settings() {
                   </Disclosure>
                 </>
               ) : <p className="text-muted-foreground">Loading…</p>}
-              <p className="text-muted-foreground/60 mt-3 leading-relaxed">
+              <p className="text-muted-foreground mt-3 leading-relaxed">
                 Secrets are read from server environment variables and are never sent to the browser.
               </p>
           </SectionCard>
 
-          <p className="text-center text-[11px] text-muted-foreground/50 pb-2">
+          <p className="text-center text-[13px] text-muted-foreground pb-2">
             COGNOS · build autonomy-switches · 2026-09-30
           </p>
         </div>

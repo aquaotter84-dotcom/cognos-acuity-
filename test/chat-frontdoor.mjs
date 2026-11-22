@@ -26,6 +26,8 @@ const chatInput = readSrc("src/components/chat/ChatInput.jsx");
 const sourceComposer = readSrc("src/components/chat/SourceComposer.jsx");
 const chatMessage = readSrc("src/components/chat/ChatMessage.jsx");
 const welcome = readSrc("src/components/chat/WelcomeScreen.jsx");
+const ui = readSrc("src/components/ui/CognosUi.jsx");
+const settings = readSrc("src/pages/Settings.jsx");
 const researchCard = readSrc("src/components/chat/ResearchDecisionCard.jsx");
 const mobileNav = readSrc("src/components/chat/MobileNav.jsx");
 const pkg = JSON.parse(readSrc("package.json"));
@@ -84,7 +86,10 @@ await test("choices persist: device-local settings and the server-side persona",
   }
   assert.ok(chatJsx.includes("api.activatePersona"), "persona choice persists server-side");
   assert.ok(controls.includes('role="dialog"'), "sheet is a dialog");
-  assert.ok(controls.includes("Escape"), "sheet closes on Escape");
+  assert.ok(controls.includes("useDialogFocus(open, onClose)"), "sheet uses the shared dialog focus hook");
+  assert.ok(ui.includes("event.key === 'Escape'"), "shared dialog handling closes on Escape");
+  assert.ok(ui.includes("event.key !== 'Tab'"), "shared dialog handling traps Tab");
+  assert.ok(ui.includes("previous.focus()"), "shared dialog handling restores focus");
 });
 
 await test("the agent-mode selector left the composer row", async () => {
@@ -101,13 +106,28 @@ await test("the agent-mode selector left the composer row", async () => {
 // ---------------------------------------------------------------------------
 
 await test("first-run is welcoming and plain-spoken", async () => {
-  assert.ok(welcome.includes("Welcome to COGNOS"), "welcome headline");
+  assert.ok(welcome.includes("What are you working through?"), "welcome headline invites a real task");
   assert.ok(welcome.includes("shows its work"), "says what it does in plain words");
-  assert.ok(welcome.includes("asks you before it opens a thing"), "consent-first promise up front");
-  assert.ok(welcome.includes("choices under the header"), "points at the consolidated controls");
+  assert.ok(welcome.includes("asks before researching beyond your conversation"), "consent-first promise up front");
+  assert.ok(welcome.includes("choices above"), "points at the consolidated controls");
   for (const jargon of ["council", "SSE", "Governor", "PGlite"]) {
     assert.ok(!welcome.toLowerCase().includes(jargon.toLowerCase()), `no jargon on the welcome screen: ${jargon}`);
   }
+});
+
+await test("missing AI credentials lead to an honest setup path, never a fake browser key field", async () => {
+  assert.ok(chatJsx.includes("api.health()"), "chat checks real server health");
+  assert.ok(chatJsx.includes("health?.modelKeyConfigured"), "setup state comes from model configuration");
+  assert.ok(chatJsx.includes("setupRequired={modelConfigured === false}"), "composer receives the setup state");
+  assert.ok(chatJsx.includes("disabled={!activeWorkspace || modelConfigured === false}"), "composer cannot send without a configured model");
+  assert.ok(welcome.includes("Connect COGNOS to an AI model"), "first-run setup has a clear title");
+  assert.ok(welcome.includes("Open AI settings"), "setup has a direct settings action");
+  assert.ok(welcome.includes("Check again"), "setup can recheck after server configuration");
+  assert.ok(welcome.includes("Credentials stay on your server"), "credential handling is explained");
+  assert.ok(settings.includes('id="ai-models"'), "settings has the AI deep-link target");
+  assert.ok(settings.includes("location.hash === '#ai-models'"), "settings recognizes the AI deep-link hash");
+  assert.ok(settings.includes("document.getElementById('ai-models')?.scrollIntoView({ block: 'start' })"), "settings scrolls the AI section into view");
+  assert.ok(!welcome.includes("BLUESMINDS_API_KEY") && !chatInput.includes("BLUESMINDS_API_KEY"), "raw setup errors stay out of the welcome and composer");
 });
 
 await test("the Orbit face is untouched: same mark, same orbit classes", async () => {
@@ -119,7 +139,7 @@ await test("the Orbit face is untouched: same mark, same orbit classes", async (
 });
 
 await test("welcome centers when it fits but never clips its top on short screens", async () => {
-  assert.ok(welcome.includes('className="flex min-h-full px-4 py-8 animate-fade-in"'), "outer flow grows past the viewport instead of forcing a fixed height");
+  assert.ok(welcome.includes('className="flex min-h-full px-4 py-5 md:py-8 animate-fade-in"'), "outer flow grows past the viewport instead of forcing a fixed height");
   assert.ok(welcome.includes('className="m-auto flex w-full max-w-2xl flex-col items-center"'), "auto margins center only when free space exists");
   assert.ok(!welcome.includes("justify-center h-full"), "unsafe fixed-height centering is gone");
   assert.ok(!welcome.includes("overflow-y-auto"), "the existing conversation scroll container owns scrolling");
@@ -160,6 +180,13 @@ await test("failed turns render a calm error card with a retry", async () => {
   const retryCount = (chatJsx.match(/retryText: text/g) || []).length;
   assert.ok(retryCount >= 2, `retryText attached on both error paths (found ${retryCount})`);
   assert.ok(!chatJsx.includes("The council could not answer"), "the old alarming error copy is gone");
+});
+
+await test("provider setup failures explain the next step and hide raw diagnostics", async () => {
+  assert.ok(chatMessage.includes("COGNOS needs an AI connection."), "missing-key error gets a human title");
+  assert.ok(chatMessage.includes("/settings#ai-models"), "the error links directly to AI settings");
+  assert.ok(chatMessage.includes("Technical details"), "raw provider diagnostics stay disclosed");
+  assert.ok(chatMessage.includes("needsAiSetup"), "only provider configuration errors use the setup branch");
 });
 
 await test("error content stays clean server-side; old rows are stripped client-side", async () => {

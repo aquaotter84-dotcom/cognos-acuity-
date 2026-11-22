@@ -70,13 +70,13 @@ export default function GoalCard({ detail, busy, error, carried, onDecision, onP
               {goalStatusLabel(goal.status)}
             </Pill>
             {goal.park_reason && (
-              <span className="text-[10px] text-muted-foreground font-normal" title={String(goal.park_reason)}>
+              <span className="text-xs text-muted-foreground font-normal" title={String(goal.park_reason)}>
                 {parkReasonLabel(goal.park_reason)}
               </span>
             )}
-            {error && <span className="text-[10px] text-destructive font-normal">{error}</span>}
+            {error && <span className="text-xs text-destructive font-normal">{error}</span>}
           </h3>
-          <p className="text-[11px] text-muted-foreground tabular-nums">
+          <p className="text-[13px] text-muted-foreground tabular-nums">
             {findings.length} finding{findings.length === 1 ? '' : 's'} · {workers.length} worker{workers.length === 1 ? '' : 's'} · {openPromotions.length} open promotion{openPromotions.length === 1 ? '' : 's'} ·{' '}
             {Number(spent.steps || 0)} steps{budget.maxSteps ? ` / ${budget.maxSteps}` : ''}
           </p>
@@ -91,7 +91,7 @@ export default function GoalCard({ detail, busy, error, carried, onDecision, onP
       {open && (
         <div className="px-4 py-3 space-y-3 max-h-96 overflow-y-auto">
           {carried?.applied?.length > 0 && (
-            <p className="flex items-start gap-1.5 text-[11px] text-green-600 dark:text-green-400 bg-green-500/10 rounded-lg px-2.5 py-2">
+            <p className="flex items-start gap-1.5 text-[13px] text-green-600 dark:text-green-400 bg-green-500/10 rounded-lg px-2.5 py-2">
               <Sprout className="w-3.5 h-3.5 mt-0.5 shrink-0" />
               <span>
                 The last answer carried {carried.applied.length} finding{carried.applied.length === 1 ? '' : 's'} into memory
@@ -106,7 +106,7 @@ export default function GoalCard({ detail, busy, error, carried, onDecision, onP
               <p className="text-xs font-semibold flex items-center gap-1.5">
                 <ClipboardCheck className="w-3.5 h-3.5 text-accent" /> This goal is waiting for you
               </p>
-              <p className="text-[10px] text-muted-foreground mt-1 leading-relaxed">
+              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
                 Nothing runs until you authorize it. Authorizing records the hash of this scope and
                 budget — the goal can never widen either without a new decision from you.
               </p>
@@ -145,19 +145,19 @@ export default function GoalCard({ detail, busy, error, carried, onDecision, onP
           {/* ---- findings, with locators ---- */}
           {findings.length > 0 && (
             <div>
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1.5">
                 Findings — cite by locator, never by paraphrase
               </p>
               <ul className="space-y-1">
                 {findings.slice(0, 5).map(note => (
-                  <li key={note.id} className="flex items-start gap-2 text-[11px] rounded-lg border border-border px-2.5 py-2">
+                  <li key={note.id} className="flex items-start gap-2 text-[13px] rounded-lg border border-border px-2.5 py-2">
                     <span className="font-mono text-[9px] text-primary mt-0.5 shrink-0">{noteLocator(goal.id, note.ordinal)}</span>
                     <span className="text-foreground/80 min-w-0">{note.body}</span>
                   </li>
                 ))}
               </ul>
               {findings.length > 5 && (
-                <p className="text-[10px] text-muted-foreground mt-1">+ {findings.length - 5} more on the Studio page.</p>
+                <p className="text-xs text-muted-foreground mt-1">+ {findings.length - 5} more on the Studio page.</p>
               )}
             </div>
           )}
@@ -165,12 +165,12 @@ export default function GoalCard({ detail, busy, error, carried, onDecision, onP
           {/* ---- narrow workers ---- */}
           {workers.length > 0 && (
             <div>
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1.5">
                 Workers — narrow subsets, carved budgets
               </p>
               <ul className="space-y-1">
                 {workers.map(w => (
-                  <li key={w.id} className="flex items-center gap-2 text-[11px] rounded-lg border border-border px-2.5 py-1.5">
+                  <li key={w.id} className="flex items-center gap-2 text-[13px] rounded-lg border border-border px-2.5 py-1.5">
                     <Bot className="w-3 h-3 text-muted-foreground shrink-0" />
                     <span className="truncate flex-1">{w.objective}</span>
                     <Pill tone={w.status === 'completed' ? STATUS_TONE.active : w.status === 'refused' ? STATUS_TONE.awaiting_authorization : undefined}>
@@ -185,7 +185,7 @@ export default function GoalCard({ detail, busy, error, carried, onDecision, onP
           {/* ---- the promotion barrier ---- */}
           {openPromotions.length > 0 && (
             <div>
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1.5">
                 Open promotions — nothing applies without you or a citing answer
               </p>
               <ul className="space-y-1.5">
@@ -193,18 +193,18 @@ export default function GoalCard({ detail, busy, error, carried, onDecision, onP
                   const note = promotionNote(p);
                   return (
                     <li key={p.id} className="rounded-lg border border-accent/30 px-2.5 py-2">
-                      <p className="text-[11px]">
+                      <p className="text-[13px]">
                         <span className="font-mono text-[9px] text-primary">{note ? noteLocator(goal.id, note.ordinal) : p.note_id}</span>
                         {' '}→ {p.target}
                         {note && <span className="text-muted-foreground"> · {note.body}</span>}
                       </p>
                       <div className="flex items-center gap-2 mt-1.5">
                         <button onClick={() => onPromotion(p.id, 'approve')} disabled={busy}
-                          className="flex items-center gap-1 rounded-lg bg-accent text-accent-foreground px-2 py-1 text-[10px] font-medium disabled:opacity-40">
+                          className="flex items-center gap-1 rounded-lg bg-accent text-accent-foreground px-2 py-1 text-xs font-medium disabled:opacity-40">
                           <Check className="w-3 h-3" /> Approve &amp; apply
                         </button>
                         <button onClick={() => onPromotion(p.id, 'refuse')} disabled={busy}
-                          className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40">
+                          className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40">
                           <X className="w-3 h-3" /> Refuse
                         </button>
                       </div>
@@ -215,7 +215,7 @@ export default function GoalCard({ detail, busy, error, carried, onDecision, onP
             </div>
           )}
 
-          <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
+          <p className="text-xs text-muted-foreground leading-relaxed">
             Promoted findings land as <em>inferred</em> with origin tags — never as direct memories.
             Ask about this goal and the council answers through the Governor, citing locators.
           </p>

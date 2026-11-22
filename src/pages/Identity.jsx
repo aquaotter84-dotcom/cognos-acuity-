@@ -113,17 +113,17 @@ function OperatorCard({ operator, index }) {
   return (
     <article className={`rounded-lg border p-3 ${sovereign ? 'border-primary/40 bg-primary/5' : 'border-border/70 bg-muted/15'}`}>
       <div className="flex items-start gap-2">
-        <span className={`w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-[10px] font-semibold ${sovereign ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+        <span className={`w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-xs font-semibold ${sovereign ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
           {index + 1}
         </span>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-xs font-semibold">{operator.name}</h3>
-            <span className="text-[10px] text-muted-foreground">{operator.role}</span>
+            <span className="text-xs text-muted-foreground">{operator.role}</span>
             {sovereign && <Pill tone="info">final authority</Pill>}
           </div>
-          <p className="text-[11px] text-foreground/80 leading-relaxed mt-1.5">{operator.operation}</p>
-          <p className="text-[10px] text-muted-foreground leading-relaxed mt-2"><strong className="text-foreground/60">Authority:</strong> {operator.authority}</p>
+          <p className="text-[13px] text-foreground/80 leading-relaxed mt-1.5">{operator.operation}</p>
+          <p className="text-xs text-muted-foreground leading-relaxed mt-2"><strong className="text-foreground/60">Authority:</strong> {operator.authority}</p>
         </div>
       </div>
     </article>
@@ -179,10 +179,10 @@ export default function Identity() {
   return (
     <div className="flex flex-col h-full min-h-0">
       <header className="flex items-center gap-2 px-3 md:px-4 py-3 border-b border-border shrink-0" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}>
-        <button onClick={openSidebar} className="md:hidden p-2 -ml-2 rounded-lg hover:bg-muted"><Menu className="w-5 h-5" /></button>
+        <button aria-label="Open navigation" onClick={openSidebar} className="md:hidden p-2 -ml-2 rounded-lg hover:bg-muted"><Menu className="w-5 h-5" /></button>
         <Cpu className="w-4 h-4 text-primary" />
         <h2 className="text-sm font-medium">About COGNOS</h2>
-        {identity && <span className="text-[10px] text-muted-foreground/60">self-model v{identity.version}</span>}
+        {identity && <span className="text-xs text-muted-foreground">self-model v{identity.version}</span>}
         <button onClick={load} className="ml-auto p-1.5 rounded-lg hover:bg-muted" title="Reload identity"><RefreshCw className={`w-4 h-4 ${busy ? 'animate-spin' : ''}`} /></button>
       </header>
 
@@ -204,7 +204,7 @@ export default function Identity() {
                     </div>
                     <p className="text-sm text-foreground/85 mt-1">{identity.kind}</p>
                     <p className="text-xs text-muted-foreground leading-relaxed mt-2 max-w-3xl">{identity.purpose}</p>
-                    <p className="text-[10px] text-muted-foreground/60 mt-3">
+                    <p className="text-xs text-muted-foreground mt-3">
                       This page, the chat self-description, and the API derive from one immutable server manifest. Runtime switches are reported separately from built-in abilities.
                     </p>
                   </div>
@@ -215,7 +215,7 @@ export default function Identity() {
                 <Card title="Identity rules" subtitle="What COGNOS says about itself—and what it will not pretend to be.">
                   <div className="space-y-2">
                     {(identity.identityRules || []).map(rule => (
-                      <div key={rule} className="flex items-start gap-2 text-[11px] leading-relaxed">
+                      <div key={rule} className="flex items-start gap-2 text-[13px] leading-relaxed">
                         <CheckCircle2 className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
                         <span>{rule}</span>
                       </div>
@@ -227,7 +227,7 @@ export default function Identity() {
                     {(identity.principles || []).map(principle => (
                       <div key={principle.id} className="rounded border border-border/70 p-2.5 bg-muted/15">
                         <div className="text-xs font-semibold">{principle.name}</div>
-                        <p className="text-[10px] text-muted-foreground mt-1 leading-relaxed">{principle.meaning}</p>
+                        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{principle.meaning}</p>
                       </div>
                     ))}
                   </div>
@@ -244,10 +244,10 @@ export default function Identity() {
                 <ol className="space-y-1">
                   {(identity.turnFlow || []).map(item => (
                     <li key={item.step} className="group flex gap-2.5 rounded-lg px-2 py-2 hover:bg-muted/20">
-                      <span className="w-6 h-6 rounded-md bg-muted flex items-center justify-center tabular-nums text-[10px] text-muted-foreground shrink-0">{item.step}</span>
+                      <span className="w-6 h-6 rounded-md bg-muted flex items-center justify-center tabular-nums text-xs text-muted-foreground shrink-0">{item.step}</span>
                       <div className="min-w-0">
                         <div className="flex items-center gap-1 text-xs font-medium"><ChevronRight className="w-3 h-3 text-primary" />{item.name}</div>
-                        <p className="text-[10px] text-muted-foreground leading-relaxed mt-0.5">{item.operation}</p>
+                        <p className="text-xs text-muted-foreground leading-relaxed mt-0.5">{item.operation}</p>
                       </div>
                     </li>
                   ))}
@@ -266,7 +266,7 @@ export default function Identity() {
                           <h3 className="text-xs font-semibold flex-1">{capability.name}</h3>
                           <Pill tone={status.tone}>{status.label}</Pill>
                         </div>
-                        <p className="text-[10px] text-muted-foreground leading-relaxed mt-2">{capability.operation}</p>
+                        <p className="text-xs text-muted-foreground leading-relaxed mt-2">{capability.operation}</p>
                       </article>
                     );
                   })}
@@ -283,7 +283,7 @@ export default function Identity() {
                           <Icon className="w-4 h-4 text-accent shrink-0 mt-0.5" />
                           <div>
                             <p className="text-xs font-medium">{subsystem.name}</p>
-                            <p className="text-[10px] text-muted-foreground leading-relaxed mt-0.5">{subsystem.operation}</p>
+                            <p className="text-xs text-muted-foreground leading-relaxed mt-0.5">{subsystem.operation}</p>
                           </div>
                         </div>
                       );
@@ -295,8 +295,8 @@ export default function Identity() {
                   <dl className="space-y-0.5">
                     {runtimeFacts.map(([label, value]) => (
                       <div key={label} className="flex justify-between gap-3 border-b border-border/50 py-1.5 last:border-0">
-                        <dt className="text-[10px] text-muted-foreground">{label}</dt>
-                        <dd className="text-[10px] text-right break-words">{String(value ?? '—')}</dd>
+                        <dt className="text-xs text-muted-foreground">{label}</dt>
+                        <dd className="text-xs text-right break-words">{String(value ?? '—')}</dd>
                       </div>
                     ))}
                   </dl>
@@ -306,7 +306,7 @@ export default function Identity() {
               <Card title="Hard boundaries and honest limits" subtitle="Knowing itself includes knowing what it cannot do or must never bypass.">
                 <div className="grid md:grid-cols-2 gap-x-4 gap-y-2">
                   {(identity.boundaries || []).map(boundary => (
-                    <div key={boundary} className="flex items-start gap-2 text-[10px] text-muted-foreground leading-relaxed">
+                    <div key={boundary} className="flex items-start gap-2 text-xs text-muted-foreground leading-relaxed">
                       <CircleSlash2 className="w-3.5 h-3.5 text-yellow-500 shrink-0 mt-0.5" />
                       <span>{boundary}</span>
                     </div>
@@ -316,7 +316,7 @@ export default function Identity() {
 
               <Card title="Implementation map" subtitle="Where each major part lives in the repository and what it owns.">
                 <div className="overflow-x-auto scrollbar-thin">
-                  <table className="w-full text-left text-[10px] min-w-[620px]">
+                  <table className="w-full text-left text-xs min-w-[620px]">
                     <thead className="text-muted-foreground uppercase tracking-wide">
                       <tr><th className="py-2 pr-3">Area</th><th className="py-2 pr-3">Location</th><th className="py-2">Responsibility</th></tr>
                     </thead>

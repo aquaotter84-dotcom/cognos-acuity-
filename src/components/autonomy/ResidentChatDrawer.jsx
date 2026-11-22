@@ -17,6 +17,7 @@ import { Bot, Loader2, MessageCircle, Send, Wrench, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { ErrorNote } from '@/components/system/SystemUi';
 import { ToolRunCard } from '@/components/autonomy/ResidentTools';
+import { useDialogFocus } from '@/components/ui/CognosUi';
 
 /** Suggested openers: the preferences that used to be switches, as sentences. */
 const SUGGESTIONS = [
@@ -27,7 +28,7 @@ const SUGGESTIONS = [
 ];
 
 function greetingFor(resident, goal) {
-  const name = resident?.name || 'this resident';
+  const name = resident?.name || 'this assistant';
   return goal
     ? `Talking about ${name} — and specifically “${goal.title}”. Ask about its work, its notes, what it found — or tell it plainly what to change: “skip the mornings”, “practice in the background”, “go ahead”.`
     : `Talking with ${name}. Ask what it's working on, what it found, what it's allowed to do — or tell it plainly what to change: “skip the mornings”, “stop the dreams”, “practice in the background”.`;
@@ -39,6 +40,7 @@ export default function ResidentChatDrawer({ open, onClose, resident, goal = nul
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const scrollRef = useRef(null);
+  const panelRef = useDialogFocus(open, onClose);
 
   // A fresh conversation every time the drawer opens.
   useEffect(() => {
@@ -50,13 +52,6 @@ export default function ResidentChatDrawer({ open, onClose, resident, goal = nul
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, busy]);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
 
   const send = useCallback(async (text) => {
     const content = (text ?? input).trim();
@@ -105,14 +100,14 @@ export default function ResidentChatDrawer({ open, onClose, resident, goal = nul
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-label={`Talk with ${resident?.name || 'resident'}`}>
+    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={`Talk with ${resident?.name || 'assistant'}`}>
       <button
         className="absolute inset-0 bg-black/50"
         onClick={onClose}
         aria-label="Close the conversation"
         tabIndex={-1}
       />
-      <div className="relative flex flex-col w-full max-w-xl h-full bg-background border-l border-border shadow-2xl">
+      <div ref={panelRef} tabIndex={-1} className="relative flex flex-col w-full max-w-xl h-full bg-background border-l border-border shadow-2xl">
         <header className="flex items-start gap-2 px-4 py-3 border-b border-border shrink-0">
           <Bot className="w-4 h-4 text-primary mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
@@ -120,7 +115,7 @@ export default function ResidentChatDrawer({ open, onClose, resident, goal = nul
               <MessageCircle className="w-3.5 h-3.5 text-muted-foreground" />
               {resident?.name || 'Resident'}
             </h3>
-            <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+            <p className="text-[13px] text-muted-foreground mt-0.5 leading-snug">
               {goal ? `About “${goal.title}”` : 'About its work, its notes, and what it may do'}
               {' '}— a conversation, not a control panel. Clear requests (“skip the mornings”) are applied; everything else is talk.
             </p>
@@ -146,7 +141,7 @@ export default function ResidentChatDrawer({ open, onClose, resident, goal = nul
                   : 'bg-muted/60 border border-border/60'
               } ${m.failed ? 'opacity-60' : ''}`}>
                 {m.content}
-                {m.failed && <span className="block text-[10px] mt-1 opacity-70">didn't send</span>}
+                {m.failed && <span className="block text-xs mt-1 opacity-70">didn't send</span>}
               </div>
             </div>
             )
@@ -167,7 +162,7 @@ export default function ResidentChatDrawer({ open, onClose, resident, goal = nul
               <button
                 key={s}
                 onClick={() => send(s)}
-                className="rounded-full border border-border px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                className="rounded-full border border-border px-2.5 py-1 text-[13px] text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
               >
                 {s}
               </button>
@@ -183,7 +178,7 @@ export default function ResidentChatDrawer({ open, onClose, resident, goal = nul
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
-            placeholder={goal ? `Ask about “${goal.title}”…` : `Talk with ${resident?.name || 'this resident'}…`}
+            placeholder={goal ? `Ask about “${goal.title}”…` : `Talk with ${resident?.name || 'this assistant'}…`}
             className="flex-1 bg-muted/40 border border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-primary/60"
             disabled={busy}
           />

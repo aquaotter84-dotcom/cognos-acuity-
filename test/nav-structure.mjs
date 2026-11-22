@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // v50 — navigation restructure tests: structure-level proof that every route
 // is still reachable, the primary/secondary split is honored on both mobile
-// and desktop, the Studio tabs are grouped with a "Needs your attention"
-// landing, and no approval path got buried.
+// and desktop, Studio opens on "Waiting for you" with four everyday tabs and
+// collapsed Advanced controls, and no approval path got buried.
 //
 // These are source-structure tests (same pattern as test/studio.mjs):
 // they read the shipped sources and assert on what Jeremy would tap.
@@ -24,6 +24,7 @@ const appJsx = readSrc("src/App.jsx");
 const mobileNav = readSrc("src/components/chat/MobileNav.jsx");
 const sidebar = readSrc("src/components/chat/Sidebar.jsx");
 const autonomy = readSrc("src/pages/Autonomy.jsx");
+const designerDrawer = readSrc("src/components/autonomy/DesignerDrawer.jsx");
 const attentionRoute = readSrc("server/routes/autonomy.js");
 
 // ---------------------------------------------------------------------------
@@ -112,30 +113,44 @@ await test("desktop sidebar labels System as the diagnostic area", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Studio: grouped tabs with a "Needs your attention" landing
+// Studio: everyday tabs with a "Waiting for you" landing and Advanced controls
 // ---------------------------------------------------------------------------
 
 const tabIds = [...autonomy.matchAll(/\{ id: '([a-z]+)', label:/g)].map(m => m[1]);
 
 await test("Studio defines the attention landing tab first", async () => {
   assert.equal(tabIds[0], "attention", "attention is the first tab");
-  assert.match(autonomy, /\{ id: 'attention', label: 'Needs your attention'/, "attention tab is labeled 'Needs your attention'");
+  assert.match(autonomy, /\{ id: 'attention', label: 'Waiting for you'/, "attention tab is labeled 'Waiting for you'");
 });
 
 await test("Studio opens on the attention landing by default", async () => {
   assert.match(autonomy, /useState\('attention'\)/, "the default Studio tab is the attention landing");
 });
 
-await test("Studio groups cover every tab exactly once", async () => {
-  const gStart = autonomy.indexOf("const TAB_GROUPS");
-  const gEnd = autonomy.indexOf("];", gStart);
-  const groupsBlock = autonomy.slice(gStart, gEnd);
-  const grouped = [...groupsBlock.matchAll(/'([a-z]+)'/g)].map(m => m[1])
-    .filter(id => id !== "heading" && tabIds.includes(id));
-  assert.deepEqual([...grouped].sort(), [...tabIds].sort(), "every tab id appears in exactly one group");
-  const headings = [...groupsBlock.matchAll(/heading: '([^']+)'/g)].map(m => m[1]);
-  assert.ok(headings.length >= 4, `at least four labeled groups exist (found ${headings.length})`);
-  assert.ok(headings.includes("Start here"), "a 'Start here' group leads");
+await test("Studio splits four everyday tabs from Advanced and covers every tab exactly once", async () => {
+  const primaryMatch = autonomy.match(/const PRIMARY_TAB_IDS = \[([^\]]+)\]/);
+  const advancedMatch = autonomy.match(/const ADVANCED_TAB_IDS = \[([^\]]+)\]/);
+  assert.ok(primaryMatch && advancedMatch, "both navigation sets are defined");
+  const primary = [...primaryMatch[1].matchAll(/'([a-z]+)'/g)].map(m => m[1]);
+  const advanced = [...advancedMatch[1].matchAll(/'([a-z]+)'/g)].map(m => m[1]);
+  assert.deepEqual(primary, ["attention", "residents", "goals", "activity"], "everyday navigation stays short");
+  assert.deepEqual([...primary, ...advanced].sort(), [...tabIds].sort(), "every tab id appears exactly once");
+  assert.match(autonomy, /const \[advancedOpen, setAdvancedOpen\] = useState\(false\)/, "Advanced starts collapsed");
+  assert.match(autonomy, /\{PRIMARY_TAB_IDS\.map\(renderTab\)\}/, "only everyday tabs render in the primary row");
+  assert.match(autonomy, /\{ADVANCED_TAB_IDS\.map\(renderTab\)\}/, "Advanced renders every remaining destination");
+  assert.match(autonomy, /grid grid-cols-5 items-center gap-1 md:flex/, "all five everyday destinations fit on a phone");
+  assert.match(autonomy, /MOBILE_TAB_LABEL = \{ attention: 'Waiting' \}/, "the longest mobile label has a compact form");
+});
+
+await test("Advanced only references its controlled tab list while that list exists", async () => {
+  assert.match(autonomy, /aria-controls=\{advancedOpen \? 'studio-advanced-tabs' : undefined\}/, "collapsed Advanced has no dangling aria-controls");
+  assert.ok(!autonomy.includes('aria-controls="studio-advanced-tabs"'), "the unconditional ARIA relationship is gone");
+});
+
+await test("Studio task wording is consistent in designer and goal details", async () => {
+  assert.ok(designerDrawer.includes("First task — will wait for your authorization"), "designer calls the first goal a task");
+  assert.ok(autonomy.includes("Renaming never changes what the task may do or spend"), "task rename explains its fixed authority");
+  assert.ok(autonomy.includes("A task can never propose a draft answer"), "task findings remain distinct from answers");
 });
 
 await test("the attention landing renders the aggregate panel, not a new decision surface", async () => {
@@ -143,7 +158,8 @@ await test("the attention landing renders the aggregate panel, not a new decisio
   assert.ok(landingAt >= 0, "an attention content branch exists");
   const landingBlock = autonomy.slice(landingAt, landingAt + 1200);
   assert.match(landingBlock, /<AttentionPanel/, "the landing renders the AttentionPanel aggregate");
-  assert.match(landingBlock, /onJump=\{setTab\}/, "aggregate rows jump to the resolving tab in one tap");
+  assert.match(landingBlock, /onJump=\{openTab\}/, "aggregate rows open and jump to the resolving tab in one tap");
+  assert.match(autonomy, /if \(ADVANCED_TAB_IDS\.includes\(id\)\) setAdvancedOpen\(true\)/, "jumping to an approval tab reveals Advanced automatically");
 });
 
 await test("the attention panel appears exactly once (single landing)", async () => {
@@ -154,6 +170,9 @@ await test("the attention panel appears exactly once (single landing)", async ()
 await test("the attention aggregate covers all five waiting kinds from the server", async () => {
   for (const kind of ["awaiting_authorization", "staged_effect", "unread_notice", "open_promotion", "open_cleanup"]) {
     assert.match(attentionRoute, new RegExp(`kind: "${kind}"`), `server attention queue includes ${kind}`);
+  }
+  for (const label of ["Tasks need your approval", "Actions need your approval", "Updates to review", "Memories to review", "Memory cleanup to review"]) {
+    assert.ok(autonomy.includes(label), `plain-language queue label: ${label}`);
   }
 });
 

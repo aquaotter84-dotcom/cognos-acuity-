@@ -29,9 +29,9 @@ export default function ResearchDecisionCard({ runId, steps, busy, error, onAppr
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold flex items-center gap-2">
             Research plan — awaiting your approval
-            {error && <span className="text-[10px] text-destructive font-normal">{error}</span>}
+            {error && <span className="text-xs text-destructive font-normal">{error}</span>}
           </h3>
-          <p className="text-[11px] text-muted-foreground">
+          <p className="text-[13px] text-muted-foreground">
             The researcher proposes {steps?.length || 0} read-only step{steps?.length === 1 ? '' : 's'}. Nothing runs until you approve, and it can never release an answer by itself.
           </p>
         </div>
@@ -43,12 +43,12 @@ export default function ResearchDecisionCard({ runId, steps, busy, error, onAppr
           const url = input.url || '';
           return (
             <div key={step.id || step.ordinal} className="flex items-start gap-2 rounded-lg border border-border px-2.5 py-2">
-              <span className="text-[10px] font-bold text-muted-foreground mt-0.5 tabular-nums">{step.ordinal ?? '?'}</span>
+              <span className="text-xs font-bold text-muted-foreground mt-0.5 tabular-nums">{step.ordinal ?? '?'}</span>
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium text-primary break-all flex items-center gap-1">
                   <ExternalLink className="w-3 h-3 shrink-0" /> {url || step.tool_name}
                 </p>
-                {input.reason && <p className="text-[11px] text-muted-foreground mt-0.5">{input.reason}</p>}
+                {input.reason && <p className="text-[13px] text-muted-foreground mt-0.5">{input.reason}</p>}
               </div>
               <span className="text-[9px] uppercase tracking-wide text-amber-600 dark:text-amber-400 bg-amber-500/10 rounded px-1.5 py-0.5 shrink-0">
                 {step.requires_approval ? 'Approval' : 'Read'}
@@ -61,7 +61,7 @@ export default function ResearchDecisionCard({ runId, steps, busy, error, onAppr
           <button
             type="button"
             onClick={() => setExpanded(e => !e)}
-            className="w-full flex items-center justify-center gap-1 text-[11px] text-muted-foreground hover:text-foreground py-1.5 rounded-lg hover:bg-muted/40 transition-colors"
+            className="w-full flex items-center justify-center gap-1 text-[13px] text-muted-foreground hover:text-foreground py-1.5 rounded-lg hover:bg-muted/40 transition-colors"
             aria-expanded={expanded}
           >
             {expanded ? 'Show fewer steps' : `Show all ${steps.length} steps`}
@@ -71,7 +71,7 @@ export default function ResearchDecisionCard({ runId, steps, busy, error, onAppr
       </div>
 
       <div className="px-4 py-3 border-t border-border bg-muted/20">
-        <div className="flex items-center gap-2 text-[10px] text-muted-foreground mb-2.5">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2.5">
           <ShieldCheck className="w-3.5 h-3.5 text-green-500 shrink-0" />
           <span className="leading-tight">
             Approving opens only the exact URLs listed above via the protected fetcher (SSRF checks, size and time limits, injection screening).
@@ -112,7 +112,7 @@ export default function ResearchDecisionCard({ runId, steps, busy, error, onAppr
           </button>
         </div>
         {urls.length === 0 && !busy && (
-          <p className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400 mt-2">
+          <p className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 mt-2">
             <AlertTriangle className="w-3 h-3" /> No public URLs in this plan — approving records consent and finishes the run without fetching.
           </p>
         )}

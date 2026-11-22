@@ -77,7 +77,7 @@ export function ToolRunCard({ run }) {
         <Wrench className="w-3 h-3 text-muted-foreground shrink-0" />
         <span className="font-medium truncate flex-1">{run.tool_name || run.toolName || 'Tool'}</span>
         {run.method && (
-          <span className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono text-muted-foreground">
+          <span className="px-1.5 py-0.5 rounded bg-muted text-xs font-mono text-muted-foreground">
             {run.method}
           </span>
         )}
@@ -85,14 +85,14 @@ export function ToolRunCard({ run }) {
           {RUN_LABEL[run.status] || run.status}
         </Pill>
       </div>
-      {run.message && <p className="text-[11px] text-muted-foreground mt-1">{run.message}</p>}
-      {run.error && <p className="text-[11px] text-destructive/80 mt-1">{run.error}</p>}
+      {run.message && <p className="text-[13px] text-muted-foreground mt-1">{run.message}</p>}
+      {run.error && <p className="text-[13px] text-destructive/80 mt-1">{run.error}</p>}
       {run.output && (
-        <pre className="text-[10px] font-mono text-muted-foreground mt-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap break-words bg-background/60 rounded p-1.5">
+        <pre className="text-xs font-mono text-muted-foreground mt-1.5 max-h-32 overflow-y-auto whitespace-pre-wrap break-words bg-background/60 rounded p-1.5">
           {run.output}
         </pre>
       )}
-      <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground/70">
+      <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
         {run.created_date && <span>{timeAgo(run.created_date)}</span>}
         {run.latency_ms != null && <span>{run.latency_ms}ms</span>}
         {run.status_code != null && <span>→ {run.status_code}</span>}
@@ -160,7 +160,7 @@ function ToolForm({ initial, onSave, onCancel, busy }) {
         className="w-full bg-muted/40 border border-border rounded-lg px-2.5 py-2 text-xs font-mono outline-none focus:border-primary/60"
       />
       <div>
-        <p className="text-[10px] text-muted-foreground mb-1">
+        <p className="text-xs text-muted-foreground mb-1">
           Headers, one per line — <span className="font-mono">Name: value</span>.
           content-type, x-cognos-*, or x-api-key only.
         </p>
@@ -172,7 +172,7 @@ function ToolForm({ initial, onSave, onCancel, busy }) {
       </div>
       {method !== 'GET' && (
         <div>
-          <p className="text-[10px] text-muted-foreground mb-1">
+          <p className="text-xs text-muted-foreground mb-1">
             Body template — <span className="font-mono">{'{{name}}'}</span> fills in when it runs,
             <span className="font-mono">{' {{secret:NAME}} '}</span> pulls from Secrets below.
           </p>
@@ -184,11 +184,11 @@ function ToolForm({ initial, onSave, onCancel, busy }) {
         </div>
       )}
       <div className="rounded-lg border border-warn/30 bg-warn/5 p-2.5">
-        <p className="text-[11px] font-medium flex items-center gap-1.5">
+        <p className="text-[13px] font-medium flex items-center gap-1.5">
           <KeyRound className="w-3.5 h-3.5 text-warn" />
           Secrets — write-only
         </p>
-        <p className="text-[10px] text-muted-foreground mt-0.5 mb-1.5">
+        <p className="text-xs text-muted-foreground mt-0.5 mb-1.5">
           Typed once, never shown again — not here, not in run history, not in logs.
           Reference one as <span className="font-mono">{'{{secret:NAME}}'}</span> above.
         </p>
@@ -199,9 +199,9 @@ function ToolForm({ initial, onSave, onCancel, busy }) {
           className="w-full bg-background border border-border rounded-lg px-2.5 py-2 text-xs font-mono outline-none focus:border-primary/60 resize-none"
         />
         {(initial?.secret_names?.length > 0) && (
-          <p className="text-[10px] text-muted-foreground mt-1.5">
+          <p className="text-xs text-muted-foreground mt-1.5">
             Already stored: {initial.secret_names.map(n => (
-              <span key={n} className="font-mono px-1 py-0.5 rounded bg-muted text-[10px] mr-1">{n}</span>
+              <span key={n} className="font-mono px-1 py-0.5 rounded bg-muted text-xs mr-1">{n}</span>
             ))}
             — add a line above to replace one, or leave blank to keep them.
           </p>
@@ -257,7 +257,7 @@ function EmailToolForm({ initial, onSave, onCancel, busy }) {
   return (
     <div className="rounded-lg border border-border bg-background p-3 space-y-2.5">
       <div className="rounded-lg border border-border bg-muted/20 p-2.5">
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
+        <p className="text-[13px] leading-relaxed text-muted-foreground">
           Sends from your <span className="font-medium text-foreground">COGNOS Gmail</span> account —
           no API keys, no setup. <span className="font-medium text-foreground">Every send waits for
           your approval</span> in the Outbox, one at a time. Nothing ever goes out on its own.
@@ -274,7 +274,7 @@ function EmailToolForm({ initial, onSave, onCancel, busy }) {
         className={inputCls}
       />
       <div>
-        <p className="text-[10px] text-muted-foreground mb-1">
+        <p className="text-xs text-muted-foreground mb-1">
           To — an address, or <span className="font-mono">{'{{to}}'}</span> to fill in when it runs.
           Comma-separated for several.
         </p>
@@ -285,7 +285,7 @@ function EmailToolForm({ initial, onSave, onCancel, busy }) {
         />
       </div>
       <div>
-        <p className="text-[10px] text-muted-foreground mb-1">
+        <p className="text-xs text-muted-foreground mb-1">
           Subject — fixed, or <span className="font-mono">{'{{subject}}'}</span> to fill in when it runs.
         </p>
         <input
@@ -295,7 +295,7 @@ function EmailToolForm({ initial, onSave, onCancel, busy }) {
         />
       </div>
       <div>
-        <p className="text-[10px] text-muted-foreground mb-1">
+        <p className="text-xs text-muted-foreground mb-1">
           Body — <span className="font-mono">{'{{body}}'}</span> fills in when it runs.
         </p>
         <textarea
@@ -346,7 +346,7 @@ function ToolAssignments({ tool, residents, onChanged }) {
     }
   };
 
-  if (!residents?.length) return <p className="text-[10px] text-muted-foreground">No residents yet.</p>;
+  if (!residents?.length) return <p className="text-xs text-muted-foreground">No residents yet.</p>;
   return (
     <div>
       <ErrorNote error={error} />
@@ -357,7 +357,7 @@ function ToolAssignments({ tool, residents, onChanged }) {
           <button
             key={r.id} onClick={() => toggle(r)} disabled={busy}
             title={on ? `Take “${tool.name}” away from ${r.name}` : `Give “${tool.name}” to ${r.name}`}
-            className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition-colors disabled:opacity-40 ${
+            className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[13px] transition-colors disabled:opacity-40 ${
               on
                 ? 'border-primary/50 bg-primary/10 text-foreground'
                 : 'border-border text-muted-foreground hover:text-foreground hover:bg-muted/50'
@@ -416,7 +416,7 @@ export function ResidentToolPicker({ resident, onChanged }) {
     <div className="mt-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+        className="flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"
       >
         <Wrench className="w-3 h-3" />
         Tools ({assigned.length})
@@ -426,7 +426,7 @@ export function ResidentToolPicker({ resident, onChanged }) {
         <div className="mt-1.5 space-y-1 rounded-lg border border-border/60 bg-muted/20 p-2">
           <ErrorNote error={error} />
           {tools.length === 0 && (
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               No tools yet — make one on the Tools tab, then hand it to this resident here.
             </p>
           )}
@@ -442,8 +442,8 @@ export function ResidentToolPicker({ resident, onChanged }) {
                 }`}>
                   {on && <Check className="w-3 h-3 text-primary" />}
                 </span>
-                <span className="text-[11px] font-medium flex-1 truncate">{t.name}</span>
-                <span className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono text-muted-foreground">
+                <span className="text-[13px] font-medium flex-1 truncate">{t.name}</span>
+                <span className="px-1.5 py-0.5 rounded bg-muted text-xs font-mono text-muted-foreground">
                   {t.kind === 'email' ? 'email' : t.method}
                 </span>
               </button>
@@ -471,7 +471,7 @@ export function ToolRunHistory({ residentId, limit = 10 }) {
   if (!runs.length) return null;
   return (
     <div className="mt-1.5 space-y-1.5">
-      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
         Recent tool runs
       </p>
       {runs.map(r => <ToolRunCard key={r.id} run={r} />)}
@@ -592,29 +592,29 @@ export default function ToolsTab({ residents, onChanged }) {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     <span className="truncate flex-1">{tool.name}</span>
-                    <span className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono text-muted-foreground">
+                    <span className="px-1.5 py-0.5 rounded bg-muted text-xs font-mono text-muted-foreground">
                       {isEmail ? 'email' : tool.method}
                     </span>
                     {(tool.secret_names?.length > 0) && (
-                      <span className="flex items-center gap-1 text-[10px] text-muted-foreground" title={`Secrets: ${tool.secret_names.join(', ')}`}>
+                      <span className="flex items-center gap-1 text-xs text-muted-foreground" title={`Secrets: ${tool.secret_names.join(', ')}`}>
                         <KeyRound className="w-3 h-3" />{tool.secret_names.length}
                       </span>
                     )}
                   </div>
                   {tool.description && (
-                    <p className="text-[11px] text-muted-foreground mt-0.5">{tool.description}</p>
+                    <p className="text-[13px] text-muted-foreground mt-0.5">{tool.description}</p>
                   )}
                   {isEmail ? (
-                    <p className="text-[10px] font-mono text-muted-foreground/70 mt-1 truncate" title={tool.to_template}>
+                    <p className="text-xs font-mono text-muted-foreground mt-1 truncate" title={tool.to_template}>
                       To: {tool.to_template || '(unset)'}
                     </p>
                   ) : (
-                    <p className="text-[10px] font-mono text-muted-foreground/70 mt-1 truncate" title={tool.url}>
+                    <p className="text-xs font-mono text-muted-foreground mt-1 truncate" title={tool.url}>
                       {tool.url}
                     </p>
                   )}
                   <div className="mt-2">
-                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
                       Residents with this tool — tap to hand it over or take it back
                     </p>
                     <ToolAssignments tool={tool} residents={residents} onChanged={async () => { await load(); onChanged?.(); }} />
@@ -653,11 +653,11 @@ export default function ToolsTab({ residents, onChanged }) {
       )}
 
       <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
-        <p className="text-[11px] font-medium flex items-center gap-1.5">
+        <p className="text-[13px] font-medium flex items-center gap-1.5">
           <AlertTriangle className="w-3.5 h-3.5 text-warn" />
           How tools stay safe
         </p>
-        <ul className="text-[11px] text-muted-foreground mt-1.5 space-y-1 list-disc list-inside">
+        <ul className="text-[13px] text-muted-foreground mt-1.5 space-y-1 list-disc list-inside">
           <li>A resident only sees the tools you hand it — never another resident's.</li>
           <li>Reads run right away. Writes wait for your approval in the Outbox, one at a time.</li>
           <li>Email tools send from your COGNOS Gmail — and every send waits for your approval. Nothing goes out on its own.</li>

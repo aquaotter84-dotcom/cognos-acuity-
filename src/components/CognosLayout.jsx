@@ -5,11 +5,12 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { api } from '@/lib/api';
 import { CognosContext } from '@/lib/cognosContext';
 import Sidebar from '@/components/chat/Sidebar';
 import MobileNav from '@/components/chat/MobileNav';
+import { useDialogFocus } from '@/components/ui/CognosUi';
 
 export default function CognosLayout() {
   const [activeWorkspace, setActiveWorkspace] = useState(null);
@@ -20,6 +21,10 @@ export default function CognosLayout() {
   const [isLoading, setIsLoading] = useState(true);
   const [bootError, setBootError] = useState(null);
   const location = useLocation();
+  const reduceMotion = useReducedMotion();
+  const openSidebar = useCallback(() => setSidebarOpen(true), []);
+  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+  const sidebarPanelRef = useDialogFocus(isSidebarOpen, closeSidebar);
 
   // Auto-close the mobile sidebar drawer on any navigation, so it never gets
   // stuck open after tapping a menu item.
@@ -76,7 +81,7 @@ export default function CognosLayout() {
       <div className="flex flex-col items-center justify-center h-screen bg-background px-6 text-center">
         <h1 className="text-lg font-semibold mb-2">COGNOS cannot reach its database</h1>
         <p className="text-sm text-muted-foreground max-w-md">{bootError}</p>
-        <p className="text-xs text-muted-foreground/70 mt-4 max-w-md">
+        <p className="text-xs text-muted-foreground mt-4 max-w-md">
           Set <code className="bg-muted px-1 rounded">DATABASE_URL</code> to the pooled
           <code className="bg-muted px-1 rounded ml-1">postgres://</code> connection string and restart.
         </p>
@@ -90,8 +95,8 @@ export default function CognosLayout() {
       conversations, refreshConversations,
       projects, refreshProjects, projectById,
       activeConversationId, setActiveConversationId,
-      openSidebar: () => setSidebarOpen(true),
-      closeSidebar: () => setSidebarOpen(false)
+      openSidebar,
+      closeSidebar
     }}>
       <div className="flex h-[100dvh] bg-background text-foreground overflow-hidden">
         <div className="hidden md:flex w-[280px] flex-col border-r border-border bg-card/30">
@@ -99,22 +104,22 @@ export default function CognosLayout() {
         </div>
 
         {isSidebarOpen && (
-          <div className="fixed inset-0 z-50 md:hidden">
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setSidebarOpen(false)} />
-            <div className="absolute left-0 top-0 bottom-0 w-[280px] bg-card border-r border-border animate-fade-in" style={{ paddingTop: 'env(safe-area-inset-top, 12px)' }}>
-              <Sidebar onNavigate={() => setSidebarOpen(false)} />
+          <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={closeSidebar} />
+            <div ref={sidebarPanelRef} tabIndex={-1} className="absolute left-0 top-0 bottom-0 w-[280px] bg-card border-r border-border animate-fade-in" style={{ paddingTop: 'env(safe-area-inset-top, 12px)' }}>
+              <Sidebar onNavigate={closeSidebar} />
             </div>
           </div>
         )}
 
         <main className="flex-1 flex flex-col overflow-hidden pb-[calc(env(safe-area-inset-bottom,12px)+64px)] md:pb-0">
-          <AnimatePresence mode="wait">
+          <AnimatePresence mode="wait" initial={!reduceMotion}>
             <motion.div
               key={location.pathname}
-              initial={{ opacity: 0, y: 8 }}
+              initial={reduceMotion ? false : { opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.18, ease: 'easeOut' }}
+              exit={reduceMotion ? undefined : { opacity: 0, y: -8 }}
+              transition={{ duration: reduceMotion ? 0 : 0.18, ease: 'easeOut' }}
               className="flex-1 flex flex-col min-h-0"
             >
               <Outlet />

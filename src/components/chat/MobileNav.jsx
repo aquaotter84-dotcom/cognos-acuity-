@@ -9,10 +9,11 @@
 // single "More" overflow sheet, one tap away, instead of crowding the bar.
 // Every route still exists; nothing was removed.
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { MessageSquare, Brain, Folder, Bot, MoreHorizontal, Activity as ActivityIcon, Settings as SettingsIcon, Network, Cpu, X } from 'lucide-react';
 import { useCognos } from '@/lib/cognosContext';
+import { useDialogFocus } from '@/components/ui/CognosUi';
 
 // The everyday destinations. These are the whole bottom bar.
 const PRIMARY_ITEMS = [
@@ -36,6 +37,8 @@ export default function MobileNav() {
   const location = useLocation();
   const { activeConversationId } = useCognos();
   const [moreOpen, setMoreOpen] = useState(false);
+  const closeMore = useCallback(() => setMoreOpen(false), []);
+  const morePanelRef = useDialogFocus(moreOpen, closeMore);
   // Chat tab preserves the active conversation so switching tabs never drops it.
   const chatTo = activeConversationId ? `/?c=${activeConversationId}` : '/';
 
@@ -45,7 +48,7 @@ export default function MobileNav() {
   const moreActive = MORE_PATHS.has(location.pathname);
 
   const itemClass = (isActive) =>
-    `flex flex-col items-center gap-1 px-1 sm:px-3 py-1.5 rounded-lg transition-colors ${isActive ? 'text-primary' : 'text-muted-foreground'}`;
+    `flex min-w-11 min-h-11 flex-col items-center justify-center gap-1 px-2 sm:px-3 py-1.5 rounded-lg transition-colors ${isActive ? 'text-primary' : 'text-muted-foreground'}`;
 
   return (
     <>
@@ -73,9 +76,9 @@ export default function MobileNav() {
       </nav>
 
       {moreOpen && (
-        <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-label="More destinations">
-          <button className="absolute inset-0 bg-black/50" onClick={() => setMoreOpen(false)} aria-label="Close" tabIndex={-1} />
-          <div className="absolute bottom-0 left-0 right-0 bg-card border-t border-border rounded-t-2xl p-4 pb-8 shadow-2xl">
+        <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true" aria-label="More destinations">
+          <button className="absolute inset-0 bg-black/50" onClick={closeMore} aria-label="Close" tabIndex={-1} />
+          <div ref={morePanelRef} tabIndex={-1} className="absolute bottom-0 left-0 right-0 bg-card border-t border-border rounded-t-2xl p-4 pb-8 shadow-2xl">
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm font-semibold">More</p>
               <button onClick={() => setMoreOpen(false)} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground" aria-label="Close more menu">
@@ -93,7 +96,7 @@ export default function MobileNav() {
                   <Icon className="w-5 h-5 text-muted-foreground shrink-0" />
                   <span className="min-w-0">
                     <span className="text-sm font-medium block">{label}</span>
-                    <span className="text-[11px] text-muted-foreground block leading-snug">{hint}</span>
+                    <span className="text-[13px] text-muted-foreground block leading-snug">{hint}</span>
                   </span>
                 </Link>
               ))}

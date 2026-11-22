@@ -12,8 +12,8 @@
 //   device-local choices persist on this device, the persona persists
 //   server-side via the existing activatePersona path.
 
-import { useEffect } from 'react';
 import { Check, Globe, SlidersHorizontal, X } from 'lucide-react';
+import { useDialogFocus } from '@/components/ui/CognosUi';
 
 export const STYLE_OPTIONS = [
   { value: 'balanced', label: 'Balanced', hint: 'The usual mix — clear and to the point.' },
@@ -47,7 +47,7 @@ function OptionRow({ selected, onSelect, label, hint }) {
     >
       <span className="flex-1 min-w-0">
         <span className="block text-sm font-medium">{label}</span>
-        {hint && <span className="block text-[11px] text-muted-foreground leading-snug mt-0.5">{hint}</span>}
+        {hint && <span className="block text-[13px] text-muted-foreground leading-snug mt-0.5">{hint}</span>}
       </span>
       {selected && <Check className="w-4 h-4 text-primary shrink-0 mt-0.5" aria-hidden />}
     </button>
@@ -58,7 +58,7 @@ function Section({ title, note, children }) {
   return (
     <section className="px-4 py-3">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">{title}</h3>
-      {note && <p className="text-[11px] text-muted-foreground mb-2 leading-snug">{note}</p>}
+      {note && <p className="text-[13px] text-muted-foreground mb-2 leading-snug">{note}</p>}
       <div className="space-y-1.5">{children}</div>
     </section>
   );
@@ -77,25 +77,20 @@ export function ChatControlSheet({
   agentMode,
   onAgentModeChange,
 }) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  const panelRef = useDialogFocus(open, onClose);
 
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="How COGNOS answers">
       <button className="absolute inset-0 bg-black/50 cursor-default" onClick={onClose} aria-label="Close" tabIndex={-1} />
-      <div className="absolute bottom-0 left-0 right-0 md:inset-0 md:m-auto md:max-w-lg md:h-fit bg-card border-t md:border border-border rounded-t-2xl md:rounded-2xl shadow-2xl max-h-[85vh] overflow-y-auto animate-fade-in">
+      <div ref={panelRef} tabIndex={-1} className="absolute bottom-0 left-0 right-0 md:inset-0 md:m-auto md:max-w-lg md:h-fit bg-card border-t md:border border-border rounded-t-2xl md:rounded-2xl shadow-2xl max-h-[85vh] overflow-y-auto animate-fade-in">
         <div className="sticky top-0 bg-card/95 backdrop-blur px-4 pt-2.5 pb-2.5 border-b border-border/60 z-10">
           <div className="w-10 h-1 rounded-full bg-muted mx-auto mb-2 md:hidden" aria-hidden />
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <h2 className="text-sm font-semibold">How COGNOS answers</h2>
-              <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">
+              <p className="text-[13px] text-muted-foreground leading-snug mt-0.5">
                 Tune the reply — choices apply to your next message and are remembered.
               </p>
             </div>
@@ -153,7 +148,7 @@ export function ChatControlSheet({
             <Globe className="w-4 h-4 text-primary shrink-0" aria-hidden />
             <span className="flex-1 min-w-0">
               <span className="block text-sm font-medium">Search the web</span>
-              <span className="block text-[11px] text-muted-foreground leading-snug mt-0.5">
+              <span className="block text-[13px] text-muted-foreground leading-snug mt-0.5">
                 Lets COGNOS check current facts online when an answer needs them.
               </span>
             </span>
@@ -221,7 +216,7 @@ export function ActiveChoiceChips({
             type="button"
             onClick={onOpen}
             title={c.title}
-            className="shrink-0 inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[11px] text-foreground/80 hover:bg-muted/70 active:bg-muted transition-colors"
+            className="shrink-0 min-h-11 inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-3 py-2 text-sm text-foreground/80 hover:bg-muted/70 active:bg-muted transition-colors"
           >
             {c.icon && <Globe className="w-3 h-3 text-primary" aria-hidden />}
             {c.label}
@@ -232,7 +227,7 @@ export function ActiveChoiceChips({
           onClick={onOpen}
           aria-label="Adjust how COGNOS answers"
           title="Adjust how COGNOS answers"
-          className="shrink-0 p-1.5 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted/60 active:bg-muted transition-colors"
+          className="shrink-0 min-w-11 min-h-11 inline-flex items-center justify-center p-2 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted/60 active:bg-muted transition-colors"
         >
           <SlidersHorizontal className="w-3.5 h-3.5" aria-hidden />
         </button>

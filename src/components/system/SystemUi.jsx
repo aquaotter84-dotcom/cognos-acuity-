@@ -22,7 +22,7 @@ export function Card({ title, subtitle, children, action }) {
       <header className="flex items-center gap-2 px-3 py-2 border-b border-border/60">
         <div className="flex-1 min-w-0">
           <h3 className="text-xs font-semibold">{title}</h3>
-          {subtitle && <p className="text-[10px] text-muted-foreground/70 leading-snug">{subtitle}</p>}
+          {subtitle && <p className="text-xs text-muted-foreground leading-snug">{subtitle}</p>}
         </div>
         {action}
       </header>
@@ -32,9 +32,9 @@ export function Card({ title, subtitle, children, action }) {
 }
 
 export function Json({ value, className = '' }) {
-  if (value === null || value === undefined) return <span className="text-muted-foreground/50">null</span>;
+  if (value === null || value === undefined) return <span className="text-muted-foreground">null</span>;
   return (
-    <pre className={`text-[10px] leading-relaxed whitespace-pre-wrap break-words font-mono text-foreground/80 bg-muted/40 rounded p-2 max-h-64 overflow-auto scrollbar-thin ${className}`}>
+    <pre className={`text-xs leading-relaxed whitespace-pre-wrap break-words font-mono text-foreground/80 bg-muted/40 rounded p-2 max-h-64 overflow-auto scrollbar-thin ${className}`}>
       {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
     </pre>
   );
