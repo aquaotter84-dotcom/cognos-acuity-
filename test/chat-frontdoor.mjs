@@ -125,6 +125,8 @@ await test("missing AI credentials lead to an honest setup path, never a fake br
   assert.ok(welcome.includes("Check again"), "setup can recheck after server configuration");
   assert.ok(welcome.includes("Credentials stay on your server"), "credential handling is explained");
   assert.ok(settings.includes('id="ai-models"'), "settings has the AI deep-link target");
+  assert.ok(settings.includes("location.hash === '#ai-models'"), "settings recognizes the AI deep-link hash");
+  assert.ok(settings.includes("document.getElementById('ai-models')?.scrollIntoView({ block: 'start' })"), "settings scrolls the AI section into view");
   assert.ok(!welcome.includes("BLUESMINDS_API_KEY") && !chatInput.includes("BLUESMINDS_API_KEY"), "raw setup errors stay out of the welcome and composer");
 });
 

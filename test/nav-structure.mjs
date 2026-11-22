@@ -24,6 +24,7 @@ const appJsx = readSrc("src/App.jsx");
 const mobileNav = readSrc("src/components/chat/MobileNav.jsx");
 const sidebar = readSrc("src/components/chat/Sidebar.jsx");
 const autonomy = readSrc("src/pages/Autonomy.jsx");
+const designerDrawer = readSrc("src/components/autonomy/DesignerDrawer.jsx");
 const attentionRoute = readSrc("server/routes/autonomy.js");
 
 // ---------------------------------------------------------------------------
@@ -139,6 +140,17 @@ await test("Studio splits four everyday tabs from Advanced and covers every tab 
   assert.match(autonomy, /\{ADVANCED_TAB_IDS\.map\(renderTab\)\}/, "Advanced renders every remaining destination");
   assert.match(autonomy, /grid grid-cols-5 items-center gap-1 md:flex/, "all five everyday destinations fit on a phone");
   assert.match(autonomy, /MOBILE_TAB_LABEL = \{ attention: 'Waiting' \}/, "the longest mobile label has a compact form");
+});
+
+await test("Advanced only references its controlled tab list while that list exists", async () => {
+  assert.match(autonomy, /aria-controls=\{advancedOpen \? 'studio-advanced-tabs' : undefined\}/, "collapsed Advanced has no dangling aria-controls");
+  assert.ok(!autonomy.includes('aria-controls="studio-advanced-tabs"'), "the unconditional ARIA relationship is gone");
+});
+
+await test("Studio task wording is consistent in designer and goal details", async () => {
+  assert.ok(designerDrawer.includes("First task — will wait for your authorization"), "designer calls the first goal a task");
+  assert.ok(autonomy.includes("Renaming never changes what the task may do or spend"), "task rename explains its fixed authority");
+  assert.ok(autonomy.includes("A task can never propose a draft answer"), "task findings remain distinct from answers");
 });
 
 await test("the attention landing renders the aggregate panel, not a new decision surface", async () => {

@@ -1242,7 +1242,7 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                                 </button>
                               </div>
                               <p className="text-xs text-muted-foreground leading-relaxed">
-                                Renaming never changes what the goal may do or spend — that was
+                                Renaming never changes what the task may do or spend — that was
                                 settled when you authorized it.
                               </p>
                             </div>
@@ -1315,7 +1315,7 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                           </Btn>
                           <p className="text-xs text-muted-foreground mt-1">
                             Opens this resident's conversation. You ask; the council answers through the
-                            Governor. A goal can never propose a draft answer.
+                            Governor. A task can never propose a draft answer.
                           </p>
                         </div>
 
@@ -2637,7 +2637,7 @@ export default function Autonomy() {
               setAdvancedOpen(value => !value);
             }}
             aria-expanded={advancedOpen}
-            aria-controls="studio-advanced-tabs"
+            aria-controls={advancedOpen ? 'studio-advanced-tabs' : undefined}
             className={`flex min-w-0 min-h-11 items-center justify-center gap-1 px-1 md:px-3 py-2 rounded-lg text-xs md:text-sm whitespace-nowrap transition-colors ${
               ADVANCED_TAB_IDS.includes(tab) ? 'bg-muted text-foreground font-medium' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
             }`}

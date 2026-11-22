@@ -4,6 +4,7 @@
 // workspace instructions editor (which feeds buildContextSystemPrompt verbatim),
 // local browser voice preferences, and runtime status from /api/health.
 import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Settings as SettingsIcon, Menu, Check, X, Square, Volume2, ShieldAlert, Scale, Trash2, Sun, Moon, Database, Pencil, Plus } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Pill } from '@/components/system/SystemUi';
@@ -726,6 +727,7 @@ function PersonaEditor({ initial, busy, onCancel, onSave }) {
 }
 
 export default function Settings() {
+  const location = useLocation();
   const { activeWorkspace, setActiveWorkspace, openSidebar } = useCognos();
   const voice = useVoice();
   const [name, setName] = useState('');
@@ -771,6 +773,11 @@ export default function Settings() {
   }, [activeWorkspace]);
 
   useEffect(() => { api.health().then(setHealth).catch(() => {}); }, []);
+  useEffect(() => {
+    if (location.hash === '#ai-models') {
+      document.getElementById('ai-models')?.scrollIntoView({ block: 'start' });
+    }
+  }, [location.hash]);
   useEffect(() => {
     api.councilSettings().then(setCouncil).catch(() => setCouncil(null));
   }, []);
