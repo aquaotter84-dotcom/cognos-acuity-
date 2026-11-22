@@ -23,6 +23,7 @@ import {
 import { api } from '@/lib/api';
 import { humanInterval, budgetLabel } from '@/lib/autonomyLabels';
 import { ErrorNote, Pill } from '@/components/system/SystemUi';
+import { useDialogFocus } from '@/components/ui/CognosUi';
 
 const EMPTY_DRAFT = {
   name: '', slug: '', purpose: '', brief: '', skills: [],
@@ -32,14 +33,14 @@ const EMPTY_DRAFT = {
 /** The opening line, so the drawer is never an empty box with a cursor in it. */
 const GREETING = {
   role: 'assistant',
-  content: 'Tell me what you want watched and how often, in plain words — "check the county agenda page each morning and tell me when a hearing is added" is exactly the right shape. I will draft the whole resident: its name, purpose, operating brief, the skills it may use, how often it wakes, its budget, and a first goal if you want one. Nothing is created until you click Create.',
+  content: 'Tell me what you want watched and how often, in plain words — "check the county agenda page each morning and tell me when a hearing is added" is exactly the right shape. I will draft the whole assistant: its name, purpose, instructions, allowed skills, schedule, budget, and a first task if you want one. Nothing is created until you click Create.',
 };
 
 function DraftField({ label, value, mono = false }) {
   if (!value) return null;
   return (
     <div>
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className={`text-xs whitespace-pre-wrap ${mono ? 'font-mono' : ''}`}>{value}</p>
     </div>
   );
@@ -63,6 +64,7 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
   const [showDraft, setShowDraft] = useState(true);
   const [created, setCreated] = useState(null);
   const scrollRef = useRef(null);
+  const panelRef = useDialogFocus(open, onClose);
 
   // The status tells the drawer whether Create can work yet. Take the caller's
   // copy when it has one (the Autonomy page always does) so the drawer never
@@ -94,13 +96,6 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, busy]);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -207,24 +202,24 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
   const budget = draft.budget || {};
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-label="Design a resident">
+    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="Design an assistant">
       <button
         className="absolute inset-0 bg-black/50"
         onClick={onClose}
         aria-label="Close the designer"
         tabIndex={-1}
       />
-      <div className="relative flex flex-col w-full max-w-xl h-full bg-background border-l border-border shadow-2xl">
+      <div ref={panelRef} tabIndex={-1} className="relative flex flex-col w-full max-w-xl h-full bg-background border-l border-border shadow-2xl">
         {/* header */}
         <header className="flex items-start gap-2 px-4 py-3 border-b border-border shrink-0">
           <Sparkles className="w-4 h-4 text-primary mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-semibold">Design a resident</h2>
-            <p className="text-[11px] text-muted-foreground leading-snug">
+            <h2 className="text-sm font-semibold">Design an assistant</h2>
+            <p className="text-[13px] text-muted-foreground leading-snug">
               Describe it in plain words. COGNOS drafts the whole thing; nothing is created until you say so.
             </p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted shrink-0" title="Close">
+          <button onClick={onClose} aria-label="Close assistant designer" className="min-w-11 min-h-11 p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted shrink-0" title="Close">
             <X className="w-4 h-4" />
           </button>
         </header>
@@ -239,16 +234,16 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
                   : 'bg-muted/50 text-foreground/90 border border-border/60'
               }`}>
                 {m.role === 'assistant' && (
-                  <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                  <p className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground mb-1">
                     <Bot className="w-3 h-3" /> COGNOS · design note
                   </p>
                 )}
                 <p className="whitespace-pre-wrap">{m.content}</p>
-                {m.failed && <p className="text-[10px] text-destructive mt-1">That turn failed — nothing changed.</p>}
+                {m.failed && <p className="text-xs text-destructive mt-1">That turn failed — nothing changed.</p>}
                 {m.questions?.length > 0 && (
                   <ul className="mt-1.5 space-y-0.5">
                     {m.questions.map((q, j) => (
-                      <li key={j} className="text-[11px] text-muted-foreground flex gap-1.5">
+                      <li key={j} className="text-[13px] text-muted-foreground flex gap-1.5">
                         <span className="text-primary">?</span><span>{q}</span>
                       </li>
                     ))}
@@ -259,7 +254,7 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
           ))}
 
           {busy && (
-            <p className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
               <Loader2 className="w-3.5 h-3.5 animate-spin" /> Drafting…
             </p>
           )}
@@ -285,29 +280,29 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
                   <DraftField label="Brief — its operating instructions" value={draft.brief} />
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div>
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Wakes</p>
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Wakes</p>
                       <p>{humanInterval(draft.heartbeatMs)}</p>
                     </div>
                     <div>
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Slug</p>
-                      <p className="font-mono text-[11px]">{draft.slug || '—'}</p>
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">Slug</p>
+                      <p className="font-mono text-[13px]">{draft.slug || '—'}</p>
                     </div>
                   </div>
 
                   <div>
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Skills it may use</p>
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Skills it may use</p>
                     <div className="flex flex-wrap gap-1">
-                      {draft.skills.length === 0 && <span className="text-[11px] text-muted-foreground">none yet</span>}
+                      {draft.skills.length === 0 && <span className="text-[13px] text-muted-foreground">none yet</span>}
                       {draft.skills.map(id => (
-                        <span key={id} className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">{id}</span>
+                        <span key={id} className="px-1.5 py-0.5 rounded bg-muted text-xs font-mono">{id}</span>
                       ))}
                     </div>
                   </div>
 
                   {budget && Object.keys(budget).length > 0 && (
                     <div>
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Budget ceilings</p>
-                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Budget ceilings</p>
+                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[13px]">
                         {Object.entries(budget).slice(0, 8).map(([k, v]) => (
                           <span key={k} className="text-muted-foreground">
                             {budgetLabel(k)}: <span className="text-foreground tabular-nums">{k === 'maxCostUsd' ? `$${Number(v).toFixed(2)}` : Number(v).toLocaleString()}</span>
@@ -319,25 +314,25 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
 
                   {draft.firstGoal && (
                     <div className="rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2">
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">First goal — will wait for your authorization</p>
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground">First goal — will wait for your authorization</p>
                       <p className="text-xs font-medium mt-0.5">{draft.firstGoal.title}</p>
-                      <p className="text-[11px] text-muted-foreground line-clamp-3">{draft.firstGoal.objective}</p>
+                      <p className="text-[13px] text-muted-foreground line-clamp-3">{draft.firstGoal.objective}</p>
                     </div>
                   )}
 
                   {(draft.proposedUrls || []).length > 0 && (
                     <div>
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
                         Pages it may read — tick to grant at create
                       </p>
-                      <p className="text-[10px] text-muted-foreground mb-1.5 leading-snug">
+                      <p className="text-xs text-muted-foreground mb-1.5 leading-snug">
                         These are proposals. Nothing is allowlisted until you tick it and create, then authorize the goal.
                       </p>
                       <div className="space-y-1">
                         {draft.proposedUrls.map(url => {
                           const on = grantUrls.includes(url);
                           return (
-                            <label key={url} className="flex items-start gap-2 text-[11px] cursor-pointer">
+                            <label key={url} className="flex items-start gap-2 text-[13px] cursor-pointer">
                               <input
                                 type="checkbox"
                                 checked={on}
@@ -356,10 +351,10 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
 
                   {draft.skills.includes('webhook.post') && (
                     <div>
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
                         Webhook destinations it may POST to — type to grant at create
                       </p>
-                      <p className="text-[10px] text-muted-foreground mb-1.5 leading-snug">
+                      <p className="text-xs text-muted-foreground mb-1.5 leading-snug">
                         The first goal carries these in its authorized scope, locked in by its hash — they cannot be widened
                         afterwards. Only attempts aimed at a granted destination fill the evidence corpus
                         {status?.liveDestination?.configured
@@ -368,7 +363,7 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
                       </p>
                       <div className="space-y-1">
                         {grantDestinations.map(url => (
-                          <div key={url} className="flex items-center gap-2 text-[11px]">
+                          <div key={url} className="flex items-center gap-2 text-[13px]">
                             <Send className="w-3 h-3 text-muted-foreground shrink-0" />
                             <span className="font-mono break-all flex-1">{url}</span>
                             <button
@@ -392,7 +387,7 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
                               setDestInput('');
                             }}
                             placeholder="https://hooks.example.com/cognos"
-                            className="flex-1 bg-background border border-border rounded-lg px-2 py-1.5 text-[11px] font-mono outline-none focus:border-primary/60"
+                            className="flex-1 bg-background border border-border rounded-lg px-2 py-1.5 text-[13px] font-mono outline-none focus:border-primary/60"
                           />
                           <button
                             onClick={() => {
@@ -401,14 +396,14 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
                               setDestInput('');
                             }}
                             disabled={!destInput.trim()}
-                            className="shrink-0 rounded-lg border border-border px-2 py-1.5 text-[11px] hover:bg-muted/50 disabled:opacity-40"
+                            className="shrink-0 rounded-lg border border-border px-2 py-1.5 text-[13px] hover:bg-muted/50 disabled:opacity-40"
                           >
                             Add
                           </button>
                         </div>
                       </div>
                       {grantDestinations.length > 0 && !withGoal && (
-                        <p className="text-[10px] text-warn mt-1 leading-snug flex items-start gap-1">
+                        <p className="text-xs text-warn mt-1 leading-snug flex items-start gap-1">
                           <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
                           The destinations grant lands on the first goal — tick “and its first goal” below, or create will refuse.
                         </p>
@@ -419,12 +414,12 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
                   {/* Everything that was corrected, out loud. */}
                   {dropped.length > 0 && (
                     <div className="rounded-lg border border-warn/30 bg-warn/5 px-2.5 py-2 space-y-1">
-                      <p className="text-[10px] font-semibold text-warn flex items-center gap-1.5">
+                      <p className="text-xs font-semibold text-warn flex items-center gap-1.5">
                         <AlertTriangle className="w-3 h-3" />
                         {dropped.length} skill{dropped.length === 1 ? '' : 's'} left out of the allowlist
                       </p>
                       {dropped.map((d, i) => (
-                        <p key={i} className="text-[11px] text-muted-foreground leading-snug">
+                        <p key={i} className="text-[13px] text-muted-foreground leading-snug">
                           <span className="font-mono text-foreground/80">{d.id}</span> — {d.note}
                         </p>
                       ))}
@@ -432,12 +427,12 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
                   )}
                   {adjustments.length > 0 && (
                     <details className="rounded-lg border border-border/60 px-2.5 py-1.5">
-                      <summary className="text-[10px] text-muted-foreground cursor-pointer">
+                      <summary className="text-xs text-muted-foreground cursor-pointer">
                         {adjustments.length} adjustment{adjustments.length === 1 ? '' : 's'} COGNOS made to the model's proposal
                       </summary>
                       <ul className="mt-1.5 space-y-1">
                         {adjustments.map((a, i) => (
-                          <li key={i} className="text-[11px] text-muted-foreground leading-snug">
+                          <li key={i} className="text-[13px] text-muted-foreground leading-snug">
                             <span className="font-mono text-foreground/70">{a.field}</span> — {a.note}
                           </li>
                         ))}
@@ -455,7 +450,7 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
                 <Check className="w-3.5 h-3.5" /> {created.note || 'Created.'}
               </p>
               {created.goal && (
-                <p className="text-[11px] text-muted-foreground mt-1">
+                <p className="text-[13px] text-muted-foreground mt-1">
                   “{created.goal.title}” is waiting for your authorization on the Goals tab. It does no work until you give it.
                 </p>
               )}
@@ -463,7 +458,7 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
           )}
 
           {notice && !created && (
-            <p className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground flex items-start gap-1.5">
+            <p className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-[13px] text-muted-foreground flex items-start gap-1.5">
               <Snowflake className="w-3.5 h-3.5 mt-0.5 shrink-0" />
               <span>{notice}</span>
             </p>
@@ -476,7 +471,7 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
         <footer className="shrink-0 border-t border-border px-4 py-3 space-y-2 bg-background">
           {frozen && !created && (
             <div className="rounded-lg border border-border bg-muted/30 px-3 py-2">
-              <p className="text-[11px] text-muted-foreground leading-snug">
+              <p className="text-[13px] text-muted-foreground leading-snug">
                 <strong className="text-foreground">Autonomy is off.</strong> You can keep designing — creating is what waits.
                 {canToggle
                   ? ' Turn it on below and the draft becomes a resident.'
@@ -502,7 +497,7 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
                 if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
               }}
               rows={2}
-              placeholder={draft.name ? 'Refine it — “make it hourly”, “drop the notice skill”, “call it Ledger”…' : 'What should this resident watch, and how often?'}
+              placeholder={draft.name ? 'Refine it — “make it hourly”, “drop the notice skill”, “call it Ledger”…' : 'What should this assistant watch, and how often?'}
               className="flex-1 bg-muted/30 border border-border rounded-xl px-3 py-2 text-xs outline-none focus:border-primary/60 resize-none"
             />
             <button
@@ -524,10 +519,10 @@ export default function DesignerDrawer({ open, onClose, onCreated, onEnabledChan
                 title={!draft.complete ? 'The draft needs a name first' : frozen ? 'Autonomy is off' : 'Create the resident'}
               >
                 <Plus className="w-3.5 h-3.5" />
-                {creating ? 'Creating…' : 'Create resident'}
+                {creating ? 'Creating…' : 'Create assistant'}
               </button>
               {draft.firstGoal && (
-                <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer">
+                <label className="flex items-center gap-1.5 text-[13px] text-muted-foreground cursor-pointer">
                   <input
                     type="checkbox"
                     checked={withGoal}

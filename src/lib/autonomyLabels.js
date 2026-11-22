@@ -99,6 +99,26 @@ export function outboxModeLabel(mode) {
   return OUTBOX_MODE_LABEL[key] || key.replace(/_/g, ' ') || '—';
 }
 
+export const NOTICE_TEMPLATE_LABEL = {
+  goal_parked: 'Task paused',
+  goal_completed: 'Task finished',
+  finding_ready: 'New findings ready',
+  budget_warning: 'Budget needs attention',
+  cleanup_report: 'Memory housekeeping report',
+  memory_decay_live: 'Memory fading is on',
+  memory_transplant_done: 'Memory update completed',
+  outbox_reconciled: 'Delivery status needs review',
+  approval_blocked: 'Approval could not be completed',
+  watch_fired: 'A watch found something',
+};
+
+export function noticeTemplateLabel(templateId) {
+  const key = String(templateId || '');
+  if (NOTICE_TEMPLATE_LABEL[key]) return NOTICE_TEMPLATE_LABEL[key];
+  const words = key.replace(/_/g, ' ').trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Update';
+}
+
 /** "Every 15m" / "Once a day" — an interval a person can picture. */
 export function humanInterval(ms) {
   const n = Number(ms);
@@ -224,9 +244,9 @@ export function describeBudget(budget) {
  */
 export const GLOSSARY = [
   {
-    term: 'Resident',
-    technical: 'autonomy_agents row',
-    body: 'A named worker with a purpose, operating instructions, and its own list of skills. It wakes on a schedule, does a bounded slice of work, and writes down what it found.',
+    term: 'Assistant',
+    technical: 'resident · autonomy_agents row',
+    body: 'A named helper with a purpose, operating instructions, and its own list of skills. It wakes on a schedule, does a bounded slice of work, and writes down what it found.',
   },
   {
     term: 'Brief',
@@ -234,9 +254,9 @@ export const GLOSSARY = [
     body: 'The operating text a resident was given. Changing it writes a NEW version and keeps the old one, so you can always see what it was told when it did the thing you are looking at.',
   },
   {
-    term: 'Goal',
-    technical: 'autonomy_goals row',
-    body: 'One objective with a scope and a budget. A goal does no work at all until you authorize the exact scope and budget you are shown.',
+    term: 'Task',
+    technical: 'goal · autonomy_goals row',
+    body: 'One objective with a scope and a budget. A task does no work at all until you authorize the exact scope and budget you are shown.',
   },
   {
     term: 'Authorization',

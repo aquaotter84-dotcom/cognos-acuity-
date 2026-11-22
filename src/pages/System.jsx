@@ -171,13 +171,13 @@ export default function System() {
   return (
     <div className="flex flex-col h-full min-h-0">
       <header className="flex items-center gap-2 px-3 md:px-4 py-3 border-b border-border shrink-0" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}>
-        <button onClick={openSidebar} className="md:hidden p-2 -ml-2 rounded-lg hover:bg-muted"><Menu className="w-5 h-5" /></button>
+        <button aria-label="Open navigation" onClick={openSidebar} className="md:hidden p-2 -ml-2 rounded-lg hover:bg-muted"><Menu className="w-5 h-5" /></button>
         <Network className="w-4 h-4 text-primary" />
         <h2 className="text-sm font-medium">System</h2>
-        <span className="text-[10px] text-muted-foreground/70 hidden sm:inline">Phase 14 event ledger · Phase 15 meta-cognition · Phase 23 atlas</span>
+        <span className="text-xs text-muted-foreground hidden sm:inline">Phase 14 event ledger · Phase 15 meta-cognition · Phase 23 atlas</span>
         <div className="ml-auto flex items-center gap-2">
           {health && (
-            <span className="hidden md:flex items-center gap-1.5 text-[10px] text-muted-foreground/70">
+            <span className="hidden md:flex items-center gap-1.5 text-xs text-muted-foreground">
               <Pill tone={health.ledger ? 'ok' : 'muted'}>ledger {health.ledger ? 'on' : 'off'}</Pill>
               <Pill tone={health.coherence ? 'ok' : 'muted'}>coherence {health.coherence ? 'on' : 'off'}</Pill>
               <Pill tone={health.telemetry ? 'ok' : 'muted'}>telemetry {health.telemetry ? 'on' : 'off'}</Pill>
@@ -238,7 +238,7 @@ export default function System() {
                     {events.map(e => (
                       <div key={e.id} className="rounded border border-border/70 bg-muted/20 px-2.5 py-2 text-xs">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="tabular-nums text-muted-foreground/50">#{e.seq}</span>
+                          <span className="tabular-nums text-muted-foreground">#{e.seq}</span>
                           <Pill tone={e.reversible ? 'info' : 'warn'}>{e.transition}</Pill>
                           <button
                             className="text-foreground/80 hover:text-primary underline decoration-dotted"
@@ -262,35 +262,35 @@ export default function System() {
                                 ><Trash2 className="w-3.5 h-3.5" /></button>
                               </>
                             )}
-                            <span className="tabular-nums text-muted-foreground/60 pl-1">{fmtTime(e.at)}</span>
+                            <span className="tabular-nums text-muted-foreground pl-1">{fmtTime(e.at)}</span>
                           </span>
                         </div>
                         {editingId === e.id ? (
                           <div className="mt-2">
                             <textarea
                               rows={6}
-                              className="w-full bg-background border border-border rounded px-2 py-1.5 text-[11px] font-mono"
+                              className="w-full bg-background border border-border rounded px-2 py-1.5 text-[13px] font-mono"
                               value={editDeltaText}
                               onChange={(ev) => setEditDeltaText(ev.target.value)}
                               spellCheck={false}
                             />
-                            {editError && <div className="mt-1 text-[11px] text-destructive">{editError}</div>}
+                            {editError && <div className="mt-1 text-[13px] text-destructive">{editError}</div>}
                             <div className="mt-1.5 flex gap-2">
                               <button onClick={() => saveEdit(e.id)} className="px-3 py-1.5 rounded-lg bg-primary/15 text-primary text-xs hover:bg-primary/25 flex items-center gap-1"><Check className="w-3.5 h-3.5" />Save</button>
                               <button onClick={() => { setEditingId(null); setEditError(null); }} className="px-3 py-1.5 rounded-lg bg-muted/50 text-muted-foreground text-xs hover:bg-muted flex items-center gap-1"><X className="w-3.5 h-3.5" />Cancel</button>
                             </div>
-                            <div className="mt-1 text-[10px] text-muted-foreground/60">Changes this entry's delta only — the rest of the ledger stays exactly as it was.</div>
+                            <div className="mt-1 text-xs text-muted-foreground">Changes this entry's delta only — the rest of the ledger stays exactly as it was.</div>
                           </div>
                         ) : (
                         <>
                         {(e.from_state || e.to_state || e.delta) && (
-                          <div className="mt-1.5 grid sm:grid-cols-3 gap-1.5 text-[10px]">
-                            <div><span className="text-muted-foreground/60">from </span><Json value={e.from_state} /></div>
-                            <div><span className="text-muted-foreground/60">to </span><Json value={e.to_state} /></div>
-                            <div><span className="text-muted-foreground/60">delta </span><Json value={e.delta} /></div>
+                          <div className="mt-1.5 grid sm:grid-cols-3 gap-1.5 text-xs">
+                            <div><span className="text-muted-foreground">from </span><Json value={e.from_state} /></div>
+                            <div><span className="text-muted-foreground">to </span><Json value={e.to_state} /></div>
+                            <div><span className="text-muted-foreground">delta </span><Json value={e.delta} /></div>
                           </div>
                         )}
-                        <div className="mt-1 text-[10px] text-muted-foreground/50 flex flex-wrap gap-2">
+                        <div className="mt-1 text-xs text-muted-foreground flex flex-wrap gap-2">
                           {e.source_run_id && <span>run {e.source_run_id}</span>}
                           {e.source_message_id && <span>message {e.source_message_id}</span>}
                           <span>source {e.source_kind || '—'}</span>
@@ -310,15 +310,15 @@ export default function System() {
             <>
               <Card title="State reconstruction" subtitle="Fold the ledger up to an instant and you have the entity's state at that instant. Current-state tables are maintained transactionally for fast reads; replay is the proof they are right.">
                 <div className="flex flex-wrap gap-2 items-end">
-                  <label className="text-[10px] text-muted-foreground/70">
+                  <label className="text-xs text-muted-foreground">
                     entity type
                     <input className="mt-0.5 block bg-muted/50 border border-border rounded px-2 py-1 text-xs w-32" value={replayForm.entityType} onChange={(e) => setReplayForm(f => ({ ...f, entityType: e.target.value }))} />
                   </label>
-                  <label className="text-[10px] text-muted-foreground/70 flex-1 min-w-[12rem]">
+                  <label className="text-xs text-muted-foreground flex-1 min-w-[12rem]">
                     entity id
                     <input className="mt-0.5 block bg-muted/50 border border-border rounded px-2 py-1 text-xs w-full" placeholder="belief_…" value={replayForm.entityId} onChange={(e) => setReplayForm(f => ({ ...f, entityId: e.target.value }))} />
                   </label>
-                  <label className="text-[10px] text-muted-foreground/70">
+                  <label className="text-xs text-muted-foreground">
                     at (epoch ms or ISO; empty = now)
                     <input className="mt-0.5 block bg-muted/50 border border-border rounded px-2 py-1 text-xs w-44" placeholder="1757200000000" value={replayForm.at} onChange={(e) => setReplayForm(f => ({ ...f, at: e.target.value }))} />
                   </label>
@@ -329,7 +329,7 @@ export default function System() {
               {replay && (
                 <>
                   <Card title={`${replay.entityType}:${replay.entityId}`} subtitle={replay.replayed ? `state as of ${fmtTime(replay.asOf)}` : 'current state (no cut-off given)'}>
-                    <div className="flex flex-wrap gap-2 mb-2 text-[10px]">
+                    <div className="flex flex-wrap gap-2 mb-2 text-xs">
                       <Pill tone={replay.exists ? 'ok' : 'muted'}>{replay.exists ? 'exists' : 'no state at that instant'}</Pill>
                       <Pill>{replay.eventCount} event(s)</Pill>
                       {replay.firstEventAt && <Pill>first {fmtTime(replay.firstEventAt)}</Pill>}
@@ -337,7 +337,7 @@ export default function System() {
                     </div>
                     <Json value={replay.state} />
                     {replay.foldMatchesCurrentState && (
-                      <div className="mt-2 flex items-start gap-2 text-[11px]">
+                      <div className="mt-2 flex items-start gap-2 text-[13px]">
                         {replay.foldMatchesCurrentState.consistent
                           ? <><ShieldCheck className="w-4 h-4 text-green-400 shrink-0 mt-0.5" /><span className="text-muted-foreground">Folding the whole ledger reproduces the materialized row — no drift on {Object.keys(replay.foldMatchesCurrentState.current || {}).length} tracked field(s).</span></>
                           : <><AlertTriangle className="w-4 h-4 text-yellow-400 shrink-0 mt-0.5" /><span className="text-muted-foreground">Drift detected: {JSON.stringify(replay.foldMatchesCurrentState.drift)}</span></>}
@@ -346,12 +346,12 @@ export default function System() {
                   </Card>
                   <Card title="History" subtitle="Every transition behind that state, oldest first.">
                     {replay.history?.length ? (
-                      <div className="space-y-1 text-[11px]">
+                      <div className="space-y-1 text-[13px]">
                         {replay.history.map(h => (
                           <div key={h.id || h.seq} className="flex flex-wrap gap-2 items-center rounded border border-border/50 px-2 py-1">
-                            <span className="tabular-nums text-muted-foreground/50">#{h.seq}</span>
+                            <span className="tabular-nums text-muted-foreground">#{h.seq}</span>
                             <Pill tone="info">{h.transition}</Pill>
-                            <span className="text-muted-foreground/70">{fmtTime(h.at || h.ts_ms)}</span>
+                            <span className="text-muted-foreground">{fmtTime(h.at || h.ts_ms)}</span>
                             {h.delta && <span className="text-foreground/70">Δ {JSON.stringify(h.delta)}</span>}
                           </div>
                         ))}
@@ -368,10 +368,10 @@ export default function System() {
               {analytics && (
                 <Card title="Change analytics" subtitle={`Read-only measurements over the last ${analytics.windowDays} day(s), generated ${fmtTime(analytics.generatedAt)}.`}>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                    <div className="rounded border border-border/60 p-2"><div className="text-[10px] text-muted-foreground/60 uppercase">ledger events</div><div className="text-lg tabular-nums">{analytics.summary?.ledger?.events ?? '—'}</div></div>
-                    <div className="rounded border border-border/60 p-2"><div className="text-[10px] text-muted-foreground/60 uppercase">events / day</div><div className="text-lg tabular-nums">{fmtNum(analytics.churn?.events_per_day, 2)}</div></div>
-                    <div className="rounded border border-border/60 p-2"><div className="text-[10px] text-muted-foreground/60 uppercase">entities changed</div><div className="text-lg tabular-nums">{analytics.change_rate?.count ?? '—'}</div></div>
-                    <div className="rounded border border-border/60 p-2"><div className="text-[10px] text-muted-foreground/60 uppercase">contradictions</div><div className="text-lg tabular-nums">{(analytics.summary?.coherence || []).find(c => c.verdict === 'contradiction')?.count ?? 0}</div></div>
+                    <div className="rounded border border-border/60 p-2"><div className="text-xs text-muted-foreground uppercase">ledger events</div><div className="text-lg tabular-nums">{analytics.summary?.ledger?.events ?? '—'}</div></div>
+                    <div className="rounded border border-border/60 p-2"><div className="text-xs text-muted-foreground uppercase">events / day</div><div className="text-lg tabular-nums">{fmtNum(analytics.churn?.events_per_day, 2)}</div></div>
+                    <div className="rounded border border-border/60 p-2"><div className="text-xs text-muted-foreground uppercase">entities changed</div><div className="text-lg tabular-nums">{analytics.change_rate?.count ?? '—'}</div></div>
+                    <div className="rounded border border-border/60 p-2"><div className="text-xs text-muted-foreground uppercase">contradictions</div><div className="text-lg tabular-nums">{(analytics.summary?.coherence || []).find(c => c.verdict === 'contradiction')?.count ?? 0}</div></div>
                   </div>
 
                   {analytics.summary?.ledger?.by_transition?.length > 0 && (
@@ -381,12 +381,12 @@ export default function System() {
                   )}
 
                   {analytics.stability && (
-                    <div className="mt-3 rounded border border-border/60 px-2.5 py-2 text-[11px]">
-                      <span className="text-muted-foreground/70">stability index (beliefs): </span>
+                    <div className="mt-3 rounded border border-border/60 px-2.5 py-2 text-[13px]">
+                      <span className="text-muted-foreground">stability index (beliefs): </span>
                       <span className="text-foreground/85 tabular-nums">{fmtNum(analytics.stability.average_stability_index, 3)}</span>
-                      <span className="text-muted-foreground/70"> — {analytics.stability.reading}</span>
+                      <span className="text-muted-foreground"> — {analytics.stability.reading}</span>
                       {analytics.relationship_stability?.average_stability_index != null && (
-                        <span className="text-muted-foreground/60"> · relationships {fmtNum(analytics.relationship_stability.average_stability_index, 3)}</span>
+                        <span className="text-muted-foreground"> · relationships {fmtNum(analytics.relationship_stability.average_stability_index, 3)}</span>
                       )}
                     </div>
                   )}
@@ -395,10 +395,10 @@ export default function System() {
                     const max = Math.max(...analytics.churn.buckets.map(b => b.total), 1);
                     return (
                       <div className="mt-3 space-y-1">
-                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground/60">churn over time{analytics.churn.peak ? ` · peak ${fmtTime(analytics.churn.peak.bucket)}` : ''}</div>
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">churn over time{analytics.churn.peak ? ` · peak ${fmtTime(analytics.churn.peak.bucket)}` : ''}</div>
                         {analytics.churn.buckets.map(b => (
-                          <div key={b.bucket_ms} className="flex items-center gap-2 text-[11px]">
-                            <span className="text-muted-foreground/70 w-28 truncate tabular-nums">{new Date(b.bucket_ms).toLocaleDateString()}</span>
+                          <div key={b.bucket_ms} className="flex items-center gap-2 text-[13px]">
+                            <span className="text-muted-foreground w-28 truncate tabular-nums">{new Date(b.bucket_ms).toLocaleDateString()}</span>
                             <div className="h-1.5 rounded-full bg-muted flex-1 overflow-hidden"><div className="h-full rounded-full bg-primary/60" style={{ width: `${Math.max(2, (b.total / max) * 100)}%` }} /></div>
                             <span className="tabular-nums w-8 text-right">{b.total}</span>
                           </div>
@@ -409,12 +409,12 @@ export default function System() {
 
                   {analytics.change_rate?.entities?.length > 0 && (
                     <div className="mt-3 space-y-1">
-                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground/60">most-changed entities</div>
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">most-changed entities</div>
                       {analytics.change_rate.entities.slice(0, 12).map(m => (
-                        <div key={`${m.entity_type}:${m.entity_id}`} className="flex items-center gap-2 text-[11px]">
+                        <div key={`${m.entity_type}:${m.entity_id}`} className="flex items-center gap-2 text-[13px]">
                           <span className="text-foreground/80 w-20 shrink-0">{m.entity_type}</span>
-                          <button className="text-muted-foreground/80 hover:text-primary underline decoration-dotted truncate" onClick={() => { setTab('replay'); doReplay({ entityType: m.entity_type, entityId: m.entity_id, at: '' }); }}>{String(m.entity_id).slice(0, 22)}</button>
-                          <span className="ml-auto tabular-nums text-muted-foreground/70 shrink-0">{m.events} change(s) · {fmtNum(m.change_rate_per_day, 2)}/day · last {fmtTime(m.last_change)}</span>
+                          <button className="text-muted-foreground hover:text-primary underline decoration-dotted truncate" onClick={() => { setTab('replay'); doReplay({ entityType: m.entity_type, entityId: m.entity_id, at: '' }); }}>{String(m.entity_id).slice(0, 22)}</button>
+                          <span className="ml-auto tabular-nums text-muted-foreground shrink-0">{m.events} change(s) · {fmtNum(m.change_rate_per_day, 2)}/day · last {fmtTime(m.last_change)}</span>
                         </div>
                       ))}
                     </div>
@@ -429,33 +429,33 @@ export default function System() {
                       <div key={r.id} className="rounded border border-border/70 bg-muted/20 px-2.5 py-2 text-xs">
                         <div className="flex flex-wrap items-center gap-2">
                           <Pill tone={r.verdict === 'contradiction' ? 'warn' : r.verdict === 'coherent' || r.verdict === 'confirmation' ? 'ok' : r.verdict === 'error' ? 'bad' : 'muted'}>{r.verdict}</Pill>
-                          <span className="text-muted-foreground/70">{fmtTime(r.created_date || r.ts_ms)}</span>
-                          {r.run_id && <button className="text-muted-foreground/80 hover:text-primary underline decoration-dotted" onClick={() => { setTab('telemetry'); openRun(r.run_id); }}>run {String(r.run_id).slice(0, 16)}</button>}
-                          <span className="ml-auto tabular-nums text-muted-foreground/60">Δ confidence {fmtNum(r.confidence_delta)}</span>
+                          <span className="text-muted-foreground">{fmtTime(r.created_date || r.ts_ms)}</span>
+                          {r.run_id && <button className="text-muted-foreground hover:text-primary underline decoration-dotted" onClick={() => { setTab('telemetry'); openRun(r.run_id); }}>run {String(r.run_id).slice(0, 16)}</button>}
+                          <span className="ml-auto tabular-nums text-muted-foreground">Δ confidence {fmtNum(r.confidence_delta)}</span>
                         </div>
-                        <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-muted-foreground/60">
+                        <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
                           {r.checked ? <span>checked</span> : <span>not checked{r.skip_reason ? ` — ${r.skip_reason}` : ''}</span>}
                           {r.draft_shipped != null && <span>draft shipped: {String(r.draft_shipped)}</span>}
                           {(r.belief_ids || []).length > 0 && <span>{r.belief_ids.length} belief(s) considered</span>}
                           {r.model_used && <span>monitor model {r.model_used}</span>}
                           {r.latency_ms != null && <span>{fmtMs(r.latency_ms)}</span>}
                         </div>
-                        {r.note && <p className="mt-1 text-[11px] text-muted-foreground/80">{r.note}</p>}
+                        {r.note && <p className="mt-1 text-[13px] text-muted-foreground">{r.note}</p>}
                         {(r.contradictions || []).length > 0 && (
-                          <div className="mt-1.5 rounded border border-yellow-500/30 bg-yellow-500/5 px-2 py-1.5 text-[11px]">
-                            <div className="text-[10px] uppercase tracking-wide text-yellow-500/80 mb-1">both claims, with lineage — a transition, not an error</div>
+                          <div className="mt-1.5 rounded border border-yellow-500/30 bg-yellow-500/5 px-2 py-1.5 text-[13px]">
+                            <div className="text-xs uppercase tracking-wide text-yellow-500/80 mb-1">both claims, with lineage — a transition, not an error</div>
                             {r.contradictions.map((c, i) => (
-                              <div key={i} className="text-muted-foreground/90">
+                              <div key={i} className="text-muted-foreground">
                                 “{String(c.claim || '').slice(0, 160)}”
-                                {c.confidence != null && <span className="text-muted-foreground/60"> · confidence now {fmtNum(c.confidence)}</span>}
-                                {c.prev_confidence != null && <span className="text-muted-foreground/60"> (was {fmtNum(c.prev_confidence)})</span>}
-                                {c.belief_id && <button className="ml-1 text-muted-foreground/60 hover:text-primary underline decoration-dotted" onClick={() => { setTab('replay'); doReplay({ entityType: 'belief', entityId: c.belief_id, at: '' }); }}>{String(c.belief_id).slice(0, 14)}</button>}
+                                {c.confidence != null && <span className="text-muted-foreground"> · confidence now {fmtNum(c.confidence)}</span>}
+                                {c.prev_confidence != null && <span className="text-muted-foreground"> (was {fmtNum(c.prev_confidence)})</span>}
+                                {c.belief_id && <button className="ml-1 text-muted-foreground hover:text-primary underline decoration-dotted" onClick={() => { setTab('replay'); doReplay({ entityType: 'belief', entityId: c.belief_id, at: '' }); }}>{String(c.belief_id).slice(0, 14)}</button>}
                               </div>
                             ))}
                           </div>
                         )}
                         {(r.confirmations || []).length > 0 && (
-                          <div className="mt-1.5 text-[11px] text-muted-foreground/80">
+                          <div className="mt-1.5 text-[13px] text-muted-foreground">
                             confirmed: {r.confirmations.map(c => `“${String(c.claim || '').slice(0, 60)}”`).join(' · ')}
                           </div>
                         )}
@@ -470,9 +470,9 @@ export default function System() {
                   <div className="space-y-1">
                     {beliefs.map(b => (
                       <div key={b.id} className="flex items-start gap-2 text-xs rounded border border-border/50 px-2 py-1.5">
-                        <button className="text-muted-foreground/70 hover:text-primary underline decoration-dotted shrink-0" onClick={() => { setTab('replay'); doReplay({ entityType: 'belief', entityId: b.id, at: '' }); }}>{String(b.id).slice(0, 14)}</button>
+                        <button className="text-muted-foreground hover:text-primary underline decoration-dotted shrink-0" onClick={() => { setTab('replay'); doReplay({ entityType: 'belief', entityId: b.id, at: '' }); }}>{String(b.id).slice(0, 14)}</button>
                         <span className="text-foreground/85 flex-1">{String(b.statement || b.content || '').slice(0, 160)}</span>
-                        <span className="tabular-nums text-muted-foreground/70 shrink-0">{fmtNum(b.confidence)} · {b.status}</span>
+                        <span className="tabular-nums text-muted-foreground shrink-0">{fmtNum(b.confidence)} · {b.status}</span>
                       </div>
                     ))}
                   </div>
@@ -488,15 +488,15 @@ export default function System() {
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                     {summary.summary.map(s => (
                       <div key={s.strategy_id || 'all'} className="rounded border border-border/60 p-2">
-                        <div className="text-[10px] text-muted-foreground/60 uppercase truncate">{s.strategy_id || 'strategy'}</div>
+                        <div className="text-xs text-muted-foreground uppercase truncate">{s.strategy_id || 'strategy'}</div>
                         <div className="text-lg tabular-nums">{s.runs}</div>
-                        <div className="text-[10px] text-muted-foreground/70">runs · {fmtMs(s.avg_latency_ms)} avg · {fmtMoney(s.avg_cost_usd)} avg</div>
-                        <div className="text-[10px] text-muted-foreground/70">veto rate {fmtNum(s.veto_rate)} · errors {fmtNum(s.error_rate)} · contradictions {s.contradictions ?? 0}</div>
+                        <div className="text-xs text-muted-foreground">runs · {fmtMs(s.avg_latency_ms)} avg · {fmtMoney(s.avg_cost_usd)} avg</div>
+                        <div className="text-xs text-muted-foreground">veto rate {fmtNum(s.veto_rate)} · errors {fmtNum(s.error_rate)} · contradictions {s.contradictions ?? 0}</div>
                       </div>
                     ))}
                   </div>
                   {summary.switchAnalysis && (
-                    <div className="mt-2 text-[11px] text-muted-foreground">
+                    <div className="mt-2 text-[13px] text-muted-foreground">
                       switch analysis: <span className="text-foreground/80">{summary.switchAnalysis.switch ? 'would switch' : 'no switch'}</span> — {summary.switchAnalysis.reason || 'observe mode'}
                     </div>
                   )}
@@ -510,13 +510,13 @@ export default function System() {
                       <button key={r.id} onClick={() => openRun(r.id)} className="w-full text-left rounded border border-border/60 hover:border-primary/40 px-2.5 py-2 text-xs">
                         <div className="flex flex-wrap items-center gap-2">
                           <Pill tone={r.status === 'success' ? 'ok' : r.status === 'vetoed' ? 'warn' : r.status === 'cancelled' ? 'muted' : 'bad'}>{r.status}</Pill>
-                          <span className="text-muted-foreground/80 truncate">{String(r.id).slice(0, 20)}</span>
+                          <span className="text-muted-foreground truncate">{String(r.id).slice(0, 20)}</span>
                           {r.vetoed && <Pill tone="warn">vetoed</Pill>}
                           {r.coherence_verdict === 'contradiction' && <Pill tone="warn">contradiction</Pill>}
                           {(r.failure_count || 0) > 0 && <Pill tone="bad">{r.failure_count} failure(s)</Pill>}
-                          <span className="ml-auto tabular-nums text-muted-foreground/70">{fmtMs(r.latency_ms)} · {fmtMoney(r.cost_usd)} · {r.ledger_events ?? 0} events</span>
+                          <span className="ml-auto tabular-nums text-muted-foreground">{fmtMs(r.latency_ms)} · {fmtMoney(r.cost_usd)} · {r.ledger_events ?? 0} events</span>
                         </div>
-                        <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-muted-foreground/60">
+                        <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
                           <span>{fmtTime(r.started_ms)}</span>
                           {r.models?.length > 0 && <span>models: {r.models.join(', ')}</span>}
                           <span>tokens {r.tokens_total ?? 0}{r.tokens_measured ? '' : ' (estimated)'}</span>
@@ -530,65 +530,65 @@ export default function System() {
               </Card>
 
               {runDetail && (
-                <Card title={`Run ${String(runDetail.id).slice(0, 24)}`} subtitle="Stages, model calls, ledger events and the adaptive observation for one run." action={<button onClick={() => setRunDetail(null)} className="text-[10px] text-muted-foreground hover:text-foreground">close</button>}>
+                <Card title={`Run ${String(runDetail.id).slice(0, 24)}`} subtitle="Stages, model calls, ledger events and the adaptive observation for one run." action={<button onClick={() => setRunDetail(null)} className="text-xs text-muted-foreground hover:text-foreground">close</button>}>
                   <div className="space-y-3">
                     <div>
-                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">stages</div>
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">stages</div>
                       {(runDetail.stage_order || []).map(st => (
-                        <div key={st.stage} className="flex items-center gap-2 text-[11px] py-0.5">
-                          <span className="text-muted-foreground/80 w-36 truncate">{st.stage}{st.runs > 1 ? ` ×${st.runs}` : ''}</span>
+                        <div key={st.stage} className="flex items-center gap-2 text-[13px] py-0.5">
+                          <span className="text-muted-foreground w-36 truncate">{st.stage}{st.runs > 1 ? ` ×${st.runs}` : ''}</span>
                           <div className="h-1.5 rounded-full bg-muted flex-1 overflow-hidden"><div className={`h-full rounded-full ${st.lastStatus === 'error' ? 'bg-destructive' : 'bg-primary/60'}`} style={{ width: `${Math.max(2, (Number(st.totalMs || 0) / Math.max(1, runDetail.latency_ms || 1)) * 100)}%` }} /></div>
                           <span className="tabular-nums w-16 text-right">{fmtMs(st.totalMs)}</span>
-                          <span className="text-[10px] text-muted-foreground/50 w-28 text-right truncate">{st.model || ''} · {st.tokens ?? 0} tok</span>
+                          <span className="text-xs text-muted-foreground w-28 text-right truncate">{st.model || ''} · {st.tokens ?? 0} tok</span>
                         </div>
                       ))}
                       {(runDetail.stage_order || []).length === 0 && <Empty>No stages recorded.</Empty>}
                     </div>
                     <div>
-                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">model calls</div>
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">model calls</div>
                       {(runDetail.calls || []).map(c => (
-                        <div key={c.id} className="flex flex-wrap gap-2 text-[11px] rounded border border-border/50 px-2 py-1">
+                        <div key={c.id} className="flex flex-wrap gap-2 text-[13px] rounded border border-border/50 px-2 py-1">
                           <Pill tone={c.status === 'success' ? 'ok' : 'bad'}>{c.purpose || c.stage || 'call'}</Pill>
-                          <span className="text-muted-foreground/80">{c.model}</span>
-                          <span className="tabular-nums text-muted-foreground/70">{fmtMs(c.latency_ms)} · {c.tokens_total ?? 0} tok{c.tokens_measured ? '' : ' est'} · {fmtMoney(c.cost_usd)}</span>
+                          <span className="text-muted-foreground">{c.model}</span>
+                          <span className="tabular-nums text-muted-foreground">{fmtMs(c.latency_ms)} · {c.tokens_total ?? 0} tok{c.tokens_measured ? '' : ' est'} · {fmtMoney(c.cost_usd)}</span>
                           {c.error_class && <Pill tone="bad">{c.error_class}</Pill>}
-                          {c.http_status && <span className="text-muted-foreground/60">HTTP {c.http_status}</span>}
-                          {c.attempt > 1 && <span className="text-muted-foreground/60">attempt {c.attempt}</span>}
+                          {c.http_status && <span className="text-muted-foreground">HTTP {c.http_status}</span>}
+                          {c.attempt > 1 && <span className="text-muted-foreground">attempt {c.attempt}</span>}
                         </div>
                       ))}
                       {(runDetail.calls || []).length === 0 && <Empty>No model calls recorded.</Empty>}
                     </div>
                     {runDetail.failures?.length > 0 && (
                       <div>
-                        <div className="text-[10px] uppercase tracking-wide text-destructive/70 mb-1">documented failures — {runDetail.failures.length}</div>
+                        <div className="text-xs uppercase tracking-wide text-destructive/70 mb-1">documented failures — {runDetail.failures.length}</div>
                         {runDetail.failures.map((f, i) => (
-                          <div key={i} className="rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-[11px] mb-1">
+                          <div key={i} className="rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-[13px] mb-1">
                             <Pill tone="bad">{f.kind || f.type || 'failure'}</Pill>
-                            <span className="text-muted-foreground/85 ml-2">{f.stage ? `${f.stage} · ` : ''}{f.model ? `${f.model} · ` : ''}{f.message || f.error_message || 'no message'}</span>
-                            <span className="text-muted-foreground/50 ml-2">{f.http_status ? `HTTP ${f.http_status} · ` : ''}{fmtTime(f.at)}{f.recovered ? ' · recovered' : ''}</span>
+                            <span className="text-muted-foreground ml-2">{f.stage ? `${f.stage} · ` : ''}{f.model ? `${f.model} · ` : ''}{f.message || f.error_message || 'no message'}</span>
+                            <span className="text-muted-foreground ml-2">{f.http_status ? `HTTP ${f.http_status} · ` : ''}{fmtTime(f.at)}{f.recovered ? ' · recovered' : ''}</span>
                           </div>
                         ))}
                       </div>
                     )}
                     {runDetail.vetoed && (
-                      <div className="rounded border border-yellow-500/30 bg-yellow-500/5 px-2 py-1.5 text-[11px]">
+                      <div className="rounded border border-yellow-500/30 bg-yellow-500/5 px-2 py-1.5 text-[13px]">
                         <span className="text-yellow-500/90">veto raised</span> — draft from <span className="text-foreground/80">{runDetail.veto_draft_origin || 'unknown'}</span>, refused by the Governor: {runDetail.veto_reason || 'flag'}. The draft itself is not stored; only its length and digest. Nothing was written to memory or the conversation summary.
                       </div>
                     )}
                     {runDetail.adaptive_decision && (
                       <div>
-                        <div className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">adaptive observation (observe mode)</div>
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">adaptive observation (observe mode)</div>
                         <Json value={runDetail.adaptive_decision} />
                       </div>
                     )}
                     <div>
-                      <div className="text-[10px] uppercase tracking-wide text-muted-foreground/60 mb-1">ledger events for this run — {runDetail.ledger_events?.length ?? 0}</div>
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">ledger events for this run — {runDetail.ledger_events?.length ?? 0}</div>
                       {(runDetail.ledger_events || []).map(e => (
-                        <div key={e.id} className="flex flex-wrap gap-2 items-center text-[11px] py-0.5">
-                          <span className="tabular-nums text-muted-foreground/50">#{e.seq}</span>
+                        <div key={e.id} className="flex flex-wrap gap-2 items-center text-[13px] py-0.5">
+                          <span className="tabular-nums text-muted-foreground">#{e.seq}</span>
                           <Pill tone="info">{e.transition}</Pill>
-                          <span className="text-muted-foreground/70">{e.entity_type}:{String(e.entity_id).slice(0, 16)}</span>
-                          <span className="ml-auto text-muted-foreground/50">{fmtTime(e.ts_ms)}</span>
+                          <span className="text-muted-foreground">{e.entity_type}:{String(e.entity_id).slice(0, 16)}</span>
+                          <span className="ml-auto text-muted-foreground">{fmtTime(e.ts_ms)}</span>
                         </div>
                       ))}
                     </div>
@@ -612,62 +612,62 @@ export default function System() {
                     <div className="flex flex-wrap items-center gap-2">
                       <Pill tone={l.layer === 'charter' ? 'info' : 'muted'}>{l.layer}</Pill>
                       <span className="font-medium text-foreground/90">{l.name}</span>
-                      <span className="text-muted-foreground/60">{l.id}</span>
-                      <span className="ml-auto text-[10px] text-muted-foreground/50">{l.source}</span>
+                      <span className="text-muted-foreground">{l.id}</span>
+                      <span className="ml-auto text-xs text-muted-foreground">{l.source}</span>
                     </div>
-                    <p className="mt-1 text-muted-foreground/85 leading-snug">{l.statement}</p>
-                    {l.forbids?.length > 0 && <p className="mt-1 text-[10px] text-muted-foreground/60">forbids: {l.forbids.join(' · ')}</p>}
+                    <p className="mt-1 text-muted-foreground leading-snug">{l.statement}</p>
+                    {l.forbids?.length > 0 && <p className="mt-1 text-xs text-muted-foreground">forbids: {l.forbids.join(' · ')}</p>}
                   </div>
                 ))}
               </Card>
 
               <Card title="Policy Engine" subtitle="Propose an architectural adaptation. The gate judges it, records the judgment in the Improvement Ledger — refusals included — and in v1 applies nothing at runtime except strategy-registry rows.">
                 <div className="grid sm:grid-cols-2 gap-2 text-xs">
-                  <label className="text-[10px] text-muted-foreground/70">
+                  <label className="text-xs text-muted-foreground">
                     action
                     <select className="mt-0.5 block w-full bg-muted/50 border border-border rounded px-2 py-1 text-xs" value={proposal.action} onChange={(e) => setProposal(p => ({ ...p, action: e.target.value }))}>
                       {Object.keys(policy?.gatedActions || {}).map(a => <option key={a} value={a}>{a}</option>)}
                     </select>
                   </label>
-                  <label className="text-[10px] text-muted-foreground/70">
+                  <label className="text-xs text-muted-foreground">
                     target (model id, strategy id, table, law id…)
                     <input className="mt-0.5 block w-full bg-muted/50 border border-border rounded px-2 py-1 text-xs" value={proposal.target} onChange={(e) => setProposal(p => ({ ...p, target: e.target.value }))} placeholder="gpt-5-mini" />
                   </label>
-                  <label className="text-[10px] text-muted-foreground/70 sm:col-span-2">
+                  <label className="text-xs text-muted-foreground sm:col-span-2">
                     cited law ids (comma separated — at least one real law must be cited)
                     <input className="mt-0.5 block w-full bg-muted/50 border border-border rounded px-2 py-1 text-xs" value={proposal.law_refs} onChange={(e) => setProposal(p => ({ ...p, law_refs: e.target.value }))} placeholder="charter.evidence, pin.model_ban" />
                   </label>
-                  <label className="text-[10px] text-muted-foreground/70 sm:col-span-2">
+                  <label className="text-xs text-muted-foreground sm:col-span-2">
                     justification (at least 20 characters — this is what gets recorded in the Improvement Ledger)
                     <input className="mt-0.5 block w-full bg-muted/50 border border-border rounded px-2 py-1 text-xs" value={proposal.justification} onChange={(e) => setProposal(p => ({ ...p, justification: e.target.value }))} placeholder="charter.evidence: the council must only assert what it can verify" />
                   </label>
-                  <label className="text-[10px] text-muted-foreground/70 sm:col-span-2">
+                  <label className="text-xs text-muted-foreground sm:col-span-2">
                     evidence (optional; without it the gate reports evidenceSufficient: false)
                     <input className="mt-0.5 block w-full bg-muted/50 border border-border rounded px-2 py-1 text-xs" value={proposal.evidence} onChange={(e) => setProposal(p => ({ ...p, evidence: e.target.value }))} placeholder="telemetry run run_abc123: p50 latency 4100ms vs 6900ms" />
                   </label>
                 </div>
                 <div className="mt-2 flex items-center gap-2">
                   <button onClick={submitProposal} className="px-3 py-1.5 rounded-lg bg-primary/15 text-primary text-xs hover:bg-primary/25">Submit to the gate</button>
-                  <span className="text-[10px] text-muted-foreground/60">The default proposal is already a refusal: <code className="bg-muted px-1 rounded">change_model → gpt_5_4</code> is on the banned list. Try <code className="bg-muted px-1 rounded">add_auth</code>, <code className="bg-muted px-1 rounded">weaken_veto</code>, <code className="bg-muted px-1 rounded">register_operator</code> or <code className="bg-muted px-1 rounded">modify_law</code> — all refused and logged.</span>
+                  <span className="text-xs text-muted-foreground">The default proposal is already a refusal: <code className="bg-muted px-1 rounded">change_model → gpt_5_4</code> is on the banned list. Try <code className="bg-muted px-1 rounded">add_auth</code>, <code className="bg-muted px-1 rounded">weaken_veto</code>, <code className="bg-muted px-1 rounded">register_operator</code> or <code className="bg-muted px-1 rounded">modify_law</code> — all refused and logged.</span>
                 </div>
                 {proposalResult && (
                   <div className={`mt-3 rounded border px-2.5 py-2 text-xs ${proposalResult.decision === 'approved' ? 'border-green-500/30 bg-green-500/5' : 'border-destructive/30 bg-destructive/5'}`}>
                     <div className="flex flex-wrap items-center gap-2">
                       <Pill tone={proposalResult.decision === 'approved' ? 'ok' : 'bad'}>{proposalResult.decision || 'refused'}</Pill>
-                      <span className="text-muted-foreground/80">{proposalResult.action || proposal.action}</span>
-                      {proposalResult.applied != null && <span className="text-muted-foreground/60">applied: {String(proposalResult.applied)}</span>}
+                      <span className="text-muted-foreground">{proposalResult.action || proposal.action}</span>
+                      {proposalResult.applied != null && <span className="text-muted-foreground">applied: {String(proposalResult.applied)}</span>}
                     </div>
                     {(proposalResult.violations || proposalResult.reasons || []).map((v, i) => (
                       <p key={i} className="mt-1 text-destructive/90">· {typeof v === 'string' ? v : `${v.law}${v.law_name ? ` (${v.law_name})` : ''}: ${v.reason}`}</p>
                     ))}
-                    {proposalResult.lawRefs?.length > 0 && <p className="mt-1 text-muted-foreground/80">cited laws: {proposalResult.lawRefs.join(', ')}</p>}
-                    {proposalResult.law && <p className="mt-1 text-muted-foreground/80">law: {proposalResult.law}</p>}
-                    {proposalResult.requiredJustification && <p className="mt-1 text-muted-foreground/70">requires: {proposalResult.requiredJustification}</p>}
-                    {proposalResult.evidenceSufficient != null && <p className="mt-1 text-[10px] text-muted-foreground/60">evidence sufficient: {String(proposalResult.evidenceSufficient)}</p>}
-                    {proposalResult.justification && <p className="mt-1 text-[10px] text-muted-foreground/60">justification recorded: “{proposalResult.justification}”</p>}
-                    {proposalResult.lawRefs?.length > 0 && <p className="mt-1 text-[10px] text-muted-foreground/60">laws cited: {proposalResult.lawRefs.join(', ')}</p>}
-                    {proposalResult.unknownLawRefs?.length > 0 && <p className="mt-1 text-[10px] text-destructive/80">unknown law refs: {proposalResult.unknownLawRefs.join(', ')}</p>}
-                    {proposalResult.ledger?.id && <p className="mt-1 text-[10px] text-muted-foreground/60">Improvement Ledger row {proposalResult.ledger.id} — decision “{proposalResult.ledger.decision}”, applied {String(proposalResult.ledger.applied)}</p>}
+                    {proposalResult.lawRefs?.length > 0 && <p className="mt-1 text-muted-foreground">cited laws: {proposalResult.lawRefs.join(', ')}</p>}
+                    {proposalResult.law && <p className="mt-1 text-muted-foreground">law: {proposalResult.law}</p>}
+                    {proposalResult.requiredJustification && <p className="mt-1 text-muted-foreground">requires: {proposalResult.requiredJustification}</p>}
+                    {proposalResult.evidenceSufficient != null && <p className="mt-1 text-xs text-muted-foreground">evidence sufficient: {String(proposalResult.evidenceSufficient)}</p>}
+                    {proposalResult.justification && <p className="mt-1 text-xs text-muted-foreground">justification recorded: “{proposalResult.justification}”</p>}
+                    {proposalResult.lawRefs?.length > 0 && <p className="mt-1 text-xs text-muted-foreground">laws cited: {proposalResult.lawRefs.join(', ')}</p>}
+                    {proposalResult.unknownLawRefs?.length > 0 && <p className="mt-1 text-xs text-destructive/80">unknown law refs: {proposalResult.unknownLawRefs.join(', ')}</p>}
+                    {proposalResult.ledger?.id && <p className="mt-1 text-xs text-muted-foreground">Improvement Ledger row {proposalResult.ledger.id} — decision “{proposalResult.ledger.decision}”, applied {String(proposalResult.ledger.applied)}</p>}
                     {proposalResult.error && <p className="mt-1 text-destructive/90">{proposalResult.error}</p>}
                   </div>
                 )}
@@ -681,14 +681,14 @@ export default function System() {
                         <div className="flex flex-wrap items-center gap-2">
                           <Pill tone={im.decision === 'approved' ? 'ok' : 'bad'}>{im.decision}</Pill>
                           <span className="text-foreground/85">{im.action}</span>
-                          {im.target && <span className="text-muted-foreground/70">{im.target}</span>}
+                          {im.target && <span className="text-muted-foreground">{im.target}</span>}
                           {im.reverted && <Pill tone="warn">reverted</Pill>}
                           {im.applied && <Pill tone="info">applied</Pill>}
-                          <span className="ml-auto text-[10px] text-muted-foreground/60">{fmtTime(im.ts_ms || im.created_date)}</span>
+                          <span className="ml-auto text-xs text-muted-foreground">{fmtTime(im.ts_ms || im.created_date)}</span>
                         </div>
-                        {im.justification && <p className="mt-1 text-muted-foreground/80">“{im.justification}”</p>}
+                        {im.justification && <p className="mt-1 text-muted-foreground">“{im.justification}”</p>}
                         {(im.law_refs?.length || im.reasons?.length || im.evidence) && (
-                          <p className="mt-1 text-[10px] text-muted-foreground/60">
+                          <p className="mt-1 text-xs text-muted-foreground">
                             {im.law_refs?.length ? `laws: ${im.law_refs.join(', ')}` : ''}
                             {im.reasons?.length ? `${im.law_refs?.length ? ' · ' : ''}reasons: ${im.reasons.join(' · ')}` : ''}
                             {im.evidence ? ` · evidence: ${JSON.stringify(im.evidence).slice(0, 200)}` : ''}

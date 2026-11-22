@@ -42,7 +42,7 @@ function IdeaCard({ idea, busy, onAccept, onDismiss }) {
                   return (
                     <span
                       key={i}
-                      className="flex items-center gap-1 rounded-full border border-border bg-card px-2 py-0.5 text-[10px] text-muted-foreground"
+                      className="flex items-center gap-1 rounded-full border border-border bg-card px-2 py-0.5 text-xs text-muted-foreground"
                       title={ev.id || ev.kind}
                     >
                       <Icon className="w-3 h-3" />
@@ -73,7 +73,7 @@ function IdeaCard({ idea, busy, onAccept, onDismiss }) {
           <X className="w-3.5 h-3.5" /> Dismiss
         </Btn>
         {idea.prompt && (
-          <details className="ml-auto text-[10px] text-muted-foreground">
+          <details className="ml-auto text-xs text-muted-foreground">
             <summary className="cursor-pointer hover:text-foreground">See the plan</summary>
             <p className="mt-1 whitespace-pre-wrap leading-relaxed">{idea.prompt}</p>
           </details>
@@ -158,7 +158,7 @@ export default function IdeasTab() {
           <Lightbulb className="w-3.5 h-3.5 text-warn shrink-0" />
           <div className="flex-1 min-w-0">
             <h3 className="text-xs font-semibold">Ideas</h3>
-            <p className="text-[10px] text-muted-foreground/70 leading-snug">
+            <p className="text-xs text-muted-foreground leading-snug">
               Gentle suggestions from the loop — goals without a plan, residents without a job. Take one or leave it.
             </p>
           </div>
@@ -175,10 +175,10 @@ export default function IdeasTab() {
       </div>
 
       {error && (
-        <p className="text-[11px] text-destructive px-1">{error}</p>
+        <p className="text-[13px] text-destructive px-1">{error}</p>
       )}
       {lastNote && !error && (
-        <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground px-1">
+        <p className="flex items-center gap-1.5 text-[13px] text-muted-foreground px-1">
           <CircleCheck className="w-3.5 h-3.5 text-ok" /> {lastNote}
         </p>
       )}

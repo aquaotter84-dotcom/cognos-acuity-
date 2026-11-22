@@ -66,7 +66,7 @@ export default function LiveCouncil({ live }) {
           : <Loader2 className="w-3.5 h-3.5 animate-spin text-primary shrink-0" />}
         <Brain className="w-3.5 h-3.5 text-accent shrink-0" />
         <span className="font-medium text-muted-foreground truncate">{friendly}</span>
-        <span className="ml-auto flex items-center gap-1 text-muted-foreground/70 shrink-0">
+        <span className="ml-auto flex items-center gap-1 text-muted-foreground shrink-0">
           Details
           <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
         </span>
@@ -84,43 +84,43 @@ export default function LiveCouncil({ live }) {
               <span className={s.status === 'running' ? 'text-foreground' : 'text-muted-foreground'}>
                 {STAGE_LABELS[s.stage] || s.stage}
               </span>
-              {s.ms != null && <span className="ml-auto tabular-nums text-muted-foreground/60">{(s.ms / 1000).toFixed(1)}s</span>}
+              {s.ms != null && <span className="ml-auto tabular-nums text-muted-foreground">{(s.ms / 1000).toFixed(1)}s</span>}
             </div>
           ))}
 
           {contextWindow && (
-            <p className="text-muted-foreground/70 pt-1">
+            <p className="text-muted-foreground pt-1">
               context: {contextWindow.estimatedInputTokens ?? 0}/{contextWindow.maxInputTokens ?? '?'} estimated tokens
               {contextWindow.memoryLayers?.length ? ` · memory ${contextWindow.memoryLayers.join(', ')}` : ''}
             </p>
           )}
           {agent && agent.mode !== 'off' && (
-            <p className="text-muted-foreground/70 pt-1">
+            <p className="text-muted-foreground pt-1">
               agent: {agent.mode.replace('_', ' ')} · {agent.status} · {(agent.steps || []).filter(step => step.status === 'completed').length}/{(agent.steps || []).length} reads
             </p>
           )}
           {(agent?.steps || []).filter(step => step.status === 'failed' && step.error).map(step => (
-            <p key={step.id || step.ordinal} className="text-muted-foreground/70 pt-1">
+            <p key={step.id || step.ordinal} className="text-muted-foreground pt-1">
               read {step.ordinal ?? '?' } failed: {String(step.error).slice(0, 220)}
             </p>
           ))}
           {classification && (
-            <p className="text-muted-foreground/70 pt-1">
+            <p className="text-muted-foreground pt-1">
               {classification.task_type} · {classification.complexity}
               {classification.intent ? ` · ${classification.intent}` : ''}
             </p>
           )}
           {webSearch?.query && (
-            <p className="flex items-start gap-1.5 text-muted-foreground/70">
+            <p className="flex items-start gap-1.5 text-muted-foreground">
               <Search className="w-3 h-3 mt-0.5 shrink-0" /> {webSearch.query}
             </p>
           )}
-          {plan && <p className="text-muted-foreground/70">plan: {plan}</p>}
+          {plan && <p className="text-muted-foreground">plan: {plan}</p>}
           {critic && !critic.skipped && critic.score != null && (
-            <p className="text-muted-foreground/70">critic: {critic.score}/10</p>
+            <p className="text-muted-foreground">critic: {critic.score}/10</p>
           )}
           {governor && (
-            <p className="flex items-center gap-1.5 text-muted-foreground/70">
+            <p className="flex items-center gap-1.5 text-muted-foreground">
               <ShieldCheck className="w-3 h-3" /> {governor.approved ? 'approved' : `flagged: ${(governor.flags || []).join(', ')}`}
             </p>
           )}

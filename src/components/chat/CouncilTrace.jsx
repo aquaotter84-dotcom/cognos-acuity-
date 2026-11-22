@@ -15,7 +15,7 @@ import { ChevronRight, Brain, ShieldCheck, AlertTriangle, RefreshCw } from 'luci
 function Section({ title, children }) {
   return (
     <div>
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/60 mb-1.5">{title}</div>
+      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">{title}</div>
       <div className="space-y-1">{children}</div>
     </div>
   );
@@ -25,7 +25,7 @@ function Field({ label, value }) {
   if (!value) return null;
   return (
     <div className="flex gap-1.5">
-      <span className="text-muted-foreground/60">{label}:</span>
+      <span className="text-muted-foreground">{label}:</span>
       <span className="text-foreground/80">{String(value)}</span>
     </div>
   );
@@ -63,7 +63,7 @@ export default function CouncilTrace({ council }) {
         <ChevronRight className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-90' : ''}`} />
         <Brain className="w-3.5 h-3.5 text-accent" />
         <span className="font-medium text-muted-foreground">Council</span>
-        <span className="text-muted-foreground/70 truncate flex-1 text-left">{summary}</span>
+        <span className="text-muted-foreground truncate flex-1 text-left">{summary}</span>
         {score != null && !critic?.skipped && (
           <span className={`px-1.5 py-0.5 rounded font-medium ${score >= 7 ? 'text-green-400' : score >= 5 ? 'text-yellow-400' : 'text-red-400'}`}>
             {score}/10
@@ -79,7 +79,7 @@ export default function CouncilTrace({ council }) {
                 {['truth', 'evidence', 'agency', 'dignity'].map(p => {
                   const ok = critic.charter[p];
                   return (
-                    <span key={p} className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase ${ok ? 'text-green-400 bg-green-400/10' : 'text-red-400 bg-red-400/10'}`}>
+                    <span key={p} className={`px-1.5 py-0.5 rounded text-xs font-medium uppercase ${ok ? 'text-green-400 bg-green-400/10' : 'text-red-400 bg-red-400/10'}`}>
                       {p}
                     </span>
                   );
@@ -99,7 +99,7 @@ export default function CouncilTrace({ council }) {
                 return (
                   <div key={m.id} className="flex items-start gap-1.5">
                     {ev && <span className={`mt-0.5 px-1 py-0.5 rounded text-[9px] font-medium uppercase shrink-0 ${evColor}`}>{ev}</span>}
-                    <p className="text-muted-foreground/80 leading-relaxed flex-1">{m.layer ? <span className="text-primary/70 mr-1">{m.layer}{m.key ? `:${m.key}` : ''}</span> : null}{m.preview}</p>
+                    <p className="text-muted-foreground leading-relaxed flex-1">{m.layer ? <span className="text-primary/70 mr-1">{m.layer}{m.key ? `:${m.key}` : ''}</span> : null}{m.preview}</p>
                   </div>
                 );
               })}
@@ -111,7 +111,7 @@ export default function CouncilTrace({ council }) {
               <Field label="status" value={agent.status} />
               <Field label="writes" value={agent.autonomousWrites ? 'enabled' : 'none'} />
               {(agent.steps || []).map(step => (
-                <div key={step.id || step.ordinal} className="flex gap-2 text-muted-foreground/80">
+                <div key={step.id || step.ordinal} className="flex gap-2 text-muted-foreground">
                   <span className={step.status === 'completed' ? 'text-green-400' : step.status === 'failed' ? 'text-red-400' : 'text-muted-foreground'}>{step.status}</span>
                   <span>{step.tool}</span>
                   {step.error && <span className="truncate">— {step.error}</span>}
@@ -129,8 +129,8 @@ export default function CouncilTrace({ council }) {
                     <span className="font-medium text-foreground/80 truncate">{source.name}</span>
                     <span className="text-[9px] uppercase text-muted-foreground ml-auto">{source.kind}</span>
                   </div>
-                  <div className="text-[10px] text-muted-foreground/70 truncate">{source.id}{source.url ? ` · ${source.url}` : ''}</div>
-                  {source.riskFlags?.length > 0 && <div className="text-[10px] text-amber-500">untrusted-instruction flags: {source.riskFlags.join(', ')}</div>}
+                  <div className="text-xs text-muted-foreground truncate">{source.id}{source.url ? ` · ${source.url}` : ''}</div>
+                  {source.riskFlags?.length > 0 && <div className="text-xs text-amber-500">untrusted-instruction flags: {source.riskFlags.join(', ')}</div>}
                 </div>
               ))}
               <Field label="evidence" value={`${sourceEvidence?.chunksIncluded || 0} cited chunk(s), ${sourceEvidence?.charactersIncluded || 0} characters`} />
@@ -152,7 +152,7 @@ export default function CouncilTrace({ council }) {
             <Section title="Web Search">
               <Field label="Query" value={webSearch.query} />
               <p className="text-foreground/70 whitespace-pre-wrap line-clamp-8 leading-relaxed">{webSearch.results}</p>
-              {webSearch.model && <span className="text-muted-foreground/60 text-[10px]">via {webSearch.model}</span>}
+              {webSearch.model && <span className="text-muted-foreground text-xs">via {webSearch.model}</span>}
             </Section>
           )}
 
@@ -167,8 +167,8 @@ export default function CouncilTrace({ council }) {
               {subTasks.map((st, i) => (
                 <div key={st.id || i} className="rounded-md border border-border/60 p-2">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="px-1.5 py-0.5 rounded bg-accent/15 text-accent font-medium uppercase text-[10px]">{st.agent}</span>
-                    <span className={`text-[10px] ${st.status === 'complete' ? 'text-green-400' : st.status === 'error' ? 'text-red-400' : 'text-muted-foreground'}`}>
+                    <span className="px-1.5 py-0.5 rounded bg-accent/15 text-accent font-medium uppercase text-xs">{st.agent}</span>
+                    <span className={`text-xs ${st.status === 'complete' ? 'text-green-400' : st.status === 'error' ? 'text-red-400' : 'text-muted-foreground'}`}>
                       {st.status}
                     </span>
                   </div>
@@ -230,8 +230,8 @@ export default function CouncilTrace({ council }) {
                 return entries.map(([stage, t]) => (
                   <div key={stage}>
                     <div className="flex items-center gap-1.5">
-                      <span className="text-muted-foreground/80 flex-1 truncate">{stage}</span>
-                      {t.runs > 1 && <span className="text-muted-foreground/50">×{t.runs}</span>}
+                      <span className="text-muted-foreground flex-1 truncate">{stage}</span>
+                      {t.runs > 1 && <span className="text-muted-foreground">×{t.runs}</span>}
                       <span className="text-foreground/80 tabular-nums">{(t.totalMs / 1000).toFixed(1)}s</span>
                     </div>
                     <div className="h-1 rounded-full bg-muted mt-0.5 overflow-hidden">
@@ -241,7 +241,7 @@ export default function CouncilTrace({ council }) {
                 ));
               })()}
               {latencyMs != null && (
-                <div className="flex justify-between pt-1 text-muted-foreground/60 border-t border-border/40">
+                <div className="flex justify-between pt-1 text-muted-foreground border-t border-border/40">
                   <span>wall total</span>
                   <span className="tabular-nums">{(latencyMs / 1000).toFixed(1)}s</span>
                 </div>
@@ -265,12 +265,12 @@ export default function CouncilTrace({ council }) {
               {coherence && !coherence.checked && <Field label="coherence" value={`not checked — ${coherence.reason || 'monitor off'}`} />}
               {coherence?.contradictions?.length > 0 && (
                 <div className="space-y-1 rounded border border-yellow-500/30 bg-yellow-500/5 px-2 py-1.5">
-                  <div className="text-[10px] uppercase tracking-wide text-yellow-500/80">contradiction — logged as a transition, not an error</div>
+                  <div className="text-xs uppercase tracking-wide text-yellow-500/80">contradiction — logged as a transition, not an error</div>
                   {coherence.contradictions.map((c, i) => (
-                    <div key={i} className="text-muted-foreground/90">
+                    <div key={i} className="text-muted-foreground">
                       “{String(c.claim || '').slice(0, 140)}”
-                      {c.confidence != null && <span className="text-muted-foreground/60"> · confidence {Number(c.confidence).toFixed(2)}</span>}
-                      {c.beliefId && <span className="text-muted-foreground/50"> · belief {c.beliefId}</span>}
+                      {c.confidence != null && <span className="text-muted-foreground"> · confidence {Number(c.confidence).toFixed(2)}</span>}
+                      {c.beliefId && <span className="text-muted-foreground"> · belief {c.beliefId}</span>}
                     </div>
                   ))}
                 </div>
@@ -314,7 +314,7 @@ export default function CouncilTrace({ council }) {
             </Section>
           )}
 
-          <div className="flex items-center gap-3 text-muted-foreground/70 pt-1 border-t border-border/60">
+          <div className="flex items-center gap-3 text-muted-foreground pt-1 border-t border-border/60">
             {modelUsed && <span>model: {modelUsed}</span>}
             {latencyMs != null && <span>{(latencyMs / 1000).toFixed(1)}s</span>}
           </div>

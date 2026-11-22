@@ -39,7 +39,7 @@ import { api } from '@/lib/api';
 import { noteLocator } from '@/components/chat/GoalCard';
 import { useCognos } from '@/lib/cognosContext';
 import { Pill, Empty, ErrorNote } from '@/components/system/SystemUi';
-import { Btn, IconBtn, SectionCard, TextInput, TextArea, Select } from '@/components/ui/CognosUi';
+import { Btn, IconBtn, SectionCard, TextInput, TextArea, Select, useDialogFocus } from '@/components/ui/CognosUi';
 import DesignerDrawer from '@/components/autonomy/DesignerDrawer';
 import ResidentChatDrawer from '@/components/autonomy/ResidentChatDrawer';
 import AuthorizeConsent from '@/components/autonomy/AuthorizeConsent';
@@ -48,39 +48,28 @@ import IdeasTab from '@/components/studio/IdeasTab';
 import { ARCHIVIST } from '@/lib/archivist';
 import {
   GLOSSARY, TIER_LABEL, effectStatusLabel, goalStatusLabel,
-  humanInterval, outboxModeLabel, parkReasonLabel, tierLabel,
+  humanInterval, noticeTemplateLabel, outboxModeLabel, parkReasonLabel, tierLabel,
 } from '@/lib/autonomyLabels';
 
 const TABS = [
-  { id: 'attention', label: 'Needs your attention', icon: Bell },
-  { id: 'overview', label: 'Overview', icon: Gauge },
-  { id: 'residents', label: 'Residents', icon: Bot },
-  { id: 'tools', label: 'Tools', icon: Wrench },
-  { id: 'goals', label: 'Goals', icon: ScrollText },
+  { id: 'attention', label: 'Waiting for you', icon: Bell },
+  { id: 'residents', label: 'Assistants', icon: Bot },
+  { id: 'goals', label: 'Tasks', icon: ScrollText },
   { id: 'activity', label: 'Activity', icon: Activity },
+  { id: 'overview', label: 'Studio controls', icon: Gauge },
+  { id: 'tools', label: 'Tools', icon: Wrench },
   { id: 'ideas', label: 'Ideas', icon: Lightbulb },
-  { id: 'notices', label: 'Notices', icon: Inbox },
-  { id: 'outbox', label: 'Outbox', icon: ShieldCheck },
-  { id: 'promotions', label: 'Promotions', icon: Sprout },
+  { id: 'notices', label: 'Updates', icon: Inbox },
+  { id: 'outbox', label: 'Pending actions', icon: ShieldCheck },
+  { id: 'promotions', label: 'Memory review', icon: Sprout },
   { id: 'cleanup', label: 'Cleanup', icon: Sparkles },
 ];
 
-/**
- * v50 — the ten Studio tabs, gathered into a smaller set of labeled groups,
- * plus the "Needs your attention" landing that opens first. The landing
- * aggregates everything waiting on Jeremy (approvals, unread notices,
- * cleanup review, promotions, goals awaiting authorization); every group in
- * the aggregate jumps straight to the tab that resolves it, so no approval
- * or safety control is ever more than one tap away.
- */
-const TAB_GROUPS = [
-  { heading: 'Start here', tabs: ['attention'] },
-  { heading: 'The loop', tabs: ['overview', 'activity'] },
-  { heading: 'The team', tabs: ['residents', 'tools'] },
-  { heading: 'The work', tabs: ['goals', 'ideas'] },
-  { heading: 'Your decisions', tabs: ['notices', 'outbox', 'promotions', 'cleanup'] },
-];
-
+// Everyday work stays visible. Operator and audit surfaces remain intact under
+// Advanced, and attention rows open the exact approval tab they name.
+const PRIMARY_TAB_IDS = ['attention', 'residents', 'goals', 'activity'];
+const ADVANCED_TAB_IDS = ['overview', 'tools', 'ideas', 'notices', 'outbox', 'promotions', 'cleanup'];
+const MOBILE_TAB_LABEL = { attention: 'Waiting' };
 const TAB_BY_ID = Object.fromEntries(TABS.map(t => [t.id, t]));
 
 /** Status -> pill tone. Parked and refused are the interesting ones. */
@@ -128,7 +117,7 @@ function Meter({ label, used, limit, suffix = '' }) {
   const tone = pct >= 100 ? 'bg-destructive' : pct >= 75 ? 'bg-warn' : 'bg-primary';
   return (
     <div>
-      <div className="flex items-baseline justify-between text-[10px] text-muted-foreground">
+      <div className="flex items-baseline justify-between text-xs text-muted-foreground">
         <span>{label}</span>
         <span className="tabular-nums">
           {Number(used).toLocaleString()}{suffix} / {Number(limit).toLocaleString()}{suffix}
@@ -185,7 +174,7 @@ function CopyButton({ text, label = 'Copy' }) {
   return (
     <button
       onClick={copy}
-      className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted/50"
+      className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50"
       title="Copy to clipboard"
     >
       {copied ? <Check className="w-3 h-3 text-ok" /> : <Copy className="w-3 h-3" />}
@@ -199,20 +188,20 @@ function CopyButton({ text, label = 'Copy' }) {
 function SetupStepsPanel() {
   return (
     <div className="mt-2.5 rounded-lg border border-border bg-background/60 p-3">
-      <p className="text-[11px] font-semibold flex items-center gap-1.5">
+      <p className="text-[13px] font-semibold flex items-center gap-1.5">
         <ClipboardCheck className="w-3.5 h-3.5 text-muted-foreground" />
         How to turn it on
       </p>
       <ol className="mt-2 space-y-2">
         {SETUP_STEPS.map((step, i) => (
           <li key={step.env} className="flex items-start gap-2">
-            <span className="text-[10px] text-muted-foreground/70 tabular-nums mt-0.5">{i + 1}.</span>
+            <span className="text-xs text-muted-foreground tabular-nums mt-0.5">{i + 1}.</span>
             <div className="min-w-0 flex-1">
               <p className="flex items-center gap-2 flex-wrap">
-                <code className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded">{step.env}</code>
+                <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">{step.env}</code>
                 {step.env.startsWith('COGNOS_') && <CopyButton text={step.env} />}
               </p>
-              <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">{step.what}</p>
+              <p className="text-xs text-muted-foreground leading-snug mt-0.5">{step.what}</p>
             </div>
           </li>
         ))}
@@ -279,22 +268,22 @@ function SwitchHandover({ canToggle, pinned }) {
 
   return (
     <div className="mt-2.5 rounded-lg border border-border bg-background/60 p-3">
-      <p className="text-[11px] font-semibold flex items-center gap-1.5">
+      <p className="text-[13px] font-semibold flex items-center gap-1.5">
         <ClipboardCheck className="w-3.5 h-3.5 text-muted-foreground" />
         The switches are held back
       </p>
-      <p className="text-[10px] text-muted-foreground mt-1 leading-relaxed">
+      <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
         These switches are held back until the operator hands them over. On this phone,
         you&rsquo;re the operator — tap to hand a switch to this page. It takes effect
         when you close and reopen the app. An operator pin (a real environment variable,
         if one is ever set) still outranks everything.
       </p>
-      {error && <p className="text-[10px] text-destructive mt-1.5">{error}</p>}
+      {error && <p className="text-xs text-destructive mt-1.5">{error}</p>}
       <div className="mt-2 space-y-2">
         {switches.map((sw) => (
           <div key={sw.name} className="rounded-lg border border-border/70 px-2.5 py-2">
-            <p className="text-[11px] font-medium">{sw.label}</p>
-            <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">{sw.blurb}</p>
+            <p className="text-[13px] font-medium">{sw.label}</p>
+            <p className="text-xs text-muted-foreground leading-snug mt-0.5">{sw.blurb}</p>
             <div className="mt-1.5">
               {!sw.delegated && !sw.fileDelegated && (
                 <Btn variant="primary" size="sm"
@@ -307,11 +296,11 @@ function SwitchHandover({ canToggle, pinned }) {
               {sw.fileDelegated && !sw.delegated && (
                 <div className="flex items-center gap-2 flex-wrap">
                   <Pill tone="info">handed over — restart pending</Pill>
-                  <span className="text-[10px] text-muted-foreground">Close and reopen the app to use it.</span>
+                  <span className="text-xs text-muted-foreground">Close and reopen the app to use it.</span>
                   <button
                     onClick={() => takeBack(sw.name)}
                     disabled={busy === sw.name}
-                    className="text-[10px] text-muted-foreground underline hover:text-foreground disabled:opacity-40"
+                    className="text-xs text-muted-foreground underline hover:text-foreground disabled:opacity-40"
                   >
                     Take it back
                   </button>
@@ -324,12 +313,12 @@ function SwitchHandover({ canToggle, pinned }) {
                     <button
                       onClick={() => takeBack(sw.name)}
                       disabled={busy === sw.name}
-                      className="text-[10px] text-muted-foreground underline hover:text-foreground disabled:opacity-40"
+                      className="text-xs text-muted-foreground underline hover:text-foreground disabled:opacity-40"
                     >
                       Take it back
                     </button>
                   ) : (
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-xs text-muted-foreground">
                       Handed over by the environment — this page can&rsquo;t take it back.
                     </span>
                   )}
@@ -348,7 +337,7 @@ function EnableToggle({ status, busy, onToggle }) {
   const on = status?.enabled === true;
   return (
     <div className="flex items-center gap-2.5 shrink-0">
-      <span className="text-[11px] text-muted-foreground hidden sm:inline">{on ? 'On' : 'Off'}</span>
+      <span className="text-[13px] text-muted-foreground hidden sm:inline">{on ? 'On' : 'Off'}</span>
       <button
         role="switch"
         aria-checked={on}
@@ -387,19 +376,19 @@ function StatusBanner({ status, busy, onToggle, onError }) {
           : <Snowflake className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />}
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold flex items-center gap-2 flex-wrap">
-            {on ? 'Autonomy is on' : 'Autonomy is off'}
-            <Pill tone={on ? 'ok' : 'muted'}>{on ? 'running' : 'frozen'}</Pill>
+            {on ? 'Background work is on' : 'Background work is off'}
+            <Pill tone={on ? 'ok' : 'muted'}>{on ? 'active' : 'paused'}</Pill>
             {pinned && <Pill tone="info">pinned by an operator</Pill>}
             {!pinned && canToggle && <Pill tone="info">you control this</Pill>}
           </p>
-          <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+          <p className="text-[13px] text-muted-foreground mt-0.5 leading-relaxed">
             {on
-              ? 'Residents may wake on the heartbeat and advance authorized goals. Every effect they produce is still staged and judged before anything happens, and a goal still does no work until you authorize it.'
-              : 'Nothing wakes, no goal runs, no notice is written, no tick is recorded. This is the resting state — and you can change it from here if an operator handed you the switch.'}
+              ? 'Assistants may wake on their schedule and advance approved tasks. Outside actions still wait for review, and a task does no work until you authorize it.'
+              : 'No assistants wake and no tasks run. This is the resting state; you can change it here when the switch has been handed to this app.'}
           </p>
 
           {pinned && (
-            <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed">
+            <p className="text-[13px] text-muted-foreground mt-1.5 leading-relaxed">
               An operator pinned this on with{' '}
               <span className="font-mono text-foreground/80">COGNOS_AUTONOMY_ENABLED{status?.requestedEnabled ? `=${String(status.requestedEnabled).split(' ')[0]}` : '=true'}</span>.
               The UI will not pretend it can override that — remove the variable and restart to hand the switch back.
@@ -409,7 +398,7 @@ function StatusBanner({ status, busy, onToggle, onError }) {
           <SwitchHandover canToggle={canToggle} pinned={pinned} />
 
           {canToggle && (
-            <p className="text-[10px] text-muted-foreground/70 mt-1.5">
+            <p className="text-xs text-muted-foreground mt-1.5">
               Flipping this takes effect on the next heartbeat — no restart — and every flip is written to the audit trail.
               {status?.settings?.stored?.updatedAtMs ? ` Last changed ${fmtTime(new Date(Number(status.settings.stored.updatedAtMs)))}${status.settings.stored.updatedBy ? ` by ${status.settings.stored.updatedBy}` : ''}.` : ''}
             </p>
@@ -439,10 +428,33 @@ function StatusBanner({ status, busy, onToggle, onError }) {
  * new decision: every row is a link to a barrier that already existed. An empty
  * panel is the good state, and it says so in words rather than disappearing.
  */
+const ATTENTION_GROUP_COPY = {
+  awaiting_authorization: {
+    label: 'Tasks need your approval',
+    hint: 'Review what an assistant wants to do before work begins.',
+  },
+  staged_effect: {
+    label: 'Actions need your approval',
+    hint: 'Review each pending action before anything is sent or changed.',
+  },
+  unread_notice: {
+    label: 'Updates to review',
+    hint: 'Finished work, paused tasks, and other assistant updates.',
+  },
+  open_promotion: {
+    label: 'Memories to review',
+    hint: 'Choose what should become lasting knowledge.',
+  },
+  open_cleanup: {
+    label: 'Memory cleanup to review',
+    hint: 'Review suggested housekeeping before anything changes.',
+  },
+};
+
 function AttentionPanel({ data, onJump, loading }) {
   if (loading) {
     return (
-      <Section title="Needs your attention" icon={Bell}>
+      <Section title="Waiting for you" icon={Bell}>
         <p className="text-xs text-muted-foreground">Checking…</p>
       </Section>
     );
@@ -451,44 +463,47 @@ function AttentionPanel({ data, onJump, loading }) {
 
   return (
     <Section
-      title="Needs your attention"
-      subtitle="Everything waiting on you, in one place. Nothing here happens until you decide."
+      title="Waiting for you"
+      subtitle="Decisions and updates, gathered in one place. Nothing happens until you decide."
       icon={Bell}
       action={<Pill tone={groups.length ? 'warn' : 'ok'}>{data?.total ?? 0} waiting</Pill>}
     >
       {groups.length === 0 ? (
         <p className="text-sm text-muted-foreground py-1">
-          Nothing is waiting on you. {data?.enabled ? 'The loop is running and has no questions.' : 'Autonomy is off, so there is nothing to ask.'}
+          Nothing is waiting on you. {data?.enabled ? 'Your assistants are up to date and have no questions.' : 'Background work is off, so there is nothing to review.'}
         </p>
       ) : (
         <div className="space-y-2">
-          {groups.map(group => (
+          {groups.map(group => {
+            const copy = ATTENTION_GROUP_COPY[group.kind] || { label: group.label, hint: group.hint };
+            return (
             <div key={group.kind} className="rounded-lg border border-border">
               <button
                 onClick={() => onJump(group.tab)}
-                className="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-muted/40 transition-colors"
-                title={`Open the ${group.tab} tab`}
+                className="w-full min-h-11 flex items-start gap-2.5 px-3 py-3 text-left hover:bg-muted/40 transition-colors"
+                title={`Open ${TAB_BY_ID[group.tab]?.label || 'this section'}`}
               >
-                <span className="mt-0.5 shrink-0 rounded-full bg-warn/15 text-warn text-[10px] font-semibold px-1.5 py-0.5 tabular-nums">
+                <span className="mt-0.5 shrink-0 rounded-full bg-warn/15 text-warn text-xs font-semibold px-1.5 py-0.5 tabular-nums">
                   {group.count}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="text-xs font-medium block">{group.label}</span>
-                  <span className="text-[10px] text-muted-foreground block leading-snug">{group.hint}</span>
+                  <span className="text-sm font-medium block">{copy.label}</span>
+                  <span className="text-sm text-muted-foreground block leading-snug">{copy.hint}</span>
                   <span className="mt-1 flex flex-wrap gap-1">
                     {group.rows.slice(0, 3).map(row => (
-                      <span key={row.id} className="px-1.5 py-0.5 rounded bg-muted text-[10px] truncate max-w-[16rem]">
-                        {row.title || row.id}
+                      <span key={row.id} className="px-1.5 py-0.5 rounded bg-muted text-xs truncate max-w-[16rem]">
+                        {group.kind === 'unread_notice' ? noticeTemplateLabel(row.title || row.id) : (row.title || row.id)}
                         {row.detail ? <span className="text-muted-foreground"> · {row.detail}</span> : null}
                       </span>
                     ))}
-                    {group.count > 3 && <span className="text-[10px] text-muted-foreground px-1">+{group.count - 3} more</span>}
+                    {group.count > 3 && <span className="text-xs text-muted-foreground px-1">+{group.count - 3} more</span>}
                   </span>
                 </span>
                 <ChevronRight className="w-3.5 h-3.5 text-muted-foreground mt-1 shrink-0" />
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </Section>
@@ -497,18 +512,19 @@ function AttentionPanel({ data, onJump, loading }) {
 
 /** The glossary behind the "?" button. Teaches the jargon instead of hiding it. */
 function HelpDrawer({ open, onClose }) {
+  const panelRef = useDialogFocus(open, onClose);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-label="What these words mean">
+    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label="What these words mean">
       <button className="absolute inset-0 bg-black/50" onClick={onClose} aria-label="Close" tabIndex={-1} />
-      <div className="relative flex flex-col w-full max-w-md h-full bg-background border-l border-border shadow-2xl">
+      <div ref={panelRef} tabIndex={-1} className="relative flex flex-col w-full max-w-md h-full bg-background border-l border-border shadow-2xl">
         <header className="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">
           <HelpCircle className="w-4 h-4 text-primary" />
           <div className="flex-1 min-w-0">
             <h2 className="text-sm font-semibold">What these words mean</h2>
-            <p className="text-[10px] text-muted-foreground">Plain language first, the machine name under it.</p>
+            <p className="text-xs text-muted-foreground">Plain language first, the machine name under it.</p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted" title="Close">
+          <button onClick={onClose} aria-label="Close glossary" className="min-w-11 min-h-11 p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted" title="Close">
             <X className="w-4 h-4" />
           </button>
         </header>
@@ -516,8 +532,8 @@ function HelpDrawer({ open, onClose }) {
           {GLOSSARY.map(entry => (
             <div key={entry.term}>
               <p className="text-xs font-semibold">{entry.term}</p>
-              <p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5">{entry.body}</p>
-              <p className="text-[10px] font-mono text-muted-foreground/60 mt-0.5">{entry.technical}</p>
+              <p className="text-[13px] text-muted-foreground leading-relaxed mt-0.5">{entry.body}</p>
+              <p className="text-xs font-mono text-muted-foreground mt-0.5">{entry.technical}</p>
             </div>
           ))}
         </div>
@@ -613,13 +629,13 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
 
       <div className="px-1 pt-1">
         <p className="orbit-eyebrow">Your team</p>
-        <h2 className="orbit-page-title text-xl mt-1">Meet your residents.</h2>
-        <p className="orbit-page-sub text-sm mt-1">Made by you, for the things you want to get done.</p>
+        <h2 className="orbit-page-title text-xl mt-1">Meet your assistants.</h2>
+        <p className="orbit-page-sub text-sm mt-1">Named helpers for the work you want done.</p>
       </div>
 
       <Section
-        title="Residents"
-        subtitle="Named agents with an objective, a versioned brief, and their own skill allowlist"
+        title="Your assistants"
+        subtitle="Each assistant has a purpose, saved instructions, and only the skills you allow."
         icon={Bot}
         action={
           <div className="flex items-center gap-1.5">
@@ -627,7 +643,7 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
                 resident is how you find out what you want to turn on. */}
             <button
               onClick={onDesign}
-              title="Describe a resident in plain words and COGNOS drafts it"
+              title="Describe an assistant in plain words and COGNOS drafts it"
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-primary/40 bg-primary/5 text-primary text-xs font-medium hover:bg-primary/10"
             >
               <Sparkles className="w-3.5 h-3.5" />
@@ -636,10 +652,10 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
             <Btn variant="primary" size="sm"
               onClick={() => setCreating(v => !v)}
               disabled={frozen}
-              title={frozen ? 'Autonomy is off — turn it on, or design a resident first' : 'Fill in the form yourself'}
+              title={frozen ? 'Background work is off — turn it on, or design an assistant first' : 'Fill in the form yourself'}
             >
               {creating ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-              {creating ? 'Cancel' : 'New resident'}
+              {creating ? 'Cancel' : 'New assistant'}
             </Btn>
           </div>
         }
@@ -659,7 +675,7 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
             </div>
             <TextInput
               value={form.purpose} onChange={e => setForm(f => ({ ...f, purpose: e.target.value }))}
-              placeholder="Purpose — one line, shown wherever the resident appears"
+              placeholder="Purpose — one line, shown wherever the assistant appears"
             />
             <TextArea
               value={form.brief} onChange={e => setForm(f => ({ ...f, brief: e.target.value }))}
@@ -667,8 +683,8 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
               rows={3}
             />
             <div>
-              <p className="text-[10px] text-muted-foreground mb-1.5">
-                Skills this resident may use. The registry is code — a brief cannot add to it.
+              <p className="text-xs text-muted-foreground mb-1.5">
+                Skills this assistant may use. The registry is code — instructions cannot add to it.
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {skills.map(skill => {
@@ -676,7 +692,7 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
                   return (
                     <button
                       key={skill.id} type="button" onClick={() => toggleSkill(skill.id)}
-                      className={`px-2 py-1 rounded-md border text-[10px] transition-colors ${
+                      className={`px-2 py-1 rounded-md border text-xs transition-colors ${
                         on ? 'border-primary/60 bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted/50'
                       } ${skill.enabled ? '' : 'opacity-50'}`}
                       title={`${skill.summary} — ${tierLabel(skill.tier)}${skill.enabled ? '' : ' (not available in this deployment yet)'}`}
@@ -689,15 +705,15 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
               </div>
             </div>
             <Btn variant="primary" size="sm" type="submit" disabled={busy || !form.name.trim()}>
-              Create resident
+              Create assistant
             </Btn>
           </form>
         )}
 
         {rows.length === 0 && !creating && (
           <Empty>
-            No residents yet. Describe one to COGNOS with “Design with COGNOS”, or fill in the form yourself —
-            then give it a goal to work on.
+            No assistants yet. Describe one with “Design with COGNOS”, or fill in the form yourself.
+            You can give it a task after it is created.
           </Empty>
         )}
 
@@ -723,13 +739,16 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
                       </span>
                     </button>
                   )}
+                  <details className="mt-1.5">
+                    <summary className="inline-flex min-h-11 cursor-pointer items-center text-sm text-muted-foreground hover:text-foreground">Instructions, skills, and tools</summary>
+                    <div className="mt-1">
                   <div className="flex flex-wrap gap-1 mt-1.5">
                     {(resident.skill_allowlist || []).map(id => {
                       const skill = skills.find(s => s.id === id);
                       return (
                         <span
                           key={id}
-                          className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono text-muted-foreground"
+                          className="px-1.5 py-0.5 rounded bg-muted text-xs font-mono text-muted-foreground"
                           title={skill ? `${skill.summary} — ${tierLabel(skill.tier)}` : id}
                         >
                           {id}
@@ -737,22 +756,25 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
                       );
                     })}
                     {(resident.skill_allowlist || []).length === 0 && (
-                      <span className="text-[10px] text-muted-foreground/70">no skills allowed yet</span>
+                      <span className="text-xs text-muted-foreground">no skills allowed yet</span>
                     )}
                   </div>
                   {/* Phase 36 — per-resident tool assignment, by tap. */}
                   <ResidentToolPicker resident={resident} onChanged={refresh} />
                   <ToolRunHistory residentId={resident.id} limit={3} />
                   {resident.brief && (
-                    <p className="text-[10px] text-muted-foreground/70 mt-1.5 line-clamp-2 whitespace-pre-wrap">
+                    <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2 whitespace-pre-wrap">
                       {resident.brief}
                     </p>
                   )}
+                    </div>
+                  </details>
                 </div>
                 {resident.conversation_id && <button
                   onClick={() => { window.location.href = `/?c=${resident.conversation_id}`; }}
                   className="shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-muted"
-                  title="Converse with this resident"
+                  aria-label={`Open conversation with ${resident.name}`}
+                  title="Open this assistant’s conversation"
                 >
                   <MessageCircle className="w-3.5 h-3.5" />
                 </button>}
@@ -768,7 +790,8 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
                 <button
                   onClick={() => setEditing(editing?.id === resident.id ? null : { id: resident.id, brief: resident.brief })}
                   className="shrink-0 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted"
-                  title="Change the brief (creates a new version)"
+                  aria-label={`Edit instructions for ${resident.name}`}
+                  title="Edit instructions (creates a new version)"
                 >
                   <ChevronDown className={`w-3.5 h-3.5 transition-transform ${editing?.id === resident.id ? 'rotate-180' : ''}`} />
                 </button>
@@ -778,18 +801,18 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
                 <div className="border-t border-border px-3 py-2.5 space-y-2 bg-muted/20">
                   {history?.length > 1 && (
                     <div className="space-y-1">
-                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                         Previous versions — kept, never overwritten
                       </p>
                       {history.slice(0, -1).reverse().map(v => (
                         <div key={v.id} className="rounded border border-border/60 bg-background/60 px-2 py-1.5">
-                          <p className="text-[10px] text-muted-foreground">v{v.brief_version} · {fmtTime(v.created_date)}</p>
-                          <p className="text-[10px] text-foreground/70 line-clamp-2 whitespace-pre-wrap mt-0.5">{v.brief || '—'}</p>
+                          <p className="text-xs text-muted-foreground">v{v.brief_version} · {fmtTime(v.created_date)}</p>
+                          <p className="text-xs text-foreground/70 line-clamp-2 whitespace-pre-wrap mt-0.5">{v.brief || '—'}</p>
                         </div>
                       ))}
                     </div>
                   )}
-                  <p className="text-[10px] text-muted-foreground flex items-start gap-1.5">
+                  <p className="text-xs text-muted-foreground flex items-start gap-1.5">
                     <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-warn" />
                     <span>
                       Saving creates <strong>version {resident.brief_version + 1}</strong>. The previous brief is
@@ -808,7 +831,7 @@ function Residents({ status, frozen, onError, onDesign, onChanged }) {
                     </Btn>
                     <button onClick={() => handleDelete(resident)} disabled={busy}
                       className="rounded-lg border border-destructive/40 text-destructive px-3 py-1.5 text-xs disabled:opacity-40 hover:bg-destructive/10">
-                      <Trash2 className="w-3 h-3 inline mr-1" />Delete resident
+                      <Trash2 className="w-3 h-3 inline mr-1" />Delete assistant
                     </button>
                   </div>
                 </div>
@@ -851,14 +874,14 @@ function DestinationEditor({ destinations, input, onInput, onAdd, onRemove, hint
   };
   return (
     <div className="rounded-lg border border-border/70 px-2.5 py-2 space-y-1.5">
-      <p className="text-[10px] text-muted-foreground leading-relaxed">
+      <p className="text-xs text-muted-foreground leading-relaxed">
         <strong className="text-foreground">Webhook destinations (optional).</strong>{' '}
         https endpoints this first goal may POST a webhook to — part of the scope you authorize, locked in by its hash.
         Granting looks like nothing until the goal uses it: a write aimed anywhere else is refused, and only attempts
         aimed at a granted destination fill the evidence corpus. {hint}
       </p>
       {destinations.map(url => (
-        <div key={url} className="flex items-center gap-2 text-[11px]">
+        <div key={url} className="flex items-center gap-2 text-[13px]">
           <Send className="w-3 h-3 text-muted-foreground shrink-0" />
           <span className="font-mono break-all flex-1">{url}</span>
           <button type="button" onClick={() => onRemove(url)} className="p-0.5 rounded text-muted-foreground hover:text-destructive" title="Remove">
@@ -874,7 +897,7 @@ function DestinationEditor({ destinations, input, onInput, onAdd, onRemove, hint
           placeholder="https://hooks.example.com/cognos"
         />
         <button type="button" onClick={add} disabled={!input.trim()}
-          className="shrink-0 rounded-lg border border-border px-2 py-1.5 text-[11px] hover:bg-muted/50 disabled:opacity-40">
+          className="shrink-0 rounded-lg border border-border px-2 py-1.5 text-[13px] hover:bg-muted/50 disabled:opacity-40">
           Add
         </button>
       </div>
@@ -983,14 +1006,14 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
       <ErrorNote error={error} />
 
       <div className="px-1 pt-1">
-        <p className="orbit-eyebrow">Goals</p>
-        <h2 className="orbit-page-title text-xl mt-1">What they're working toward.</h2>
-        <p className="orbit-page-sub text-sm mt-1">Nothing runs until you say so.</p>
+        <p className="orbit-eyebrow">Tasks</p>
+        <h2 className="orbit-page-title text-xl mt-1">What they’re working toward.</h2>
+        <p className="orbit-page-sub text-sm mt-1">Nothing runs until you approve it.</p>
       </div>
 
       <Section
-        title="Goals"
-        subtitle="A goal does no work until you authorize it — authorization records the hash of the exact scope and budget you agreed to"
+        title="Tasks"
+        subtitle="A task does no work until you approve exactly what it may do and spend."
         icon={ScrollText}
         action={
           <div className="flex items-center gap-2">
@@ -1005,10 +1028,10 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
             <Btn variant="primary" size="sm"
               onClick={() => setCreating(v => !v)}
               disabled={frozen || residents.length === 0}
-              title={frozen ? 'Autonomy is frozen' : residents.length === 0 ? 'Create a resident first' : undefined}
+              title={frozen ? 'Background work is off' : residents.length === 0 ? 'Create an assistant first' : undefined}
             >
               {creating ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-              {creating ? 'Cancel' : 'New goal'}
+              {creating ? 'Cancel' : 'New task'}
             </Btn>
           </div>
         }
@@ -1028,7 +1051,7 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
             <Select
               value={form.agent_id} onChange={e => setForm(f => ({ ...f, agent_id: e.target.value }))}
             >
-              <option value="">No resident (unowned)</option>
+              <option value="">No assistant (unassigned)</option>
               {residents.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
             </Select>
             <DestinationEditor
@@ -1041,17 +1064,16 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                 ? `This deployment's approved live destination is ${status.liveDestination.hostname} — a live delivery can only ever go there.`
                 : 'No approved live destination is set here, so a live flip is not available.'}
             />
-            <p className="text-[10px] text-muted-foreground">
-              The goal is created <strong>waiting for you</strong> (<span className="font-mono">awaiting_authorization</span>).
-              Nothing runs until you authorize it.
+            <p className="text-xs text-muted-foreground">
+              The task is created <strong>waiting for you</strong>. Nothing runs until you authorize it.
             </p>
             <Btn variant="primary" size="sm" type="submit" disabled={busy || !form.title.trim() || !form.objective.trim()}>
-              Create goal
+              Create task
             </Btn>
           </form>
         )}
 
-        {rows.length === 0 && !creating && <Empty>No goals yet.</Empty>}
+        {rows.length === 0 && !creating && <Empty>No tasks yet. Create one when there is something you want an assistant to work toward.</Empty>}
 
         <div className="space-y-2">
           {rows.map(goal => {
@@ -1072,11 +1094,11 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                       {goal.title}
                       <Pill tone={GOAL_TONE[goal.status] || 'muted'}>{goalStatusLabel(goal.status)}</Pill>
                     </p>
-                    <p className="text-[10px] text-muted-foreground truncate">
+                    <p className="text-xs text-muted-foreground truncate">
                       {GOAL_STATUS_HELP[goal.status] || ''}
                       {goal.park_reason ? ` ${parkReasonLabel(goal.park_reason)}.` : ''}
                     </p>
-                    <div className="flex flex-wrap items-center gap-3 mt-1.5 text-[10px] text-muted-foreground tabular-nums">
+                    <div className="flex flex-wrap items-center gap-3 mt-1.5 text-xs text-muted-foreground tabular-nums">
                       <span>{Number(spent.steps || 0)} / {budget.maxSteps ?? '—'} steps</span>
                       <span>{fmtMoney(spent.costUsd || 0)} / {budget.maxCostUsd ?? '—'}</span>
                       {goal.next_run_at_ms && <span>next {fmtTime(Number(goal.next_run_at_ms))}</span>}
@@ -1097,13 +1119,13 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                           <div className="rounded-lg border border-accent/40 bg-accent/5 p-3">
                             <p className="text-xs font-semibold flex items-center gap-1.5">
                               <ClipboardCheck className="w-3.5 h-3.5 text-accent" />
-                              This goal is waiting for you
+                              This task is waiting for you
                             </p>
-                            <p className="text-[10px] text-muted-foreground mt-1 leading-relaxed">
+                            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
                               Authorizing records the hash of the scope and budget below. The goal can never
                               widen either without a new decision from you (pin.goal_scope_immutable).
                             </p>
-                            <div className="grid sm:grid-cols-2 gap-2 mt-2 text-[10px]">
+                            <div className="grid sm:grid-cols-2 gap-2 mt-2 text-xs">
                               <div className="rounded bg-background/60 border border-border p-2">
                                 <p className="text-muted-foreground mb-1">Scope</p>
                                 {destinationsInScope(d.goal.scope).length > 0 && (
@@ -1219,7 +1241,7 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                                   <X className="w-3.5 h-3.5" /> Cancel
                                 </button>
                               </div>
-                              <p className="text-[10px] text-muted-foreground leading-relaxed">
+                              <p className="text-xs text-muted-foreground leading-relaxed">
                                 Renaming never changes what the goal may do or spend — that was
                                 settled when you authorized it.
                               </p>
@@ -1234,7 +1256,7 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                               disabled={busy}
                               className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
                             >
-                              <Pencil className="w-3.5 h-3.5" /> Edit goal
+                              <Pencil className="w-3.5 h-3.5" /> Edit task
                             </button>
                           )}
                         </div>
@@ -1261,7 +1283,7 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                             }}
                             disabled={busy}
                             className="flex items-center gap-1.5 rounded-lg border border-destructive/40 px-2.5 py-1.5 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-40">
-                            <Trash2 className="w-3.5 h-3.5" /> Delete goal
+                            <Trash2 className="w-3.5 h-3.5" /> Delete task
                           </button>
                         </div>
 
@@ -1271,15 +1293,15 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                             <ShieldAlert className="w-3.5 h-3.5 text-warn" />
                             Untrusted findings — {findings.length}
                           </p>
-                          <p className="text-[10px] text-muted-foreground mt-1 leading-relaxed">
+                          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
                             These are the resident's own typed notes: what it <em>said</em>, not what is true.
                             They are never presented as COGNOS speaking. To turn them into an answer, ask.
                           </p>
                           {findings.length > 0 && (
                             <ul className="mt-2 space-y-1">
                               {findings.slice(0, 5).map(note => (
-                                <li key={note.id} className="flex items-start gap-2 text-[11px]">
-                                  <span className="font-mono text-[10px] text-muted-foreground mt-0.5 shrink-0">[{note.ordinal}]</span>
+                                <li key={note.id} className="flex items-start gap-2 text-[13px]">
+                                  <span className="font-mono text-xs text-muted-foreground mt-0.5 shrink-0">[{note.ordinal}]</span>
                                   <span className="text-foreground/80">{note.body}</span>
                                 </li>
                               ))}
@@ -1291,7 +1313,7 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                           >
                             Ask COGNOS about this <ChevronRight className="w-3.5 h-3.5" />
                           </Btn>
-                          <p className="text-[10px] text-muted-foreground/70 mt-1">
+                          <p className="text-xs text-muted-foreground mt-1">
                             Opens this resident's conversation. You ask; the council answers through the
                             Governor. A goal can never propose a draft answer.
                           </p>
@@ -1301,13 +1323,13 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                         {(d.subagents?.length > 0 || d.promotions?.length > 0) && (
                           <div className="grid md:grid-cols-2 gap-3">
                             <div>
-                              <p className="text-[10px] font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">
+                              <p className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">
                                 Workers — narrow subsets, carved budgets
                               </p>
                               {d.subagents?.length ? (
                                 <ul className="space-y-1">
                                   {d.subagents.map(w => (
-                                    <li key={w.id} className="rounded border border-border px-2 py-1.5 text-[10px]">
+                                    <li key={w.id} className="rounded border border-border px-2 py-1.5 text-xs">
                                       <p className="text-foreground/90">{w.objective}</p>
                                       <p className="text-muted-foreground mt-0.5 font-mono">
                                         {(w.skills || []).join(', ') || '—'} · {Number(w.spent?.steps || 0)} steps · {fmtMoney(w.spent?.costUsd || 0)}
@@ -1318,10 +1340,10 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                                     </li>
                                   ))}
                                 </ul>
-                              ) : <p className="text-[10px] text-muted-foreground">No workers spawned.</p>}
+                              ) : <p className="text-xs text-muted-foreground">No workers spawned.</p>}
                             </div>
                             <div>
-                              <p className="text-[10px] font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">
+                              <p className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">
                                 Promotions — human confirm required
                               </p>
                               {d.promotions?.length ? (
@@ -1338,7 +1360,7 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                                     );
                                   })}
                                 </div>
-                              ) : <p className="text-[10px] text-muted-foreground">No promotion requests.</p>}
+                              ) : <p className="text-xs text-muted-foreground">No promotion requests.</p>}
                             </div>
                           </div>
                         )}
@@ -1346,11 +1368,11 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                         {/* ---- audit trail ---- */}
                         <div className="grid md:grid-cols-2 gap-3">
                           <div>
-                            <p className="text-[10px] font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">Steps</p>
+                            <p className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">Steps</p>
                             {d.steps?.length ? (
                               <ul className="space-y-1">
                                 {d.steps.map(step => (
-                                  <li key={step.id} className="flex items-center gap-2 text-[10px] font-mono">
+                                  <li key={step.id} className="flex items-center gap-2 text-xs font-mono">
                                     <span className="text-muted-foreground w-5 text-right">{step.ordinal}</span>
                                     <span className="flex-1 truncate">{step.skill_id}</span>
                                     <Pill tone={step.status === 'completed' ? 'ok' : step.status === 'refused' ? 'bad' : 'muted'}>
@@ -1364,36 +1386,36 @@ function Goals({ status, frozen, residents, onError, onChanged }) {
                                   </li>
                                 ))}
                               </ul>
-                            ) : <p className="text-[10px] text-muted-foreground">No steps yet.</p>}
+                            ) : <p className="text-xs text-muted-foreground">No steps yet.</p>}
                           </div>
                           <div>
-                            <p className="text-[10px] font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">Event log</p>
+                            <p className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">Event log</p>
                             {d.events?.length ? (
                               <ul className="space-y-1 max-h-48 overflow-y-auto scrollbar-thin">
                                 {d.events.slice().reverse().map(event => (
-                                  <li key={event.id} className="flex items-start gap-2 text-[10px]">
-                                    <Clock className="w-3 h-3 mt-0.5 text-muted-foreground/60 shrink-0" />
+                                  <li key={event.id} className="flex items-start gap-2 text-xs">
+                                    <Clock className="w-3 h-3 mt-0.5 text-muted-foreground shrink-0" />
                                     <span className="font-mono text-foreground/80">{event.event_type}</span>
                                     <span className="text-muted-foreground ml-auto shrink-0">{fmtTime(event.created_date)}</span>
                                   </li>
                                 ))}
                               </ul>
-                            ) : <p className="text-[10px] text-muted-foreground">No events yet.</p>}
+                            ) : <p className="text-xs text-muted-foreground">No events yet.</p>}
                           </div>
                         </div>
 
                         {/* ---- authorizations ---- */}
                         {d.approvals?.length > 0 && (
                           <div>
-                            <p className="text-[10px] font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">Authorizations</p>
+                            <p className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">Authorizations</p>
                             <ul className="space-y-1">
                               {d.approvals.map(a => (
-                                <li key={a.id} className="flex items-center gap-2 text-[10px] font-mono">
+                                <li key={a.id} className="flex items-center gap-2 text-xs font-mono">
                                   <Pill tone={a.decision === 'authorize' ? 'ok' : 'bad'}>{a.decision}</Pill>
                                   <span className="text-muted-foreground truncate">scope {shortId(a.scope_sha256)}</span>
                                   <span className="text-muted-foreground truncate">budget {shortId(a.budget_sha256)}</span>
-                                  {a.reason && <span className="text-muted-foreground/70 truncate">“{a.reason}”</span>}
-                                  <span className="ml-auto text-muted-foreground/70 shrink-0">{fmtTime(a.created_date)}</span>
+                                  {a.reason && <span className="text-muted-foreground truncate">“{a.reason}”</span>}
+                                  <span className="ml-auto text-muted-foreground shrink-0">{fmtTime(a.created_date)}</span>
                                 </li>
                               ))}
                             </ul>
@@ -1423,32 +1445,32 @@ function PromotionRow({ promotion: p, busy, onDecide }) {
     <div className="rounded-lg border border-border px-3 py-2.5">
       <p className="text-xs">
         {p.goal_title && <span className="font-medium">{p.goal_title} · </span>}
-        <span className="font-mono text-[10px] text-primary">{p.note_ordinal != null ? `n${p.note_ordinal}` : shortId(p.note_id)}</span>
+        <span className="font-mono text-xs text-primary">{p.note_ordinal != null ? `n${p.note_ordinal}` : shortId(p.note_id)}</span>
         {' '}→ {p.target}{' '}
         <Pill tone={p.status === 'applied' ? 'ok' : p.status === 'refused' ? 'bad' : 'muted'}>{p.status}</Pill>
       </p>
       {p.redacted ? (
-        <p className="text-[11px] text-muted-foreground italic mt-1">Body withheld — refused as secret-bearing.</p>
+        <p className="text-[13px] text-muted-foreground italic mt-1">Body withheld — refused as secret-bearing.</p>
       ) : p.note_body ? (
-        <p className="text-[11px] text-foreground/80 mt-1">{p.note_body}</p>
+        <p className="text-[13px] text-foreground/80 mt-1">{p.note_body}</p>
       ) : null}
-      <p className="text-[10px] text-muted-foreground mt-1 font-mono">
+      <p className="text-xs text-muted-foreground mt-1 font-mono">
         {p.decision_source || 'awaiting decision'}{p.reason ? ` — ${p.reason}` : ''} · {fmtTime(p.created_date)}
       </p>
       {!decided && (
         <div className="flex items-center gap-2 mt-2">
           <button onClick={() => onDecide(p.id, 'approve')} disabled={busy}
-            className="flex items-center gap-1 rounded-lg bg-accent text-accent-foreground px-2 py-1 text-[10px] font-medium disabled:opacity-40">
+            className="flex items-center gap-1 rounded-lg bg-accent text-accent-foreground px-2 py-1 text-xs font-medium disabled:opacity-40">
             <Check className="w-3 h-3" /> Approve &amp; apply
           </button>
           <button onClick={() => onDecide(p.id, 'refuse')} disabled={busy}
-            className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40">
+            className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40">
             <X className="w-3 h-3" /> Refuse
           </button>
         </div>
       )}
       {p.status === 'applied' && (p.applied_memory_id || p.applied_belief_id) && (
-        <p className="text-[10px] text-ok mt-1 font-mono">
+        <p className="text-xs text-ok mt-1 font-mono">
           landed as inferred → {p.applied_memory_id || p.applied_belief_id}
         </p>
       )}
@@ -1479,8 +1501,8 @@ function Promotions({ frozen, onChanged }) {
 
   return (
     <Section
-      title="Promotions"
-      subtitle="The only route from a working note to memory — every application lands inferred with origin tags"
+      title="Memory review"
+      subtitle="Review findings before they become lasting memories. Approved items keep their origin and evidence."
       icon={Sprout}
       action={
         <Select
@@ -1496,7 +1518,7 @@ function Promotions({ frozen, onChanged }) {
       }
     >
       <ErrorNote error={error} />
-      {frozen && <p className="text-[11px] text-muted-foreground mb-2">Autonomy is off — the queue is still visible, but deciding one needs it on.</p>}
+      {frozen && <p className="text-[13px] text-muted-foreground mb-2">Autonomy is off — the queue is still visible, but deciding one needs it on.</p>}
       {rows.length === 0
         ? <Empty>No promotion requests. A worker asks with note.promote.request; you confirm here, or a Governor-approved answer carries a cited finding.</Empty>
         : (
@@ -1540,12 +1562,12 @@ function CleanupRow({ proposal: p, busy, onDecide }) {
         <Pill tone={p.status === 'applied' ? 'ok' : p.status === 'refused' ? 'bad' : 'muted'}>{p.status}</Pill>
       </p>
       {detail.similarity != null && (
-        <p className="text-[10px] text-muted-foreground mt-1">Similarity {Math.round(detail.similarity * 100)}% — same thing said two ways.</p>
+        <p className="text-xs text-muted-foreground mt-1">Similarity {Math.round(detail.similarity * 100)}% — same thing said two ways.</p>
       )}
       {previewEntries.length > 0 && (
         <div className="mt-1.5 space-y-1">
           {previewEntries.map(([id, text]) => (
-            <p key={id} className="text-[11px] text-foreground/80 border-l-2 border-border pl-2">
+            <p key={id} className="text-[13px] text-foreground/80 border-l-2 border-border pl-2">
               {id === detail.canonicalId ? <span className="font-medium">Keep: </span> : null}{text}
             </p>
           ))}
@@ -1554,21 +1576,21 @@ function CleanupRow({ proposal: p, busy, onDecide }) {
       {labelEntries.length > 0 && (
         <div className="mt-1.5 space-y-1">
           {labelEntries.map(([id, text]) => (
-            <p key={id} className="text-[11px] text-foreground/80 border-l-2 border-border pl-2">{text}</p>
+            <p key={id} className="text-[13px] text-foreground/80 border-l-2 border-border pl-2">{text}</p>
           ))}
         </div>
       )}
-      <p className="text-[10px] text-muted-foreground mt-1 font-mono">
+      <p className="text-xs text-muted-foreground mt-1 font-mono">
         {p.store}{p.reason ? ` — ${p.reason}` : ''} · {fmtTime(p.created_date)}
       </p>
       {!decided && (
         <div className="flex items-center gap-2 mt-2">
           <button onClick={() => onDecide(p.id, 'approve')} disabled={busy}
-            className="flex items-center gap-1 rounded-lg bg-accent text-accent-foreground px-2 py-1 text-[10px] font-medium disabled:opacity-40">
+            className="flex items-center gap-1 rounded-lg bg-accent text-accent-foreground px-2 py-1 text-xs font-medium disabled:opacity-40">
             <Check className="w-3 h-3" /> Approve &amp; tidy up
           </button>
           <button onClick={() => onDecide(p.id, 'refuse')} disabled={busy}
-            className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40">
+            className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40">
             <X className="w-3 h-3" /> Leave it alone
           </button>
         </div>
@@ -1641,14 +1663,14 @@ function Cleanup({ frozen, onChanged }) {
       }
     >
       <ErrorNote error={error} />
-      {frozen && <p className="text-[11px] text-muted-foreground mb-2">Autonomy is off — the queue is still visible, but running a pass or deciding one needs it on.</p>}
+      {frozen && <p className="text-[13px] text-muted-foreground mb-2">Autonomy is off — the queue is still visible, but running a pass or deciding one needs it on.</p>}
       {lastRun?.run ? (
-        <p className="text-[11px] text-muted-foreground mb-3">
+        <p className="text-[13px] text-muted-foreground mb-3">
           Last pass {fmtTime(lastRun.run.finishedMs)} — tidied up {tidiedCount} {tidiedCount === 1 ? 'thing' : 'things'}
           {lastRun.openProposals ? `, ${lastRun.openProposals} waiting for your call` : ', everything else looks tidy'}.
         </p>
       ) : (
-        <p className="text-[11px] text-muted-foreground mb-3">No housekeeping pass has run yet. The first one happens on its own within a day of autonomy being on.</p>
+        <p className="text-[13px] text-muted-foreground mb-3">No housekeeping pass has run yet. The first one happens on its own within a day of autonomy being on.</p>
       )}
       {rows.length === 0
         ? <Empty>Nothing waiting for your call. Exact duplicates tidy themselves; merges and anything destructive show up here.</Empty>
@@ -1687,18 +1709,18 @@ function ActivityTab() {
         <h2 className="orbit-page-title text-xl mt-1">A running story.</h2>
         <p className="orbit-page-sub text-sm mt-1">Every run, and how it got there.</p>
       </div>
-    <Section title="Activity" subtitle="One running story — goals, actions, notices" icon={Activity}>
+    <Section title="Activity" subtitle="One running story — tasks, actions, and updates" icon={Activity}>
       {error && <p className="text-xs text-destructive mb-2">{error}</p>}
       {items.length === 0 && !error ? (
         <p className="text-xs text-muted-foreground py-6 text-center">
-          Nothing yet. When goals run, actions stage, or notices arrive, they'll appear here as one story.
+          Nothing yet. When tasks run, actions wait for review, or updates arrive, they’ll appear here as one story.
         </p>
       ) : (
         <div className="space-y-2">
           {items.map((item) => (
             <div key={item.id} className="rounded-lg border border-border/70 px-3 py-2.5">
               <p className="text-sm leading-relaxed">{item.text}</p>
-              <p className="text-[10px] text-muted-foreground mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 {item.atMs ? new Date(item.atMs).toLocaleString() : ''}
                 {item.severity === 'warning' ? ' · needs attention' : ''}
               </p>
@@ -1730,13 +1752,13 @@ function Notices({ onChanged }) {
 
   return (
     <Section
-      title="Notices"
-      subtitle="Templated messages from the loop — deterministic text, never model prose"
+      title="Updates"
+      subtitle="Saved updates from your assistants. Review them here; nothing is sent or changed from this screen."
       icon={Inbox}
     >
       <ErrorNote error={error} />
       {rows.length === 0
-        ? <Empty>No unread notices. A goal that parks, finishes or runs low on budget leaves one here.</Empty>
+        ? <Empty>You’re all caught up. Paused or finished tasks, new findings, and budget updates will appear here.</Empty>
         : (
           <div className="space-y-2">
             {rows.map(notice => (
@@ -1744,14 +1766,17 @@ function Notices({ onChanged }) {
                 <Inbox className="w-3.5 h-3.5 text-primary mt-0.5 shrink-0" />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm">{notice.text || '—'}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                    {notice.templateId} · {notice.severity} · {fmtTime(notice.createdMs)}
-                    {notice.goalId ? ` · goal ${shortId(notice.goalId)}` : ''}
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {noticeTemplateLabel(notice.templateId)} · {notice.severity === 'warning' ? 'Needs attention' : 'For your review'} · {fmtTime(notice.createdMs)}
                   </p>
+                  <details className="mt-1 text-xs text-muted-foreground">
+                    <summary className="inline-flex min-h-11 cursor-pointer items-center">Technical details</summary>
+                    <p className="break-all">{notice.templateId}{notice.goalId ? ` · task ${notice.goalId}` : ''}</p>
+                  </details>
                 </div>
                 <button onClick={() => ack(notice.id)}
-                  className="shrink-0 flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-[10px] hover:bg-muted/50">
-                  <Check className="w-3 h-3" /> Acknowledge
+                  className="shrink-0 flex min-h-11 items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm hover:bg-muted/50">
+                  <Check className="w-3.5 h-3.5" /> Mark read
                 </button>
               </div>
             ))}
@@ -1772,7 +1797,7 @@ function ReceiptLine({ receipt }) {
 
   if (r.dryRun) {
     return (
-      <p className="text-[10px] text-muted-foreground mt-0.5 font-mono">
+      <p className="text-xs text-muted-foreground mt-0.5 font-mono">
         dry run {r.built === false ? '· could not be built' : '· request built, nothing sent'}
         {r.request?.bodyBytes != null ? ` · ${r.request.bodyBytes} B` : ''}
         {r.signed ? ' · signed' : ''}
@@ -1792,7 +1817,7 @@ function ReceiptLine({ receipt }) {
   if (r.reversal) parts.push(r.reversal.unsendable ? 'reversed · cannot be un-sent' : 'reversed');
 
   return (
-    <p className={`text-[10px] mt-0.5 font-mono ${r.accepted === false || r.reversal?.unsendable ? 'text-warn' : 'text-muted-foreground'}`}>
+    <p className={`text-xs mt-0.5 font-mono ${r.accepted === false || r.reversal?.unsendable ? 'text-warn' : 'text-muted-foreground'}`}>
       {parts.join(' · ')}
     </p>
   );
@@ -1882,7 +1907,7 @@ function Outbox({ status, onChanged }) {
     <div className="space-y-3">
       <ErrorNote error={error} />
       {notice && (
-        <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] leading-relaxed">
+        <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-[13px] leading-relaxed">
           {notice}
         </div>
       )}
@@ -1914,21 +1939,21 @@ function Outbox({ status, onChanged }) {
             ['refused', corpus?.refused ?? 0, 'rules named below'],
           ].map(([label, value, hint]) => (
             <div key={label} className="rounded-lg border border-border px-3 py-2">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</p>
+              <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
               <p className="text-lg font-semibold tabular-nums">
                 {value}
               </p>
-              <p className="text-[10px] text-muted-foreground/70">{hint}</p>
+              <p className="text-xs text-muted-foreground">{hint}</p>
             </div>
           ))}
         </div>
 
         {(corpus?.byDestination && Object.keys(corpus.byDestination).length > 0) && (
           <div className="mt-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Where effects were aimed</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Where effects were aimed</p>
             <div className="space-y-1">
               {Object.entries(corpus.byDestination).slice(0, 8).map(([destination, n]) => (
-                <p key={destination} className="text-[10px] font-mono truncate">
+                <p key={destination} className="text-xs font-mono truncate">
                   {destination} <span className="text-muted-foreground">×{n}</span>
                 </p>
               ))}
@@ -1941,8 +1966,8 @@ function Outbox({ status, onChanged }) {
             below says what it takes, and the flip is one click when every
             condition holds. */}
         <div className="mt-3 rounded-lg border border-border/70 px-3 py-2.5">
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Going live</p>
-          <p className="text-[11px] mt-1 leading-relaxed">
+          <p className="text-xs uppercase tracking-wide text-muted-foreground">Going live</p>
+          <p className="text-[13px] mt-1 leading-relaxed">
             {live?.alreadyLive ? (
               <>The outbox is <span className="font-mono">live</span>: a release verdict is
                 performed rather than only recorded — to one destination, and only for effects
@@ -1954,7 +1979,7 @@ function Outbox({ status, onChanged }) {
             )}
           </p>
 
-          <p className="text-[10px] mt-1.5 text-muted-foreground">
+          <p className="text-xs mt-1.5 text-muted-foreground">
             Approved destination:{' '}
             {destination.configured ? (
               <span className="font-mono text-foreground/80">{destination.hostname}</span>
@@ -1963,13 +1988,13 @@ function Outbox({ status, onChanged }) {
             ) : (
               <span className="text-warn">none, so no live delivery has anywhere it is allowed to go</span>
             )}
-            <span className="text-muted-foreground/70">
+            <span className="text-muted-foreground">
               {' '}— a live write needs this AND the destination granted in the goal's own scope.
             </span>
           </p>
 
           {(live?.conditions || []).length > 0 && (
-            <p className="text-[10px] mt-2 text-muted-foreground">
+            <p className="text-xs mt-2 text-muted-foreground">
               {/* The server reports both counts, so this is a summary of what the
                   list below already says one line at a time — not a second
                   opinion computed here. */}
@@ -1980,7 +2005,7 @@ function Outbox({ status, onChanged }) {
           {(live?.conditions || []).length > 0 && (
             <ul className="mt-1 space-y-1">
               {live.conditions.map(c => (
-                <li key={c.id} className="text-[10px] flex items-start gap-1.5">
+                <li key={c.id} className="text-xs flex items-start gap-1.5">
                   {c.met
                     ? <Check className="w-3 h-3 mt-0.5 shrink-0 text-ok" />
                     : <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-warn" />}
@@ -1998,7 +2023,7 @@ function Outbox({ status, onChanged }) {
           <div className="flex flex-wrap items-center gap-2 mt-2.5">
             {live?.alreadyLive ? (
               <button onClick={() => flipMode('shadow')} disabled={flipping || !status?.canSetOutboxMode}
-                className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[11px] hover:bg-muted/50 disabled:opacity-40"
+                className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-[13px] hover:bg-muted/50 disabled:opacity-40"
                 title="Narrowing needs no evidence. The brake is always one click.">
                 <Undo2 className={`w-3.5 h-3.5 ${flipping ? 'animate-pulse' : ''}`} /> Back to shadow
               </button>
@@ -2011,7 +2036,7 @@ function Outbox({ status, onChanged }) {
                 <Zap className={`w-3.5 h-3.5 ${flipping ? 'animate-pulse' : ''}`} /> Go live
               </Btn>
             )}
-            <p className="text-[10px] text-muted-foreground max-w-md leading-relaxed">
+            <p className="text-xs text-muted-foreground max-w-md leading-relaxed">
               {status?.canSetOutboxMode === false
                 ? `This deployment has not handed the mode switch to this page (${status?.outboxRefusal?.message || 'set COGNOS_AUTONOMY_OUTBOX_UI_CONTROL=true'}).`
                 : 'Going live waits until every condition below is met. Going back to shadow never waits.'}
@@ -2042,11 +2067,11 @@ function Outbox({ status, onChanged }) {
                             {effect.mode === 'live' ? 'would really run' : 'shadow — delivers nothing'}
                           </Pill>
                         </p>
-                        <p className="text-[10px] text-muted-foreground mt-0.5 truncate" title={tierLabel(effect.tier)}>
+                        <p className="text-xs text-muted-foreground mt-0.5 truncate" title={tierLabel(effect.tier)}>
                           {tierLabel(effect.tier)}
                         </p>
                         {/* The machine names stay one disclosure deep: whoever reads the logs needs them. */}
-                        <details className="text-[10px] text-muted-foreground/70 mt-0.5">
+                        <details className="text-xs text-muted-foreground mt-0.5">
                           <summary className="cursor-pointer select-none">Technical details</summary>
                           <p className="font-mono truncate mt-0.5">
                             {effect.effect_type} · {effect.status} · mode {effect.mode} · skill {effect.skill_id} ·
@@ -2054,13 +2079,13 @@ function Outbox({ status, onChanged }) {
                           </p>
                         </details>
                         {effect.destination && (
-                          <p className="text-[10px] mt-0.5 font-mono truncate flex items-center gap-1">
+                          <p className="text-xs mt-0.5 font-mono truncate flex items-center gap-1">
                             <Send className="w-3 h-3 shrink-0 text-muted-foreground" />
                             <span className="text-foreground/80">{effect.destination}</span>
                           </p>
                         )}
                         <ReceiptLine receipt={effect.receipt} />
-                        <p className="text-[10px] text-muted-foreground/70 mt-0.5">{fmtTime(effect.created_date)}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{fmtTime(effect.created_date)}</p>
                       </div>
                       {effect.status === 'staged' && (
                         <div className="flex items-center gap-1.5 shrink-0">
@@ -2090,15 +2115,15 @@ function Outbox({ status, onChanged }) {
 
                     {verdict.failed?.length > 0 && (
                       <div className="mt-2 rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5">
-                        <p className="text-[10px] font-semibold text-destructive flex items-center gap-1">
+                        <p className="text-xs font-semibold text-destructive flex items-center gap-1">
                           <ShieldAlert className="w-3 h-3" /> Refused — {verdict.failed.length} rule(s) fired
                         </p>
                         <ul className="mt-1 space-y-0.5">
                           {verdict.failed.map((f, i) => (
-                            <li key={i} className="text-[10px]">
+                            <li key={i} className="text-xs">
                               <span className="font-mono text-destructive">{f.rule}</span>
                               <span className="text-muted-foreground"> — {f.reason}</span>
-                              {f.law && <span className="text-muted-foreground/70 font-mono"> ({f.law})</span>}
+                              {f.law && <span className="text-muted-foreground font-mono"> ({f.law})</span>}
                             </li>
                           ))}
                         </ul>
@@ -2106,12 +2131,12 @@ function Outbox({ status, onChanged }) {
                     )}
                     {verdict.passed?.length > 0 && (
                       <details className="mt-1.5">
-                        <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground">
+                        <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
                           {verdict.passed.length} check(s) passed
                         </summary>
                         <ul className="mt-1 space-y-0.5">
                           {verdict.passed.map((p, i) => (
-                            <li key={i} className="text-[10px] text-muted-foreground flex items-start gap-1">
+                            <li key={i} className="text-xs text-muted-foreground flex items-start gap-1">
                               <Check className="w-3 h-3 mt-0.5 text-ok shrink-0" /> {p}
                             </li>
                           ))}
@@ -2156,7 +2181,7 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
         busy={toggling}
         onToggle={onToggle}
         onError={bannerError ? (
-          <p className="mt-2.5 text-[11px] text-destructive flex items-start gap-1.5">
+          <p className="mt-2.5 text-[13px] text-destructive flex items-start gap-1.5">
             <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /><span>{bannerError}</span>
           </p>
         ) : null}
@@ -2189,7 +2214,7 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
                   : <Pill tone="ok">you authorize each goal</Pill>}
                 {status?.settings?.autoAuthorizePinned && <Pill tone="info">pinned by an operator</Pill>}
               </p>
-              <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">
+              <p className="text-[13px] text-muted-foreground mt-0.5 leading-relaxed">
                 {status?.settings?.autoAuthorize
                   ? 'New goals start active when created — their scope and budget hashes are still recorded, the allowlist and ceilings still bind, and every staged effect still waits for its own approval.'
                   : 'A new goal is created waiting for you. It does no work until you authorize its scope and budget.'}
@@ -2210,7 +2235,7 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
             </button>
           </div>
           {!status?.settings?.canSetAutoAuthorize && (
-            <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">
+            <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
               {status?.settings?.autoAuthorizeRefusal?.message || 'This deployment has not handed the auto-authorize switch to this page.'}
             </p>
           )}
@@ -2232,12 +2257,12 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
                   {on ? <Pill tone="ok">available</Pill> : <Pill tone="muted">not available here</Pill>}
                   {pinned && <Pill tone="info">pinned by an operator</Pill>}
                 </p>
-                <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{hint}</p>
+                <p className="text-[13px] text-muted-foreground mt-0.5 leading-relaxed">{hint}</p>
               </div>
             );
           })}
         </div>
-        <p className="text-[10px] text-muted-foreground mt-2 leading-relaxed max-w-2xl">
+        <p className="text-xs text-muted-foreground mt-2 leading-relaxed max-w-2xl">
           A rung says a tier exists here. It never releases anything by itself —
           every effect is still judged, and irreversible ones still need your approval.
         </p>
@@ -2257,7 +2282,7 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
           <div key={label} className="rounded-xl border border-border bg-card px-3 py-3">
             <Icon className={`w-3.5 h-3.5 ${tone} mb-1.5`} />
             <p className="text-xl font-semibold tabular-nums">{value}</p>
-            <p className="text-[10px] text-muted-foreground">{label}</p>
+            <p className="text-xs text-muted-foreground">{label}</p>
           </div>
         ))}
       </div>
@@ -2269,9 +2294,9 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
             className="rounded-lg border border-primary/40 bg-primary/5 px-3 py-2.5 text-left hover:bg-primary/10 transition-colors"
           >
             <p className="text-xs font-semibold flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-primary" /> Design a resident by describing it
+              <Sparkles className="w-3.5 h-3.5 text-primary" /> Design an assistant by describing it
             </p>
-            <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">
+            <p className="text-xs text-muted-foreground mt-0.5 leading-snug">
               Say what you want watched and how often. COGNOS drafts the name, brief, skills, budget and a first
               goal — you review all of it, and nothing is created until you click.
             </p>
@@ -2285,7 +2310,7 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
             <p className="text-xs font-semibold flex items-center gap-1.5">
               <Bot className="w-3.5 h-3.5 text-accent" /> {seedingArchivist ? 'Creating the Archivist…' : 'Try the Archivist'}
             </p>
-            <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">
+            <p className="text-xs text-muted-foreground mt-0.5 leading-snug">
               A monitor that records how beliefs change. It is created, not authorized — nothing runs until you
               say so on the Goals tab.
             </p>
@@ -2297,7 +2322,7 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
         <Section title="Spending limits" subtitle="Hitting one pauses the goal and tells you why — it is never silently queued" icon={Gauge}>
           <div className="space-y-3">
             <Meter label="Workspace spend today" used={0} limit={ceilings.maxCostPerDayUsd ?? 0} suffix="" />
-            <div className="grid grid-cols-2 gap-3 text-[10px]">
+            <div className="grid grid-cols-2 gap-3 text-xs">
               <div><p className="text-muted-foreground">Per day</p><p className="font-medium tabular-nums">{fmtMoney(ceilings.maxCostPerDayUsd)}</p></div>
               <div><p className="text-muted-foreground">Per month</p><p className="font-medium tabular-nums">{fmtMoney(ceilings.maxCostPerMonthUsd)}</p></div>
               <div><p className="text-muted-foreground">Goals at once</p><p className="font-medium tabular-nums">{ceilings.maxActiveGoals}</p></div>
@@ -2307,7 +2332,7 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
         </Section>
 
         <Section title="How often it wakes" subtitle="One bounded slice per wake-up; a lease makes two workers impossible" icon={RefreshCw}>
-          <div className="grid grid-cols-2 gap-3 text-[10px]">
+          <div className="grid grid-cols-2 gap-3 text-xs">
             <div><p className="text-muted-foreground">Wakes every</p><p className="font-medium">{humanInterval(tick.intervalMs)}</p></div>
             <div><p className="text-muted-foreground">Work per wake-up</p><p className="font-medium tabular-nums">up to {tick.maxStepsPerTick} steps</p></div>
             <div><p className="text-muted-foreground">Longest slice</p><p className="font-medium tabular-nums">{fmtMs(tick.sliceMs)}</p></div>
@@ -2328,7 +2353,7 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
             title={frozen ? 'Autonomy is off' : 'Run one bounded slice now'}>
             <RefreshCw className={`w-3.5 h-3.5 ${ticking ? 'animate-spin' : ''}`} /> Run a slice now
           </Btn>
-          <details className="mt-2.5 text-[10px] text-muted-foreground">
+          <details className="mt-2.5 text-xs text-muted-foreground">
             <summary className="cursor-pointer select-none">Technical details</summary>
             <div className="grid grid-cols-2 gap-x-2 gap-y-1 mt-1.5 font-mono">
               <span>intervalMs: {fmtMs(tick.intervalMs)}</span>
@@ -2352,7 +2377,7 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
             <div key={skill.id} className="flex items-start gap-2 rounded-lg border border-border px-3 py-2">
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">{skill.summary}</p>
-                <p className="text-[10px] text-muted-foreground/80 mt-0.5">{tierLabel(skill.tier)}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{tierLabel(skill.tier)}</p>
               </div>
               <Pill tone={skill.enabled ? 'ok' : 'muted'}>{skill.enabled ? 'available' : 'not available here'}</Pill>
             </div>
@@ -2361,12 +2386,12 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
         {/* The machine vocabulary is demoted, not deleted: whoever reads the logs
             needs the same tokens the code and the audit trail use. */}
         <details className="mt-2.5 rounded-lg border border-border/60 px-3 py-2">
-          <summary className="text-[11px] text-muted-foreground cursor-pointer select-none">
+          <summary className="text-[13px] text-muted-foreground cursor-pointer select-none">
             Technical details — skill ids, tiers and kill switches
           </summary>
           <div className="mt-2 space-y-1">
             {skills.map(skill => (
-              <p key={skill.id} className="text-[10px] font-mono text-muted-foreground/80 flex flex-wrap gap-x-2">
+              <p key={skill.id} className="text-xs font-mono text-muted-foreground flex flex-wrap gap-x-2">
                 <span className="text-foreground/80">{skill.id}</span>
                 <span>{skill.tier}</span>
                 <span>kill switch: {skill.killSwitch}</span>
@@ -2375,12 +2400,12 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
               </p>
             ))}
             {status?.noticeTemplates?.length > 0 && (
-              <p className="text-[10px] text-muted-foreground pt-1">
+              <p className="text-xs text-muted-foreground pt-1">
                 Notice templates: <span className="font-mono">{status.noticeTemplates.join(', ')}</span> —
                 a model cannot write free text into a notice.
               </p>
             )}
-            <p className="text-[10px] text-muted-foreground pt-1">
+            <p className="text-xs text-muted-foreground pt-1">
               Built tiers: <span className="font-mono">{(status?.builtTiers || []).join(', ') || '—'}</span>.
               Tiers in words: {Object.entries(TIER_LABEL).map(([t, l]) => `${t} ${l}`).join(' · ')}.
               T5 is built and default-off: it releases only by your approval of that exact action, one at a time, never by class.
@@ -2395,6 +2420,7 @@ function Overview({ status, residents, goals, onTick, ticking, onToggle, togglin
 export default function Autonomy() {
   const { openSidebar } = useCognos() || {};
   const [tab, setTab] = useState('attention');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [status, setStatus] = useState(null);
   const [residents, setResidents] = useState([]);
   const [goals, setGoals] = useState([]);
@@ -2409,6 +2435,10 @@ export default function Autonomy() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [seedingArchivist, setSeedingArchivist] = useState(false);
   const [, forceRefresh] = useState(0);
+  const openTab = useCallback((id) => {
+    if (ADVANCED_TAB_IDS.includes(id)) setAdvancedOpen(true);
+    setTab(id);
+  }, []);
 
   const refreshAll = useCallback(async () => {
     try {
@@ -2539,19 +2569,38 @@ export default function Autonomy() {
     } finally { setSeedingArchivist(false); }
   };
 
+  const renderTab = (id) => {
+    const { label, icon: Icon } = TAB_BY_ID[id];
+    return (
+      <button
+        key={id}
+        type="button"
+        onClick={() => openTab(id)}
+        aria-current={tab === id ? 'page' : undefined}
+        className={`flex min-w-0 min-h-11 items-center justify-center md:justify-start gap-1.5 px-1 md:px-3 py-2 rounded-lg text-xs md:text-sm whitespace-nowrap transition-colors ${
+          tab === id ? 'bg-muted text-foreground font-medium' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+        }`}
+      >
+        <Icon className="hidden md:block w-4 h-4" aria-hidden />
+        <span className="md:hidden">{MOBILE_TAB_LABEL[id] || label}</span>
+        <span className="hidden md:inline">{label}</span>
+      </button>
+    );
+  };
+
   return (
     <div className="flex flex-col h-full min-h-0">
       <header
         className="flex items-center gap-2 px-3 md:px-4 py-3 border-b border-border shrink-0"
         style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
       >
-        <button onClick={() => openSidebar?.()} className="md:hidden p-2 -ml-2 rounded-lg hover:bg-muted">
+        <button aria-label="Open navigation" onClick={() => openSidebar?.()} className="md:hidden p-2 -ml-2 rounded-lg hover:bg-muted">
           <Menu className="w-5 h-5" />
         </button>
         <Bot className="w-4 h-4 text-primary" />
         <h2 className="orbit-page-title text-base">Studio</h2>
-        <span className="text-[10px] text-muted-foreground hidden sm:inline">
-          your team, their work, and everything waiting on you
+        <span className="text-xs text-muted-foreground hidden sm:inline">
+          your assistants, their tasks, and everything waiting for you
         </span>
         <IconBtn
           onClick={() => setHelpOpen(true)}
@@ -2578,31 +2627,30 @@ export default function Autonomy() {
         </IconBtn>
       </header>
 
-      <div className="px-3 md:px-4 py-2 border-b border-border overflow-x-auto shrink-0">
-        <div className="flex items-start gap-4 min-w-max">
-          {TAB_GROUPS.map(group => (
-            <div key={group.heading} className="shrink-0">
-              <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">{group.heading}</p>
-              <div className="flex items-center gap-1">
-                {group.tabs.map(id => {
-                  const { label, icon: Icon } = TAB_BY_ID[id];
-                  return (
-                    <button
-                      key={id}
-                      onClick={() => setTab(id)}
-                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs whitespace-nowrap transition-colors ${
-                        tab === id ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-                      }`}
-                    >
-                      <Icon className="w-3.5 h-3.5" /> {label}
-                    </button>
-                  );
-                })}
-              </div>
+      <nav aria-label="Studio sections" className="px-3 md:px-4 py-2 border-b border-border md:overflow-x-auto shrink-0">
+        <div className="grid grid-cols-5 items-center gap-1 md:flex md:min-w-max">
+          {PRIMARY_TAB_IDS.map(renderTab)}
+          <button
+            type="button"
+            onClick={() => {
+              if (advancedOpen && ADVANCED_TAB_IDS.includes(tab)) setTab('attention');
+              setAdvancedOpen(value => !value);
+            }}
+            aria-expanded={advancedOpen}
+            aria-controls="studio-advanced-tabs"
+            className={`flex min-w-0 min-h-11 items-center justify-center gap-1 px-1 md:px-3 py-2 rounded-lg text-xs md:text-sm whitespace-nowrap transition-colors ${
+              ADVANCED_TAB_IDS.includes(tab) ? 'bg-muted text-foreground font-medium' : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+            }`}
+          >
+            Advanced <ChevronDown className={`hidden md:block w-4 h-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`} aria-hidden />
+          </button>
+          {advancedOpen && (
+            <div id="studio-advanced-tabs" className="col-span-5 md:col-span-1 min-w-0 flex items-center gap-1 border-t md:border-t-0 md:border-l border-border pt-2 md:pt-0 md:pl-2 md:ml-1 overflow-x-auto [&>button]:shrink-0">
+              {ADVANCED_TAB_IDS.map(renderTab)}
             </div>
-          ))}
+          )}
         </div>
-      </div>
+      </nav>
 
       <div className="flex-1 overflow-y-auto scrollbar-thin px-3 md:px-4 py-4 min-h-0">
         <div className="max-w-4xl mx-auto space-y-3">
@@ -2611,14 +2659,7 @@ export default function Autonomy() {
           {!status ? (
             <p className="text-xs text-muted-foreground py-6 text-center">Loading autonomy status…</p>
           ) : tab === 'attention' ? (
-            <div className="space-y-3">
-              <div className="px-1 pt-1">
-                <p className="orbit-eyebrow">Start here</p>
-                <h2 className="orbit-page-title text-xl mt-1">Needs your attention.</h2>
-                <p className="orbit-page-sub text-sm mt-1">Everything waiting on you, in one place. Nothing here happens until you decide.</p>
-              </div>
-              <AttentionPanel data={attention} onJump={setTab} loading={attentionLoading} />
-            </div>
+            <AttentionPanel data={attention} onJump={openTab} loading={attentionLoading} />
           ) : tab === 'overview' ? (
             <Overview
               status={status} residents={residents} goals={goals}

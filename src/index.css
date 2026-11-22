@@ -21,7 +21,7 @@
     --secondary: 84 45% 93%;
     --secondary-foreground: 210 24% 16%;
     --muted: 110 10% 93%;
-    --muted-foreground: 200 7% 52%;
+    --muted-foreground: 200 9% 38%;
     --accent: 95 38% 40%;
     --accent-foreground: 0 0% 100%;
     --destructive: 0 72% 51%;
@@ -66,7 +66,7 @@
     --secondary: 110 12% 15%;
     --secondary-foreground: 84 20% 92%;
     --muted: 110 12% 13%;
-    --muted-foreground: 110 8% 60%;
+    --muted-foreground: 110 8% 72%;
     --accent: 84 55% 55%;
     --accent-foreground: 110 25% 12%;
     --destructive: 0 72% 55%;
@@ -113,12 +113,14 @@
 
   body {
     @apply bg-background text-foreground font-body antialiased;
+    font-size: 16px;
+    line-height: 1.6;
     overscroll-behavior: none;
   }
 
   h1, h2, h3 {
     font-family: var(--font-heading);
-    letter-spacing: -0.03em;
+    letter-spacing: -0.015em;
   }
 }
 
@@ -131,9 +133,10 @@
  * ------------------------------------------------------------------------- */
 @layer components {
   .orbit-eyebrow {
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.13em;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    line-height: 1.4;
     text-transform: uppercase;
     color: hsl(var(--muted-foreground));
   }
@@ -146,7 +149,7 @@
   }
   .orbit-page-sub {
     color: hsl(var(--muted-foreground));
-    line-height: 1.5;
+    line-height: 1.65;
   }
 
   .orbit-agent-card {
@@ -185,7 +188,7 @@
 @layer utilities {
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: hsl(222 14% 25%) transparent;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
     overscroll-behavior: none;
   }
   .scrollbar-thin::-webkit-scrollbar {
@@ -196,11 +199,11 @@
     background: transparent;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background-color: hsl(222 14% 25%);
+    background-color: hsl(var(--muted-foreground) / 0.4);
     border-radius: 3px;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background-color: hsl(222 14% 35%);
+    background-color: hsl(var(--muted-foreground) / 0.65);
   }
   .animate-message-in {
     animation: message-in 0.3s ease-out;
@@ -242,8 +245,7 @@
     user-select: text;
   }
 
-  /* Mobile: enlarge icons and give icon-only controls a 48px tap target.
-     Applies on small viewports (phones); desktop layouts stay compact. */
+  /* Mobile: icon-only controls get a complete 44px target, not just height. */
   @media (max-width: 768px) {
     button > svg,
     a > svg {
@@ -252,7 +254,19 @@
     }
     button:has(> svg:only-child),
     a:has(> svg:only-child) {
-      min-height: 3rem;
+      min-width: 2.75rem;
+      min-height: 2.75rem;
     }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

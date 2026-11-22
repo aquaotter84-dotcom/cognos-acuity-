@@ -143,8 +143,9 @@ await test("the covered screens use the ok/warn tokens", async () => {
 // Typography: reading sizes, metadata scale
 // ---------------------------------------------------------------------------
 
-await test("kit form controls read at text-sm (comfortable on a phone)", async () => {
-  assert.ok(kit.includes("px-3 py-2 text-sm"), "inputs are text-sm");
+await test("kit form controls use a phone-safe reading size and target", async () => {
+  assert.ok(kit.includes("min-h-11"), "inputs are at least 44px tall");
+  assert.ok(kit.includes("text-base"), "inputs use a readable text size");
 });
 
 await test("no sub-metadata type in the covered screens", async () => {
@@ -153,8 +154,8 @@ await test("no sub-metadata type in the covered screens", async () => {
   }
 });
 
-await test("the Meta component owns the metadata scale", async () => {
-  assert.match(kit, /text-\[10px\] uppercase tracking-wide/);
+await test("the Meta component owns the readable metadata scale", async () => {
+  assert.match(kit, /text-xs uppercase tracking-wide/);
   assert.ok(projects.includes("<Meta"), "Projects uses <Meta>");
 });
 
@@ -192,11 +193,14 @@ await test("Studio Section delegates to the kit SectionCard", async () => {
   assert.ok(autonomy.includes("<SectionCard"), "it delegates to SectionCard");
 });
 
-await test("Projects and Memory build from the kit", async () => {
+await test("Projects and Memory build from the kit and offer useful first actions", async () => {
   assert.ok(projects.includes("<Btn"), "Projects uses <Btn>");
   assert.ok(projects.includes("<EmptyState"), "Projects uses <EmptyState>");
+  assert.ok(projects.includes("Start your first project"), "Projects empty state has a direct creation action");
+  assert.ok(projects.includes("Saved sources"), "evidence gets a plain-language heading");
   assert.ok(memory.includes("<Badge"), "Memory uses <Badge>");
   assert.ok(memory.includes("LAYER_TONES"), "Memory uses the centralized palette");
+  assert.ok(memory.includes("Add your first memory"), "Memory empty state has a direct creation action");
   assert.ok(!memory.includes("typeColors") && !memory.includes("layerColors"), "the four ad-hoc maps are gone");
 });
 
@@ -219,8 +223,12 @@ await test("Settings runtime detail is disclosed, not dumped", async () => {
   assert.ok(runtimeAt < disclosureAt && disclosureAt < modelDeadlineAt, "deadline row lives inside the disclosure");
 });
 
-await test("Memory structured values are disclosed, not dumped", async () => {
-  assert.ok(memory.includes('<Disclosure summary="Structured value"'), "memory_value disclosure exists");
+await test("Memory creation and technical metadata are progressively disclosed", async () => {
+  assert.ok(memory.includes('<Disclosure summary="Advanced options"'), "creation defaults to a readable note");
+  assert.ok(memory.includes('<Disclosure summary="Memory details"'), "type, evidence, volatility, keys, and values live one tap deep");
+  const detailsAt = memory.indexOf('<Disclosure summary="Memory details"');
+  const valueAt = memory.indexOf("JSON.stringify(mem.memory_value, null, 2)");
+  assert.ok(detailsAt >= 0 && valueAt > detailsAt, "structured value stays inside memory details");
 });
 
 await test("the kit Disclosure is a real details/summary", async () => {
