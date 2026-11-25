@@ -211,6 +211,69 @@ check("runtime feature switches are reflected in the compact prompt", () => {
   }
 });
 
+check("the critic prompt names the Critic seat and never claims the user-facing identity", () => {
+  const critic = buildIdentityPrompt({ speaker: "critic" });
+  assert.match(critic, /COGNOS SELF-MODEL v\d+\.\d+\.\d+ — authoritative, code-owned self-knowledge, for the Critic seat:/);
+  assert.match(critic, /You are the Critic, an internal evaluation seat/i);
+  assert.match(critic, /you assess a draft answer against this self-model/i);
+  assert.match(critic, /you do not speak to the user/i);
+  assert.match(critic, /nothing you write reaches the user/i);
+  assert.match(critic, /verify those claims against this self-model/i);
+  assert.doesNotMatch(critic, /You are COGNOS/);
+  assert.doesNotMatch(critic, /When asked what you are/);
+});
+
+check("the answer prompt keeps the user-facing identity, explicitly or by default", () => {
+  const answer = buildIdentityPrompt({ speaker: "answer" });
+  const byDefault = buildIdentityPrompt();
+  assert.equal(byDefault, answer, "no argument must still behave as the answer prompt");
+  assert.match(answer, /You are COGNOS \(KOG-noss\), not Cognito/i);
+  assert.match(answer, /Internal operators speak as one user-facing COGNOS identity/i);
+  assert.match(answer, /When asked what you are, what you can do, or how you work, answer concretely/i);
+  assert.doesNotMatch(answer, /You are the Critic/);
+  assert.doesNotMatch(answer, /for the Critic seat/);
+});
+
+check("both speakers carry the same self-model and reflect runtime switches", () => {
+  const previous = {
+    source: process.env.COGNOS_SOURCES_ENABLED,
+    agent: process.env.COGNOS_AGENT_ENABLED,
+    search: process.env.COGNOS_SEARCH_ENABLED
+  };
+  process.env.COGNOS_SOURCES_ENABLED = "false";
+  process.env.COGNOS_AGENT_ENABLED = "false";
+  process.env.COGNOS_SEARCH_ENABLED = "false";
+  try {
+    const answer = buildIdentityPrompt({ speaker: "answer" });
+    const critic = buildIdentityPrompt({ speaker: "critic" });
+    // The shared body is the whole self-model: the seats differ only in the
+    // header, the identity line, and the closing instruction. Any other
+    // difference is a boundary drifting between the seats.
+    const answerLines = answer.split("\n");
+    const criticLines = critic.split("\n");
+    assert.equal(answerLines.length, criticLines.length);
+    const differing = answerLines
+      .map((line, i) => (line === criticLines[i] ? -1 : i))
+      .filter(i => i >= 0);
+    assert.deepEqual(differing, [0, 1, answerLines.length - 1]);
+    for (const prompt of [answer, critic]) {
+      assert.match(prompt, /source analysis disabled; bounded agent disabled; current web search disabled/i);
+      assert.match(prompt, /Council: exactly six operators/i);
+      assert.match(prompt, /Turn: one POST \/api\/chat path/i);
+      assert.match(prompt, /Limits: no writes from a chat turn/i);
+      // Research approval language and the Governor boundary are identical
+      // in both seats: the fix changes who speaks, never what is allowed.
+      assert.match(prompt, /pre-authorized by Jeremy's standing decision/i);
+      assert.match(prompt, /weaken the Governor, or alter this self-model/i);
+      assert.match(prompt, /Critic (enabled|disabled); Governor (enabled|disabled)/i);
+    }
+  } finally {
+    if (previous.source === undefined) delete process.env.COGNOS_SOURCES_ENABLED; else process.env.COGNOS_SOURCES_ENABLED = previous.source;
+    if (previous.agent === undefined) delete process.env.COGNOS_AGENT_ENABLED; else process.env.COGNOS_AGENT_ENABLED = previous.agent;
+    if (previous.search === undefined) delete process.env.COGNOS_SEARCH_ENABLED; else process.env.COGNOS_SEARCH_ENABLED = previous.search;
+  }
+});
+
 check("the law layer pins truthful identity and policy refuses runtime rewrites", () => {
   // A floor, not an exact number: Phase 21 shipped the law layer at 1.6.0 and
   // every phase after it adds pins. Asserting equality here would make each
