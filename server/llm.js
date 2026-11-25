@@ -647,7 +647,7 @@ export function buildContextSystemPrompt(workspace, memories, classification, ba
   // A single code-owned self-model grounds every answer-producing call. It is
   // appended after mutable workspace/memory/source context so none of those
   // data layers can rename COGNOS or invent a capability or authority.
-  systemPrompt += `\n\n${buildIdentityPrompt()}`;
+  systemPrompt += `\n\n${buildIdentityPrompt({ speaker: "answer" })}`;
   systemPrompt += styleDirective(style);
   return systemPrompt;
 }
